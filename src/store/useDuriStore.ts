@@ -188,12 +188,13 @@ export const useDuriStore = create<DuriState>()(
         set((state) => {
           const region = state.regionsById[input.regionId];
           const currentUser = state.usersById[state.currentUserId];
+          const normalizedTitle = input.title?.trim() ?? "";
           const hasValidDates =
             isValidISODate(input.startDate) &&
             isValidISODate(input.endDate) &&
             input.endDate >= input.startDate;
 
-          if (!region || !currentUser || !hasValidDates) return state;
+          if (!region || !currentUser || !hasValidDates || normalizedTitle.length > 40) return state;
 
           createdTripId = createUniqueEntityId("trip", Object.keys(state.tripsById));
           const invitedUserIds = [...new Set(input.invitedUserIds)].filter(
@@ -202,7 +203,7 @@ export const useDuriStore = create<DuriState>()(
           const memberUserIds = [state.currentUserId, ...invitedUserIds];
           const trip: TripRoom = {
             id: createdTripId,
-            title: input.title?.trim() || `${region.name} 여행`,
+            title: normalizedTitle || `${region.name} 여행`,
             regionId: region.id,
             startDate: input.startDate,
             endDate: input.endDate,
@@ -219,7 +220,7 @@ export const useDuriStore = create<DuriState>()(
           return {
             activeTripId: trip.id,
             tripsById: { ...state.tripsById, [trip.id]: trip },
-            tripOrder: [...state.tripOrder, trip.id],
+            tripOrder: state.tripOrder.includes(trip.id) ? state.tripOrder : [...state.tripOrder, trip.id],
             candidatesByTripId: { ...state.candidatesByTripId, [trip.id]: [] },
             itineraryByTripId: { ...state.itineraryByTripId, [trip.id]: [] },
           };

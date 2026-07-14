@@ -10,12 +10,20 @@
 - anonymous 체험 결과, guest/member 결과 영속 정책 분리
 - 재테스트 확인과 기존 결과 보호
 - API/hybrid Quiz 계약 대기 오류와 mock fallback 차단
+- 현재 사용자 여행방의 진행 중·완료·전체 필터, 웹 기준 결정적 정렬
+- 이미지·D-day·멤버·후보·일정·응답·준비율을 담은 TripRoomCard ViewModel
+- 여행지→날짜→조건→동행자→확인의 5단계 여행방 생성 Wizard
+- SDK 57 호환 native date picker와 date-only 검증
+- 별도 versioned CreateTripDraft persist, 이어 쓰기·새 시작·저장/삭제 나가기
+- 원자적 createTrip, 연속 제출 잠금, 생성 완료 후 TripHome replace
+- TripHome Hero·빠른 실행·5단계 준비율·후보/일정·두리 분석 요약
+- mock demo member 추가 Modal과 api/hybrid Rooms 계약 대기 차단
 - 여행방 멤버별 completed/pending/invalid 응답 상태와 완료 비율
 - 0~1명 insufficient, 2명 이상 partial/complete 그룹 성향 진단
 - 웹 기준 5개 계획 차원 spread와 common/compatible/needs-tuning 분류
 - 응답자 tag 집계, 모바일 조율 지표, GroupPlanningProfile 기반
 - 여행방 상세 응답 현황·그룹 진단·내 테스트/결과/재테스트 CTA
-- 실행 가능한 15개 순수 함수 fixture 검증
+- 실행 가능한 그룹 진단 15개 fixture 및 여행 흐름 정렬·날짜·draft·준비율 fixture 검증
 - React Native theme token과 공통 컴포넌트
 - normalized mock data와 AsyncStorage persist
 - SecureStore TokenStorage adapter 골격
@@ -32,7 +40,7 @@
 
 ## 부분 완료
 
-- workspace: 후보·일정·참여자 수와 로컬 분석 요약만 제공
+- workspace: TripHome 진입과 후보·일정·참여자 수 및 로컬 분석 요약만 제공
 - auth API: UI와 adapter 경계는 완료, 실제 서버 계약은 대기
 - Quiz API: 로컬 기준 로직과 adapter 경계는 완료, 실제 서버 계약은 대기
 - 초대 딥링크: code를 native 초대 화면으로 전달
@@ -43,6 +51,7 @@
 - 지도, 장소 기반 위치 권한
 - 그룹 진단 전용 상세 route (여행방 상세 내 요약·차원 카드는 완료)
 - 후보 보드와 일정 편집 gesture
+- 실제 사용자 검색·초대 링크·초대 권한
 - 두리 분석 리포트, 제안 preview·apply UI
 - guest → member 계정 병합
 - 확정된 이용약관과 개인정보 처리 법률 문서

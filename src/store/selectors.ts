@@ -1,4 +1,4 @@
-import type { EntityId, Place, TripCandidate } from "../domain";
+import type { EntityId, Place, TripCandidate, TripRoom } from "../domain";
 import { analyzeTrip } from "../duri/duri-analysis";
 import type { DuriAnalysisInput } from "../duri/duri-analysis";
 import { diagnoseGroupPreferences } from "../duri/group-preferences";
@@ -12,6 +12,12 @@ import type {
 } from "../features/trips/selectors";
 import type { DuriState } from "./useDuriStore";
 
+export interface TripCollectionSelectorState {
+  currentUserId: EntityId;
+  tripsById: Readonly<Record<EntityId, TripRoom>>;
+  tripOrder: readonly EntityId[];
+}
+
 const emptyEntityIds: EntityId[] = [];
 
 const getSortableDate = (value: string, fallback: number) => {
@@ -19,11 +25,11 @@ const getSortableDate = (value: string, fallback: number) => {
   return Number.isFinite(timestamp) ? timestamp : fallback;
 };
 
-export const selectTripsForCurrentUser = (state: DuriState) => {
-  const orderedIds = [
+export const selectTripsForCurrentUser = (state: TripCollectionSelectorState) => {
+  const orderedIds = [...new Set([
     ...state.tripOrder,
     ...Object.keys(state.tripsById).filter((tripId) => !state.tripOrder.includes(tripId)),
-  ];
+  ])];
 
   return orderedIds.flatMap((tripId) => {
     const trip = state.tripsById[tripId];
@@ -31,15 +37,15 @@ export const selectTripsForCurrentUser = (state: DuriState) => {
   });
 };
 
-export const selectPlanningTripsForCurrentUser = (state: DuriState) =>
+export const selectPlanningTripsForCurrentUser = (state: TripCollectionSelectorState) =>
   selectTripsForCurrentUser(state)
     .filter((trip) => trip.status !== "completed")
-    .sort((left, right) => getSortableDate(left.startDate, Number.POSITIVE_INFINITY) - getSortableDate(right.startDate, Number.POSITIVE_INFINITY));
+    .sort((left, right) => getSortableDate(left.startDate, Number.POSITIVE_INFINITY) - getSortableDate(right.startDate, Number.POSITIVE_INFINITY) || left.title.localeCompare(right.title, "ko") || left.id.localeCompare(right.id));
 
-export const selectCompletedTripsForCurrentUser = (state: DuriState) =>
+export const selectCompletedTripsForCurrentUser = (state: TripCollectionSelectorState) =>
   selectTripsForCurrentUser(state)
     .filter((trip) => trip.status === "completed")
-    .sort((left, right) => getSortableDate(right.endDate, Number.NEGATIVE_INFINITY) - getSortableDate(left.endDate, Number.NEGATIVE_INFINITY));
+    .sort((left, right) => getSortableDate(right.endDate, Number.NEGATIVE_INFINITY) - getSortableDate(left.endDate, Number.NEGATIVE_INFINITY) || left.title.localeCompare(right.title, "ko") || left.id.localeCompare(right.id));
 
 export const selectCurrentUser = (state: DuriState) => state.usersById[state.currentUserId];
 export const selectCurrentUserPreferenceResult = (state: DuriState) =>

@@ -1,1 +1,1 @@
-export { NewTripScreen as default } from "../../src/features/trips/screens/NewTripScreen";
+export { CreateTripWizardScreen as default } from "../../src/features/trip-creation/screens/CreateTripWizardScreen";

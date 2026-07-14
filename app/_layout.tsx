@@ -9,6 +9,7 @@ import { ErrorState, LoadingState } from "../src/components/feedback";
 import { useAuthSessionHydration } from "../src/features/auth/hooks/useAuthSessionHydration";
 import { useAuthSessionStore } from "../src/features/auth/store/useAuthSessionStore";
 import { usePreferenceDraftHydration } from "../src/features/preferences/hooks/usePreferenceDraftHydration";
+import { useCreateTripDraftHydration } from "../src/features/trip-creation/hooks/useCreateTripDraftHydration";
 import { normalizePreferenceResult } from "../src/duri/group-preferences";
 import { queryClient } from "../src/query/queryClient";
 import { useStoreHydration } from "../src/store/useStoreHydration";
@@ -23,9 +24,10 @@ function HydratedNavigator() {
   const domainHydration = useStoreHydration();
   const authHydration = useAuthSessionHydration();
   const preferenceDraftHydration = usePreferenceDraftHydration();
-  const error = domainHydration.error ?? authHydration.error ?? preferenceDraftHydration.error;
-  if (error) return <Screen><ErrorState message={error.message} onRetry={() => { void Promise.all([domainHydration.retry(), authHydration.retry(), preferenceDraftHydration.retry()]); }} /></Screen>;
-  if (!domainHydration.isHydrated || !authHydration.isHydrated || !preferenceDraftHydration.isHydrated) return <View style={styles.loading}><LoadingState label="두리와 여행 정보를 준비하고 있어요" /></View>;
+  const createTripDraftHydration = useCreateTripDraftHydration();
+  const error = domainHydration.error ?? authHydration.error ?? preferenceDraftHydration.error ?? createTripDraftHydration.error;
+  if (error) return <Screen><ErrorState message={error.message} onRetry={() => { void Promise.all([domainHydration.retry(), authHydration.retry(), preferenceDraftHydration.retry(), createTripDraftHydration.retry()]); }} /></Screen>;
+  if (!domainHydration.isHydrated || !authHydration.isHydrated || !preferenceDraftHydration.isHydrated || !createTripDraftHydration.isHydrated) return <View style={styles.loading}><LoadingState label="두리와 여행 정보를 준비하고 있어요" /></View>;
   return <SessionAwareNavigator />;
 }
 

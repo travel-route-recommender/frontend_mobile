@@ -10,9 +10,9 @@
 | `/explore` | `DuriExploreListPage` | `app/(tabs)/explore.tsx` | `ExploreScreen` | 목록·검색·저장 완료 |
 | `/explore/map` | `DuriExploreMapPage` | `app/explore/map.tsx` | `MapPlaceholderScreen` | 지도 SDK 대기 |
 | `/places/:placeId` | `PlaceDetailRoute` | `app/places/[placeId].tsx` | `PlaceDetailScreen` | 기본 기능 완료 |
-| `/trips` | `TripsPage` | `app/(tabs)/trips.tsx` | `TripListScreen` | 기본 기능 완료 |
-| `/trips/new` | `NewTripPage` | `app/trips/new.tsx` | `NewTripScreen` | 최소 생성 폼 완료 |
-| `/trips/:tripId` | `TripRoomHomePage` | `app/trips/[tripId]/index.tsx` | `TripDetailScreen` | 응답 현황·partial/complete 그룹 진단 완료 |
+| `/trips` | `TripListPage`, `TravelRoomCard` | `app/(tabs)/trips.tsx` | `TripListScreen`, `TripRoomCard` | 필터·정렬·ViewModel 카드 완료 |
+| `/trips/new` | `NewTripPage`, `TripWizardSteps` | `app/trips/new.tsx` | `CreateTripWizardScreen` | 5단계·draft 복구·native 날짜 선택 완료 |
+| `/trips/:tripId` | `TripRoomHomePage`, `TripRoomHomeSections` | `app/trips/[tripId]/index.tsx` | `TripHomeScreen` | 준비율·응답/진단·후보/일정 요약 완료 |
 | `/trips/:tripId/workspace` | `TripWorkspaceRoute` | `app/trips/[tripId]/workspace.tsx` | `WorkspaceScreen` | 기반 화면만 완료 |
 | `/saved` | `SavedPage` | `app/(tabs)/saved.tsx` | `SavedScreen` | 저장 해제·빈 상태 완료 |
 | `/mypage` | `MyPage` | `app/(tabs)/mypage.tsx` | `MyPageScreen` | 기본 요약 완료 |
@@ -53,6 +53,7 @@
 - guest 유도 UX는 Context 대신 `useMemberGate`와 Native Modal로 재작성
 - 개인 성향 문항·계산·도메인은 웹 기준 파일과 동일하게 유지하고, 모바일에 영속 draft·검토·재테스트 보호 UX를 추가
 - 웹 group-preferences의 5개 계획 차원과 spread 규칙을 유지하고, 모바일에 결과 유효성·coverage·tag 집계·조율 지표·네이티브 상태 카드를 추가
+- 웹 여행 목록의 진행/완료 정렬, 5단계 생성 순서와 준비율 점수 규칙을 유지하고, 모바일에 FlatList 필터·native date picker·영속 생성 초안을 추가
 
 ### C. 모바일에서 재작성
 
@@ -63,7 +64,7 @@
 
 ## 아직 미구현
 
-- 실제 지도, 전체 workspace 편집기, 제안 미리보기·적용 UI
+- 실제 지도, 전체 workspace 편집기, 후보 CRUD, 제안 미리보기·적용 UI
 - 그룹 진단 전용 route와 두리 분석 리포트 전용 화면 (여행방 상세 그룹 진단은 완료)
 - 실제 로그인·회원가입·초대 수락 API, OAuth, JWT refresh
 - Quiz questions/status/submit API와 server/local 결과 병합
