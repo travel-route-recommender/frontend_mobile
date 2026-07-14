@@ -1,5 +1,13 @@
 # 모바일 워크스페이스 편집기
 
+## 두리 분석·원자 적용 연결
+
+workspace 하단 `DuriAnalysisEntryCard`는 분석 전/중/current/stale/engine unavailable을 구분한다. CTA는 report route로 이동하며 진입만으로 분석하거나 일정을 수정하지 않는다. 적용 성공은 route parameter 기반 기존 feedback banner를 쓰고 첫 affected date를 선택한다.
+
+수동 add/update/move/remove/reorder 후에는 full input fingerprint가 달라져 기존 session/suggestion이 자동 stale이 된다. 최종 일정의 유일한 기준은 계속 `itineraryByTripId`이고 candidate scheduled, TripHome 일정 수와 준비율은 기존 selector가 갱신한다.
+
+제안 적용은 기존 개별 편집 action을 연속 호출하지 않는다. 메모리에서 전체 next itinerary를 검증한 뒤 `applyDuriSuggestionAtomically`이 set 한 번으로 교체한다. 실패 시 일정, 후보, 다른 trip은 변경되지 않는다.
+
 ## 1. 화면 구조
 
 기존 `app/trips/[tripId]/workspace.tsx` route는 선언만 유지하고 실제 구현은 `src/features/workspace/screens/WorkspaceScreen.tsx`에 둔다. 화면은 여행방 헤더와 관계 수치, 여행 날짜 탭, 접을 수 있는 후보 보드, 선택 날짜 타임라인, 두리 분석 연결 경계 순서다. 후보는 가로 `FlatList`, 전체 화면과 일정은 세로 ScrollView 구조라 같은 방향의 큰 중첩 목록을 만들지 않는다.
@@ -91,4 +99,3 @@ gesture reorder를 도입하려면 RN/Expo SDK 호환성, ScrollView 충돌, 접
 ## 22. Schedule API mapper 대기
 
 서버 계약 전에는 `day/startAt/endAt/sequence/scheduleDate` 같은 필드를 추측하지 않는다. add/update/delete/reorder batch endpoint, 동시 편집 충돌, version/ETag, 후보 제거 권한, guest 권한, 원자적 제안 적용 DTO가 Swagger로 확정된 뒤 모바일 `date/startTime/durationMinutes/placeId` mapper를 작성한다.
-

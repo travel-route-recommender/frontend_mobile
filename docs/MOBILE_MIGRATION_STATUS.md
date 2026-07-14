@@ -1,5 +1,18 @@
 # 모바일 마이그레이션 상태
 
+## 2026-07-14 두리 분석 단계 완료
+
+- workspace 진입 카드, 독립 report와 suggestion 상세 route
+- 웹 실제 동선·밀도·식사·선호 엔진과 suggestion pure apply 재사용
+- immutable snapshot, full input fingerprint, algorithm compatibility version
+- 기존 helper 기반 시간 충돌, 날짜 균형, 후보 활용 context report
+- 그룹/좌표 coverage, before/after, stable-ID diff, 계산 가능한 expected impact
+- stale 차단, 전체 validation, Zustand set 한 번의 atomic apply, ephemeral receipt
+- server 계약 미확인 시 unavailable 및 local fallback 금지
+- 분석 18 + 제안 13 + atomic 10 fixture
+
+파생 session/suggestion/receipt는 비영속이라 persist version/migration 변경이 없다. 남은 범위는 실제 Duri API, atomic Schedule batch, Directions/지도 경로와 전체 undo history다.
+
 ## 완료
 
 - Expo SDK 57 + TypeScript + Expo Router 프로젝트 기반

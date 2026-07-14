@@ -1,5 +1,18 @@
 # 모바일 아키텍처
 
+## Duri analysis feature 경계
+
+`src/features/duri`는 UI/application 계층이고 `src/duri`의 웹 이식 순수 엔진을 재사용한다.
+
+- selectors: 한 trip의 normalized 분석 입력
+- logic: snapshot/canonical fingerprint/context report/suggestion envelope/preview/diff
+- services: local과 unavailable server engine
+- validation: 전체 next itinerary와 receipt 준비
+- store: 비영속 session/suggestion/receipt와 중복 실행 상태
+- screens/components: report, 세로 preview, 최종 확인
+
+Domain Store의 `applyDuriSuggestionAtomically`만 최종 mutation을 수행하며 성공 시 `itineraryByTripId[tripId]`를 Zustand set 한 번으로 교체한다. stale은 full input fingerprint 비교로 파생하고 영속 schema는 바꾸지 않았다.
+
 ## Router와 화면
 
 Expo SDK 57의 Expo Router를 사용한다. `app/`은 route 선언과 parameter 경계만 담당하며 실제 화면은 `src/features/*/screens`에 둔다. 5개 하단 탭은 실험적 Native Tabs가 아닌 안정형 JavaScript `Tabs`다. 상세 화면은 root `Stack`에 포함된다.

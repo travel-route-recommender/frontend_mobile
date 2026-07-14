@@ -37,6 +37,11 @@ import {
 } from "../utils/schedule";
 import { moveItemWithinDate } from "../features/workspace/logic/workspaceDateTime";
 import type { ItineraryMoveDirection } from "../features/workspace/types";
+import type {
+  ApplyDuriSuggestionAtomicallyInput,
+  ApplyDuriSuggestionAtomicallyResult,
+} from "../features/duri/types";
+import { prepareDuriSuggestionAtomicApply } from "../features/duri/validation/atomicSuggestionApply";
 
 export type AddPlaceToItineraryInput = {
   tripId: EntityId;
@@ -122,6 +127,7 @@ type DuriActions = {
   moveItineraryItem: (tripId: EntityId, itineraryItemId: EntityId, direction: ItineraryMoveDirection) => ItineraryMutationResult;
   reorderItinerary: (tripId: EntityId, orderedItemIds: EntityId[]) => ItineraryMutationResult;
   applyDuriSuggestion: (tripId: EntityId, suggestion: DuriSuggestion) => SuggestionApplyResult;
+  applyDuriSuggestionAtomically: (input: ApplyDuriSuggestionAtomicallyInput) => ApplyDuriSuggestionAtomicallyResult;
   savePersonalPreferenceResult: (
     userId: EntityId | undefined,
     answers: PersonalPreferenceAnswers,
@@ -623,6 +629,28 @@ export const useDuriStore = create<DuriState>()(
           };
         });
 
+        return result;
+      },
+      applyDuriSuggestionAtomically: (input) => {
+        let result: ApplyDuriSuggestionAtomicallyResult = {
+          ok: false,
+          reason: "unknown",
+          message: "제안을 적용하지 못했어요. 일정은 변경되지 않았어요.",
+        };
+        set((state) => {
+          const prepared = prepareDuriSuggestionAtomicApply(state, input, new Date().toISOString());
+          if (!prepared.ok) {
+            result = prepared.result;
+            return state;
+          }
+          result = { ok: true, receipt: prepared.receipt };
+          return {
+            itineraryByTripId: {
+              ...state.itineraryByTripId,
+              [input.tripId]: prepared.nextItinerary,
+            },
+          };
+        });
         return result;
       },
       savePersonalPreferenceResult: (userId, answers, completedAt) => {

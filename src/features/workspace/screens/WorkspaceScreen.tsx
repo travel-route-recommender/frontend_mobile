@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { StyleSheet, Text, View } from "react-native";
 import { useShallow } from "zustand/react/shallow";
-import { AppHeader, Card, Screen } from "../../../components/common";
+import { AppHeader, Screen } from "../../../components/common";
 import { ErrorState } from "../../../components/feedback";
 import { useAuthSessionStore } from "../../auth/store/useAuthSessionStore";
 import { useExploreSearchStore } from "../../explore/store/useExploreSearchStore";
@@ -30,6 +30,11 @@ import {
 } from "../selectors/workspaceSelectors";
 import { workspaceScheduleService } from "../services/workspaceDataPolicy";
 import type { CandidateBoardFilter, CandidatePlaceViewModel, WorkspaceFeedback } from "../types";
+import { DuriAnalysisEntryCard } from "../../duri/components/DuriAnalysisEntryCard";
+import { createDuriAnalysisSnapshot, createDuriInputFingerprint } from "../../duri/logic/analysisSnapshot";
+import { buildDuriAnalysisInputFromState } from "../../duri/selectors/duriSelectors";
+import { duriAnalysisService } from "../../duri/services/duriAnalysisService";
+import { useDuriAnalysisStore } from "../../duri/store/useDuriAnalysisStore";
 
 type EditorState =
   | { mode: "add"; placeId: string; initialValue: ScheduleEditorValue }
@@ -47,8 +52,10 @@ function mutationMessage(result: string) {
 
 export function WorkspaceScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ tripId?: string | string[] }>();
+  const params = useLocalSearchParams<{ tripId?: string | string[]; duriApplied?: string | string[]; affectedDate?: string | string[] }>();
   const tripId = Array.isArray(params.tripId) ? params.tripId[0] : params.tripId ?? "";
+  const duriApplied = Array.isArray(params.duriApplied) ? params.duriApplied[0] : params.duriApplied;
+  const affectedDate = Array.isArray(params.affectedDate) ? params.affectedDate[0] : params.affectedDate ?? "";
   const sessionKind = useAuthSessionStore((state) => state.sessionKind);
   const source = useDuriStore(useShallow((state) => ({
     currentUserId: state.currentUserId,
@@ -58,7 +65,12 @@ export function WorkspaceScreen() {
     tripsById: state.tripsById,
     candidatesByTripId: state.candidatesByTripId,
     itineraryByTripId: state.itineraryByTripId,
+    preferenceResultsByUserId: state.preferenceResultsByUserId,
     hydrationError: state.hydrationError,
+  })));
+  const analysisState = useDuriAnalysisStore(useShallow((state) => ({
+    session: state.sessionsByTripId[tripId],
+    status: state.analysisStatusByTripId[tripId] ?? "idle",
   })));
   const setActiveTrip = useDuriStore((state) => state.setActiveTrip);
   const addPlaceToItinerary = useDuriStore((state) => state.addPlaceToItinerary);
@@ -68,7 +80,7 @@ export function WorkspaceScreen() {
   const removeCandidatePlace = useDuriStore((state) => state.removeCandidatePlace);
   const startTripExplore = useExploreSearchStore((state) => state.startTripExplore);
 
-  const [requestedDate, setRequestedDate] = useState("");
+  const [requestedDate, setRequestedDate] = useState(affectedDate);
   const [candidateKeyword, setCandidateKeyword] = useState("");
   const [candidateFilter, setCandidateFilter] = useState<CandidateBoardFilter>("all");
   const [candidateExpanded, setCandidateExpanded] = useState(true);
@@ -76,7 +88,9 @@ export function WorkspaceScreen() {
   const [editor, setEditor] = useState<EditorState>();
   const [removeItemId, setRemoveItemId] = useState<string>();
   const [removeCandidateId, setRemoveCandidateId] = useState<string>();
-  const [feedback, setFeedback] = useState<WorkspaceFeedback>({ message: "" });
+  const [feedback, setFeedback] = useState<WorkspaceFeedback>(() => duriApplied === "1"
+    ? { message: "두리의 제안을 일정에 반영했어요. 현재 일정으로 다시 분석할 수 있어요.", ...(affectedDate ? { targetDate: affectedDate } : {}) }
+    : { message: "" });
 
   const today = dateToDateOnly(new Date());
   const workspace = useMemo(
@@ -99,6 +113,9 @@ export function WorkspaceScreen() {
   );
   const selectedDateView = workspace?.dates.find((date) => date.date === selectedDate);
   const rawItinerary = source.itineraryByTripId[tripId] ?? [];
+  const analysisInput = useMemo(() => buildDuriAnalysisInputFromState(source, tripId), [source, tripId]);
+  const currentAnalysisFingerprint = useMemo(() => analysisInput ? createDuriInputFingerprint(createDuriAnalysisSnapshot(analysisInput)) : "", [analysisInput]);
+  const analysisStale = Boolean(analysisState.session && analysisState.session.inputFingerprint !== currentAnalysisFingerprint);
 
   useEffect(() => {
     if (trip && trip.members.some((member) => member.userId === source.currentUserId)) setActiveTrip(trip.id);
@@ -249,7 +266,15 @@ export function WorkspaceScreen() {
       onEdit={openEditEditor}
       onRemove={setRemoveItemId}
     /> : null}
-    <Card style={styles.duriBoundary}><Text style={styles.duriStar}>✦</Text><View style={styles.duriCopy}><Text style={styles.duriTitle}>{workspace.itineraryCount ? "현재 일정을 분석할 준비가 됐어요" : "일정을 추가하면 두리가 분석해드려요"}</Text><Text style={styles.duriText}>두리 리포트·제안 미리보기·원자적 적용은 다음 워크스페이스 단계에서 이 일정 관계에 연결합니다.</Text></View></Card>
+    <DuriAnalysisEntryCard
+      itineraryCount={workspace.itineraryCount}
+      session={analysisState.session}
+      stale={analysisStale}
+      loading={analysisState.status === "loading"}
+      engineAvailable={duriAnalysisService.available && workspaceScheduleService.available}
+      engineMessage={!workspaceScheduleService.available ? workspaceScheduleService.message : duriAnalysisService.unavailableMessage}
+      onOpen={() => router.push({ pathname: "/trips/[tripId]/analysis", params: { tripId } })}
+    />
 
     <SelectCandidateModal visible={selectCandidateOpen} candidates={candidateViews} onClose={() => setSelectCandidateOpen(false)} onSelect={(candidate) => { setSelectCandidateOpen(false); openAddEditor(candidate); }} onExplore={() => { setSelectCandidateOpen(false); explore(); }} />
     <ScheduleEditorModal
@@ -285,9 +310,4 @@ const styles = StyleSheet.create({
   section: { gap: spacing.sm, marginVertical: spacing.lg },
   eyebrow: { ...typography.caption, color: colors.primary },
   sectionTitle: { ...typography.subtitle, color: colors.text },
-  duriBoundary: { flexDirection: "row", gap: spacing.md, marginTop: spacing.xl },
-  duriStar: { fontSize: 28, color: colors.primary },
-  duriCopy: { flex: 1, gap: spacing.xs },
-  duriTitle: { ...typography.bodyStrong, color: colors.text },
-  duriText: { ...typography.caption, color: colors.textSecondary },
 });

@@ -1,0 +1,31 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "customConditions": [],
+    "target": "ES2022",
+    "rootDir": ".",
+    "outDir": ".duri-verification",
+    "declaration": false,
+    "sourceMap": false
+  },
+  "include": [
+    "scripts/verify-duri-analysis.ts",
+    "src/domain/**/*.ts",
+    "src/data/workspaceSchedule.ts",
+    "src/duri/duri-analysis/**/*.ts",
+    "src/duri/duri-suggestions/**/*.ts",
+    "src/duri/group-preferences/**/*.ts",
+    "src/duri/preferences/**/*.ts",
+    "src/features/duri/constants.ts",
+    "src/features/duri/types.ts",
+    "src/features/duri/logic/**/*.ts",
+    "src/features/duri/selectors/**/*.ts",
+    "src/features/duri/validation/**/*.ts",
+    "src/features/workspace/types.ts",
+    "src/features/workspace/logic/**/*.ts",
+    "src/utils/schedule.ts"
+  ]
+}

@@ -1,5 +1,18 @@
 # 웹 → 모바일 대응표
 
+## 두리 분석·제안 매핑 (2026-07-14)
+
+| 웹 기준 | 모바일 구현 | 비고 |
+|---|---|---|
+| `DuriAnalysisWorkspace` | `app/trips/[tripId]/analysis.tsx` | 명시적 실행, coverage와 stale 추가 |
+| `DuriSuggestionDrawer` | `app/trips/[tripId]/suggestions/[suggestionId].tsx` | 세로 before/after/diff와 최종 확인 |
+| `features/duri-analysis` | `src/duri/duri-analysis` | 실제 4 category 알고리즘 재사용 |
+| `features/duri-suggestions` | `src/duri/duri-suggestions` | 실제 7 suggestion/5 change/pure apply 재사용 |
+| itinerary fingerprint | full input fingerprint + 기존 fingerprint | 후보·그룹 성향·trip 날짜 stale 포함 |
+| `applyDuriSuggestion` | `applyDuriSuggestionAtomically` | 검증 뒤 Zustand set 한 번 |
+
+모바일 context는 기존 시간 충돌 helper, 날짜 균형, 후보 활용을 보완한다. 분석·제안 UI와 local atomic apply는 완료되었고 실제 server Duri/Schedule batch와 Directions는 대기다. 세부 계약은 `MOBILE_DURI_ANALYSIS_AND_SUGGESTIONS.md`에 있다.
+
 기준 프로젝트는 상위 `duri-home-ui`이며, 모바일 작업 중 기준 프로젝트 파일은 수정하지 않는다. 웹 UI는 React Native UI로 재작성하고 도메인 타입과 브라우저 비의존 순수 로직만 이식했다.
 
 ## Route 대응

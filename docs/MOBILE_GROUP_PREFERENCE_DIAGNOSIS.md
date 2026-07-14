@@ -1,5 +1,15 @@
 # 모바일 그룹 여행 성향 진단
 
+## 일정 분석 반영 (2026-07-14)
+
+`buildDuriAnalysisInputFromState`가 현재 trip member의 유효 preference result로 diagnosis와 GroupPlanningProfile을 다시 파생해 immutable snapshot에 넣는다. fingerprint에는 실제 반영된 answers/tags/version, coverage, dimension profile과 common/shared tags가 포함된다.
+
+- insufficient: 구조 분석은 계속하지만 개인 응답을 그룹 insight처럼 쓰지 않는다.
+- partial: 현재 응답 인원과 결과 변동 가능성을 표시한다.
+- complete: 전체 member 응답을 웹 밀도·동선·식사·선호 규칙에 반영한다.
+
+큰 spread는 자동 삭제나 갈등 확률 근거가 아니라 웹 suggestion의 조율 이유에만 쓰인다. preference result가 바뀌면 이전 analysis/suggestion은 stale이다.
+
 ## 1. 응답 완료 판단 기준
 
 완료 여부의 유일한 원천은 `preferenceResultsByUserId[member.userId]`다. `TripMember`에는 완료 flag를 저장하지 않는다. 결과가 있어도 다음 조건을 모두 통과해야 `completed`다.
