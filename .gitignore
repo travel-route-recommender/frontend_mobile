@@ -23,6 +23,7 @@ expo-env.d.ts
 .group-verification/
 .trip-flow-verification/
 .place-flow-verification/
+.workspace-verification/
 
 # debug
 npm-debug.*

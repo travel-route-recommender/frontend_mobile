@@ -12,6 +12,7 @@ Expo SDK 57의 Expo Router를 사용한다. `app/`은 route 선언과 parameter 
 - `src/features/trip-creation`: 5단계 생성 화면, versioned draft Store, validation과 platform date picker
 - `src/features/places`: Place ViewModel, 검색/유사 장소/권한 순수 함수, 저장·후보 action controller와 데이터 모드 경계
 - `src/features/explore`: 목록·지역 보드 화면과 목록/지도 공유용 비영속 검색 Store
+- `src/features/workspace`: 후보 보드, 날짜 탭, 일정 편집 Modal, 날짜·시간·충돌·권한 selector/순수 함수와 Schedule 데이터 모드 경계
 - `src/domain`: 플랫폼 비의존 도메인 타입
 - `src/duri`: 플랫폼 비의존 성향·분석·제안 엔진
 - `src/data/mock`: normalized demo data
@@ -30,6 +31,8 @@ Expo SDK 57의 Expo Router를 사용한다. `app/`은 route 선언과 parameter 
 여행 목록 카드, 5단계 준비율, 후보·일정 수, 응답률과 D-day는 selector/순수 함수에서 파생한다. `TripRoom`이나 persist state에 중복 저장하지 않는다. `createTrip`은 owner·trip·관계 초기화·activeTrip을 단일 update로 반영한다.
 
 Place 원본은 placesById, 개인 저장은 savedPlaceIdsByUserId, 여행 후보는 candidatesByTripId, 일정 배치는 itineraryByTripId로 분리한다. PlaceCard는 ViewModel만 받고 Store를 import하지 않는다. 탐색 keyword/region/category/sort/viewMode는 비민감·비영속 feature Store에서 목록과 지역 보드가 공유한다. Place에 좌표가 추가되기 전에는 native map dependency나 임의 marker를 사용하지 않는다.
+
+워크스페이스 selectedDate, 후보 검색·필터, Modal, 종료 시간, 충돌, 날짜별 count와 scheduleState는 비영속 파생/UI 상태다. `ItineraryItem`의 실제 `startTime + durationMinutes`를 시간 범위로 사용하고 후보 배치 여부는 itinerary placeId lookup에서 파생한다. 일정 추가·수정·이동·삭제와 후보 제거는 trip/member/completed 정책을 Store action에서도 검증한다. 새 영속 필드가 없어 persist version은 유지한다.
 
 access token, refresh token, 비밀번호와 secret은 AsyncStorage persist 대상이 아니다.
 
@@ -50,6 +53,8 @@ QueryClient는 module singleton이다. query retry는 최대 1회, mutation retr
 Rooms 계약이 없는 현재는 api/hybrid에서 목록·상세·생성을 mock으로 fallback하지 않는다. mock의 동행자 추가는 기존 demo User만 대상으로 하며 실제 초대를 가장하지 않는다.
 
 Places/Saves/Candidates도 같은 원칙을 적용한다. 화면은 `placeRepository` 정책을 통해 availability를 받고, api/hybrid 계약 전에는 mock Place나 로컬 relation mutation으로 성공을 가장하지 않는다.
+
+Workspace Candidates/Schedule은 `workspaceScheduleService` 정책을 사용한다. mock만 로컬 편집을 허용하고 api/hybrid는 ID와 mutation 계약이 확정될 때까지 mock 후보·일정으로 fallback하지 않는다.
 
 환경 변수는 `.env.example`에 공개 가능한 값만 둔다. `EXPO_PUBLIC_*`에는 secret을 넣지 않는다.
 

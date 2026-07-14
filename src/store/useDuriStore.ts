@@ -35,6 +35,8 @@ import {
   isValidScheduleRange,
   sortItineraryItemsByDateAndTime,
 } from "../utils/schedule";
+import { moveItemWithinDate } from "../features/workspace/logic/workspaceDateTime";
+import type { ItineraryMoveDirection } from "../features/workspace/types";
 
 export type AddPlaceToItineraryInput = {
   tripId: EntityId;
@@ -43,6 +45,7 @@ export type AddPlaceToItineraryInput = {
   startTime?: string;
   durationMinutes?: number;
   preferredByUserIds?: EntityId[];
+  note?: string;
 };
 
 export type CreateTripInput = {
@@ -71,6 +74,16 @@ export type AddCandidatePlaceResult =
   | "trip-not-editable"
   | "not-member";
 
+export type RemoveCandidatePlaceResult =
+  | "removed-candidate"
+  | "removed-contribution"
+  | "invalid-trip"
+  | "invalid-candidate"
+  | "trip-not-editable"
+  | "not-member"
+  | "not-added-by-user"
+  | "scheduled";
+
 export type ItineraryMutationResult =
   | "success"
   | "invalid-trip"
@@ -78,10 +91,12 @@ export type ItineraryMutationResult =
   | "not-member"
   | "invalid-item"
   | "invalid-place"
+  | "invalid-candidate"
   | "duplicate-place"
   | "invalid-date"
   | "invalid-time"
-  | "overlap";
+  | "overlap"
+  | "boundary";
 
 type DuriActions = {
   hydrationError: string | null;
@@ -96,7 +111,7 @@ type DuriActions = {
   setActiveTrip: (tripId: EntityId) => void;
   toggleSavedPlace: (placeId: EntityId, userId?: EntityId) => void;
   addCandidatePlace: (tripId: EntityId, placeId: EntityId, addedByUserId?: EntityId) => AddCandidatePlaceResult;
-  removeCandidatePlace: (tripId: EntityId, placeId: EntityId) => void;
+  removeCandidatePlace: (tripId: EntityId, placeId: EntityId) => RemoveCandidatePlaceResult;
   addPlaceToItinerary: (input: AddPlaceToItineraryInput) => ItineraryMutationResult;
   removeItineraryItem: (tripId: EntityId, itineraryItemId: EntityId) => ItineraryMutationResult;
   updateItineraryItem: (
@@ -104,6 +119,7 @@ type DuriActions = {
     itineraryItemId: EntityId,
     patch: Partial<Omit<ItineraryItem, "id" | "tripId">>,
   ) => ItineraryMutationResult;
+  moveItineraryItem: (tripId: EntityId, itineraryItemId: EntityId, direction: ItineraryMoveDirection) => ItineraryMutationResult;
   reorderItinerary: (tripId: EntityId, orderedItemIds: EntityId[]) => ItineraryMutationResult;
   applyDuriSuggestion: (tripId: EntityId, suggestion: DuriSuggestion) => SuggestionApplyResult;
   savePersonalPreferenceResult: (
@@ -296,16 +312,46 @@ export const useDuriStore = create<DuriState>()(
 
         return result;
       },
-      removeCandidatePlace: (tripId, placeId) =>
+      removeCandidatePlace: (tripId, placeId) => {
+        let result: RemoveCandidatePlaceResult = "invalid-trip";
         set((state) => {
-          if (!state.tripsById[tripId]) return state;
+          const trip = state.tripsById[tripId];
+          if (!trip) return state;
+          if (trip.status === "completed") {
+            result = "trip-not-editable";
+            return state;
+          }
+          if (!trip.members.some((member) => member.userId === state.currentUserId)) {
+            result = "not-member";
+            return state;
+          }
+          const current = state.candidatesByTripId[tripId] ?? [];
+          const candidate = current.find((item) => item.placeId === placeId);
+          if (!candidate) {
+            result = "invalid-candidate";
+            return state;
+          }
+          if ((state.itineraryByTripId[tripId] ?? []).some((item) => item.placeId === placeId)) {
+            result = "scheduled";
+            return state;
+          }
+          if (!candidate.addedByUserIds.includes(state.currentUserId)) {
+            result = "not-added-by-user";
+            return state;
+          }
+          const remainingUserIds = candidate.addedByUserIds.filter((userId) => userId !== state.currentUserId);
+          result = remainingUserIds.length ? "removed-contribution" : "removed-candidate";
           return {
             candidatesByTripId: {
               ...state.candidatesByTripId,
-              [tripId]: (state.candidatesByTripId[tripId] ?? []).filter((candidate) => candidate.placeId !== placeId),
+              [tripId]: remainingUserIds.length
+                ? current.map((item) => item.placeId === placeId ? { ...item, addedByUserIds: remainingUserIds } : item)
+                : current.filter((item) => item.placeId !== placeId),
             },
           };
-        }),
+        });
+        return result;
+      },
       addPlaceToItinerary: (input) => {
         let result: ItineraryMutationResult = "invalid-trip";
 
@@ -325,6 +371,11 @@ export const useDuriStore = create<DuriState>()(
             result = "invalid-place";
             return state;
           }
+          const candidate = (state.candidatesByTripId[input.tripId] ?? []).find((item) => item.placeId === input.placeId);
+          if (!candidate) {
+            result = "invalid-candidate";
+            return state;
+          }
           if (!getTripDates(trip.startDate, trip.endDate).includes(input.date)) {
             result = "invalid-date";
             return state;
@@ -335,7 +386,6 @@ export const useDuriStore = create<DuriState>()(
             result = "duplicate-place";
             return state;
           }
-          const candidate = (state.candidatesByTripId[input.tripId] ?? []).find((item) => item.placeId === input.placeId);
           const nextItem: ItineraryItem = {
             id: createItineraryId(state, input.tripId, input.placeId, input.date),
             tripId: input.tripId,
@@ -345,6 +395,7 @@ export const useDuriStore = create<DuriState>()(
             durationMinutes: input.durationMinutes ?? DEFAULT_PLACE_DURATION_MINUTES,
             itemType: "place",
             preferredByUserIds: input.preferredByUserIds ?? candidate?.addedByUserIds ?? [state.currentUserId],
+            ...(input.note?.trim() ? { note: input.note.trim() } : {}),
           };
           if (!isValidScheduleRange(nextItem)) {
             result = "invalid-time";
@@ -448,6 +499,34 @@ export const useDuriStore = create<DuriState>()(
           };
         });
 
+        return result;
+      },
+      moveItineraryItem: (tripId, itineraryItemId, direction) => {
+        let result: ItineraryMutationResult = "invalid-trip";
+        set((state) => {
+          const trip = state.tripsById[tripId];
+          if (!trip) return state;
+          if (trip.status === "completed") {
+            result = "trip-not-editable";
+            return state;
+          }
+          if (!trip.members.some((member) => member.userId === state.currentUserId)) {
+            result = "not-member";
+            return state;
+          }
+          const moved = moveItemWithinDate(state.itineraryByTripId[tripId] ?? [], itineraryItemId, direction);
+          if (moved.status !== "success") {
+            result = moved.status === "boundary" ? "boundary" : moved.status;
+            return state;
+          }
+          result = "success";
+          return {
+            itineraryByTripId: {
+              ...state.itineraryByTripId,
+              [tripId]: moved.items,
+            },
+          };
+        });
         return result;
       },
       reorderItinerary: (tripId, orderedItemIds) => {

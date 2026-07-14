@@ -1,0 +1,31 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "customConditions": [],
+    "target": "ES2022",
+    "rootDir": ".",
+    "outDir": ".workspace-verification",
+    "declaration": false,
+    "sourceMap": false
+  },
+  "include": [
+    "scripts/verify-workspace-editor.ts",
+    "src/domain/**/*.ts",
+    "src/data/mock/demoData.ts",
+    "src/data/workspaceSchedule.ts",
+    "src/duri/preferences/**/*.ts",
+    "src/features/auth/types/**/*.ts",
+    "src/features/places/logic/placeSearch.ts",
+    "src/features/places/types.ts",
+    "src/features/workspace/types.ts",
+    "src/features/workspace/logic/**/*.ts",
+    "src/features/workspace/selectors/**/*.ts",
+    "src/features/workspace/validation/**/*.ts",
+    "src/store/normalizePersistedState.ts",
+    "src/utils/schedule.ts"
+  ]
+}
+

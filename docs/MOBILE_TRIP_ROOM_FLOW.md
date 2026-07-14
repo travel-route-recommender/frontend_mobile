@@ -74,7 +74,7 @@ root layout은 domain/auth/personal-test-draft/create-trip-draft 네 Store의 hy
 
 준비 진행률은 웹과 동일하게 방 생성, 성향 응답, 후보 수집, 일정 구성, 최종 확인 5단계다. 완료는 1점, 진행 중은 0.5점, 대기는 0점으로 합산한 뒤 5로 나눈다. 응답 현황은 `selectRoomPreferenceResponseSummary`, 그룹 진단은 `diagnoseGroupPreferences`를 그대로 사용하며 Store에 응답률·진단·준비율을 저장하지 않는다.
 
-후보는 `candidatesByTripId[tripId]`, 장소·추가자는 normalized ID 관계, 일정 배치는 itinerary placeId로 파생한다. 일정은 `itineraryByTripId[tripId]`를 날짜와 시간순으로 정렬한다. 후보 CRUD 전체나 gesture reorder는 이 단계에서 추가하지 않았다.
+후보는 `candidatesByTripId[tripId]`, 장소·추가자는 normalized ID 관계, 일정 배치는 itinerary placeId로 파생한다. 일정은 `itineraryByTripId[tripId]`를 날짜와 시간순으로 정렬한다. 워크스페이스에서 후보 검색·필터, 일정 추가·수정·날짜 이동·위아래 시간 재배치·삭제와 후보 제거 정책을 제공한다. 관계가 바뀌면 TripHome의 후보·일정 수와 준비 진행률은 별도 count 없이 자동 갱신된다.
 
 ## 데이터 모드
 
@@ -88,5 +88,4 @@ mock 초대 Modal은 이미 Store에 있는 demo User만 멤버로 추가한다.
 
 Rooms API에는 내 방 목록/상세/생성/수정 DTO, status 전이, member role·권한, pagination·정렬, 날짜 정책, 서버 roomId, 오류 규격이 필요하다. Invite API에는 사용자 검색 범위, 링크/code 생성, 만료, 수락, 중복 가입, guest→member 병합 정책이 필요하다.
 
-다음 Workspace 단계에서는 기존 route를 유지하면서 후보 보드 CRUD, 날짜별 일정 편집, native gesture reorder, suggestion preview/apply, 충돌·권한 오류 UX를 연결한다. 모든 mutation은 현재 tripId와 서버 계약 출처를 명시하고 mock/api 데이터를 섞지 않아야 한다.
-
+다음 Workspace 단계에서는 기존 route와 편집 관계를 유지하면서 두리 분석 리포트, suggestion before/after preview, fingerprint stale 검증과 원자적 apply를 연결한다. native gesture reorder는 서버 order/시간 정책과 접근성 대체 동작이 확정된 뒤 선택적으로 추가한다. 모든 mutation은 현재 tripId와 서버 계약 출처를 명시하고 mock/api 데이터를 섞지 않아야 한다.

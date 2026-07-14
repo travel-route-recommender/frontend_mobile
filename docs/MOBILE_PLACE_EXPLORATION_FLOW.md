@@ -54,7 +54,7 @@ SavedScreen은 saved ID를 placesById로 resolve한다. 누락 ID는 유효 장�
 
 권한과 중복은 `canAddPlaceCandidate`, `selectCandidateForPlace`, `selectCandidateStateForPlace`로 판정한 뒤 기존 `addCandidatePlace` action을 호출한다. 성공 시 activeTripId를 대상 방으로 바꾸고 feedback banner에서 Workspace로 이동할 수 있다. 후보 수, 준비 진행률, TripHome/Workspace 수치는 기존 selector가 관계에서 다시 파생하므로 별도 count를 persist하지 않는다.
 
-후보 제거는 일정 배치·다른 멤버의 관심 관계 정책이 확정되지 않아 이번 범위에서 노출하지 않는다. Workspace 후보 보드 단계에서 권한과 일정 보존 정책을 함께 구현한다.
+후보 제거는 Workspace 후보 보드에서 제공한다. 일정에 배치된 후보는 먼저 일정을 제거하도록 차단하고, 현재 사용자가 담은 관계만 제거한다. 여러 멤버가 함께 담았다면 다른 멤버의 `addedByUserIds`와 후보는 유지하며 개인 저장에는 영향을 주지 않는다.
 
 ## 데이터 모드와 API 전환
 
@@ -64,7 +64,6 @@ SavedScreen은 saved ID를 placesById로 resolve한다. 누락 ID는 유효 장�
 
 화면은 환경 변수를 직접 읽지 않고 `placeRepository` 정책 경계를 사용한다. 향후 검색·상세·유사 장소는 TanStack Query repository 결과로, 저장·후보는 서버 mutation으로 이동할 수 있다. endpoint와 DTO는 계약 전까지 구현하지 않는다.
 
-## 다음 Workspace 단계
+## Workspace 연결과 다음 단계
 
-후보 보드에서는 후보별 addedByUserIds, 공동 관심, scheduled 상태, 권한 있는 제거를 표시하고 날짜별 일정 배치와 native reorder를 연결해야 한다. 일정 충돌과 candidate 제거 정책, Duri suggestion preview/apply, 서버 room/place ID 계약을 함께 확정해야 한다.
-
+후보 보드는 addedByUserIds, itinerary 기반 scheduled 상태, 권한 있는 제거, 날짜별 일정 배치와 위·아래 시간 재배치를 구현했다. 다음 단계에서는 Duri report와 suggestion preview/apply, 서버 room/place/candidate/schedule ID 및 원자적 mutation 계약을 확정해야 한다.
