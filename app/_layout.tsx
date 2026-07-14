@@ -8,6 +8,7 @@ import { Screen } from "../src/components/common";
 import { ErrorState, LoadingState } from "../src/components/feedback";
 import { useAuthSessionHydration } from "../src/features/auth/hooks/useAuthSessionHydration";
 import { useAuthSessionStore } from "../src/features/auth/store/useAuthSessionStore";
+import { usePreferenceDraftHydration } from "../src/features/preferences/hooks/usePreferenceDraftHydration";
 import { queryClient } from "../src/query/queryClient";
 import { useStoreHydration } from "../src/store/useStoreHydration";
 import { useDuriStore } from "../src/store/useDuriStore";
@@ -20,9 +21,10 @@ export default function RootLayout() {
 function HydratedNavigator() {
   const domainHydration = useStoreHydration();
   const authHydration = useAuthSessionHydration();
-  const error = domainHydration.error ?? authHydration.error;
-  if (error) return <Screen><ErrorState message={error.message} onRetry={() => { void Promise.all([domainHydration.retry(), authHydration.retry()]); }} /></Screen>;
-  if (!domainHydration.isHydrated || !authHydration.isHydrated) return <View style={styles.loading}><LoadingState label="두리와 여행 정보를 준비하고 있어요" /></View>;
+  const preferenceDraftHydration = usePreferenceDraftHydration();
+  const error = domainHydration.error ?? authHydration.error ?? preferenceDraftHydration.error;
+  if (error) return <Screen><ErrorState message={error.message} onRetry={() => { void Promise.all([domainHydration.retry(), authHydration.retry(), preferenceDraftHydration.retry()]); }} /></Screen>;
+  if (!domainHydration.isHydrated || !authHydration.isHydrated || !preferenceDraftHydration.isHydrated) return <View style={styles.loading}><LoadingState label="두리와 여행 정보를 준비하고 있어요" /></View>;
   return <SessionAwareNavigator />;
 }
 

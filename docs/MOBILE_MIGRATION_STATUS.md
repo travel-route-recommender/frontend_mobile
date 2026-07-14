@@ -5,7 +5,11 @@
 - Expo SDK 57 + TypeScript + Expo Router 프로젝트 기반
 - 홈, 탐색, 여행, 저장, 마이 5개 탭
 - 장소 상세, 여행 상세, 새 여행, workspace 기반 route
-- 개인 여행 성향 테스트와 결과 저장
+- 웹 기준 6문항 개인 여행 성향 테스트, 답변 검토와 결과 저장
+- 개인 테스트 중간 draft 복구, 이어하기, 처음부터 다시 하기
+- anonymous 체험 결과, guest/member 결과 영속 정책 분리
+- 재테스트 확인과 기존 결과 보호
+- API/hybrid Quiz 계약 대기 오류와 mock fallback 차단
 - React Native theme token과 공통 컴포넌트
 - normalized mock data와 AsyncStorage persist
 - SecureStore TokenStorage adapter 골격
@@ -24,6 +28,7 @@
 
 - workspace: 후보·일정·참여자 수와 로컬 분석 요약만 제공
 - auth API: UI와 adapter 경계는 완료, 실제 서버 계약은 대기
+- Quiz API: 로컬 기준 로직과 adapter 경계는 완료, 실제 서버 계약은 대기
 - 초대 딥링크: code를 native 초대 화면으로 전달
 - 앱 아이콘·splash: 공식 템플릿 placeholder를 사용
 
@@ -35,6 +40,7 @@
 - 두리 분석 리포트, 제안 preview·apply UI
 - guest → member 계정 병합
 - 확정된 이용약관과 개인정보 처리 법률 문서
+- server Quiz 결과 동기화와 guest → member 결과 병합
 
 ## 백엔드 계약 대기
 

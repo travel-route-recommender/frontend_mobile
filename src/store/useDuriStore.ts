@@ -108,6 +108,7 @@ type DuriActions = {
   savePersonalPreferenceResult: (
     userId: EntityId | undefined,
     answers: PersonalPreferenceAnswers,
+    completedAt?: string,
   ) => UserPreferenceResult | undefined;
   resetDemoData: () => void;
 };
@@ -546,13 +547,13 @@ export const useDuriStore = create<DuriState>()(
 
         return result;
       },
-      savePersonalPreferenceResult: (userId, answers) => {
+      savePersonalPreferenceResult: (userId, answers, completedAt) => {
         let saved: UserPreferenceResult | undefined;
 
         set((state) => {
           const targetUserId = userId ?? state.currentUserId;
           if (targetUserId !== state.currentUserId || !state.usersById[targetUserId]) return state;
-          saved = calculatePersonalPreferenceResult(targetUserId, answers);
+          saved = calculatePersonalPreferenceResult(targetUserId, answers, completedAt);
           const tripsById = Object.fromEntries(
             Object.entries(state.tripsById).map(([tripId, trip]) => [
               tripId,

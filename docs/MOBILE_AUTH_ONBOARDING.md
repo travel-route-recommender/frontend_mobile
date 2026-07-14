@@ -24,7 +24,7 @@ route 파일은 `src/features/auth/screens`의 화면만 export한다. 긴 화�
 | `/(onboarding)/intro` | `OnboardingIntroScreen` | `onboardingIntroSeen` |
 | `/tests/personal` | 기존 `PersonalTestScreen` | 실제 결과 저장 성공 시 `preferenceTestCompleted` |
 
-`app/index.tsx`의 bootstrap은 두 Store hydration이 끝난 뒤 세션 상태, 프로필 완료, 소개 확인 순으로 진입 위치를 결정한다. root layout은 인증 세션의 사용자 ID를 기존 도메인 Store의 `currentUserId`와 맞춘다.
+`app/index.tsx`의 bootstrap은 domain, auth, preference draft Store hydration이 끝난 뒤 세션 상태, 프로필 완료, 소개 확인 순으로 진입 위치를 결정한다. root layout은 인증 세션의 사용자 ID를 기존 도메인 Store의 `currentUserId`와 맞춘다.
 
 ## 3. sessionKind
 
@@ -113,9 +113,9 @@ route 파일은 `src/features/auth/screens`의 화면만 export한다. 긴 화�
 ## 11. onboardingIntroSeen과 preferenceTestCompleted
 
 - `onboardingIntroSeen`: 소개 화면을 확인했거나 “다음에 하기”를 누르면 `true`.
-- `preferenceTestCompleted`: 성향 결과가 실제 도메인 Store에 저장된 뒤에만 `true`.
+- `preferenceTestCompleted`: member/guest 성향 결과가 실제 도메인 Store에 저장된 뒤에만 `true`.
 
-“다음에 하기”는 `preferenceTestCompleted`를 바꾸지 않는다. 현재 모바일에는 이전 단계에서 완성된 개인 성향 테스트가 이미 있으므로 이번 작업은 테스트 데이터나 계산을 다시 만들지 않고 완료 플래그 연결만 추가했다.
+“다음에 하기”는 `preferenceTestCompleted`를 바꾸지 않는다. anonymous 체험 결과도 이 값을 바꾸지 않는다. 개인 성향 테스트는 웹 기준 6문항, 영속 draft, 답변 검토와 재테스트 보호 흐름까지 구현되어 있다.
 
 ## 12. reference에서 반영한 디자인
 
@@ -140,7 +140,7 @@ route 파일은 `src/features/auth/screens`의 화면만 export한다. 긴 화�
 
 ## 14. 다음 단계
 
-기존 개인 성향 테스트를 서버 계약과 연결할 때는 다음이 필요하다.
+개인 성향 테스트를 서버 계약과 연결할 때는 다음이 필요하다.
 
 1. 질문·답변·결과 DTO와 버전 정책 확정
 2. 로컬 완료 결과와 서버 결과의 source-of-truth 정책 확정

@@ -22,6 +22,8 @@ Expo SDK 57의 Expo Router를 사용한다. `app/`은 route 선언과 parameter 
 
 `skipHydration`으로 자동 초기화를 끄고 root layout에서 명시적으로 rehydrate한다. hydrate가 끝나기 전에는 빈 상태나 route redirect를 렌더하지 않는다. 복구 실패 시 재시도 가능한 ErrorState를 표시한다.
 
+개인 성향 테스트의 진행 draft는 도메인 완료 결과와 분리한다. `duri-personal-preference-draft`는 현재 문항, 부분 답변, 소유 범위, config version과 시각만 저장한다. root layout은 domain/auth/draft 세 Store의 hydration을 모두 기다린다. anonymous 체험 결과는 메모리에만 두며 AsyncStorage에 persist하지 않는다.
+
 access token, refresh token, 비밀번호와 secret은 AsyncStorage persist 대상이 아니다.
 
 ## SecureStore
@@ -43,6 +45,8 @@ QueryClient는 module singleton이다. query retry는 최대 1회, mutation retr
 ## Duri local engine
 
 개인 성향 결과, 그룹 진단, GroupPlanningProfile, 일정 분석, suggestion fingerprint, preview와 적용 함수는 React와 Store를 import하지 않는 순수 함수다. 같은 normalized 입력에 대해 웹과 같은 분석 결과를 내도록 기준 구현을 유지한다.
+
+개인 성향 질문 config, 도메인 타입과 결과 계산 파일은 `Frontend_new` 기준과 동일하다. 화면은 `preferenceSubmissionService`를 통해 제출하며 mock만 local 계산을 허용한다. api/hybrid는 Quiz 계약 전까지 네트워크를 호출하거나 local 결과로 fallback하지 않는다.
 
 ## 딥링크
 

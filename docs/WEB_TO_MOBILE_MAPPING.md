@@ -17,6 +17,7 @@
 | `/saved` | `SavedPage` | `app/(tabs)/saved.tsx` | `SavedScreen` | 저장 해제·빈 상태 완료 |
 | `/mypage` | `MyPage` | `app/(tabs)/mypage.tsx` | `MyPageScreen` | 기본 요약 완료 |
 | `/tests/personal` | `PersonalPreferenceTestPage` | `app/tests/personal/index.tsx` | `PersonalTestScreen` | 전체 질문·저장 완료 |
+| - | 웹은 마지막 문항에서 바로 제출 | `app/tests/personal/review.tsx` | `PersonalReviewScreen` | 모바일 답변 검토·수정 완료 |
 | `/tests/personal/result` | `PersonalPreferenceResultPage` | `app/tests/personal/result.tsx` | `PersonalResultScreen` | 완료 |
 | `/login` | `LoginPage` | `app/(auth)/login.tsx` | `LoginScreen` | mock 완료·API 계약 대기 표시 |
 | `/signup` | 가입 방식 선택 | `app/(auth)/signup-choice.tsx` | `SignupChoiceScreen` | 완료 |
@@ -50,6 +51,7 @@
 - 원격 이미지는 React Native `Image`와 오류 fallback으로 표시
 - 인증 세션은 별도 Zustand Store와 AsyncStorage key로 분리
 - guest 유도 UX는 Context 대신 `useMemberGate`와 Native Modal로 재작성
+- 개인 성향 문항·계산·도메인은 웹 기준 파일과 동일하게 유지하고, 모바일에 영속 draft·검토·재테스트 보호 UX를 추가
 
 ### C. 모바일에서 재작성
 
@@ -63,4 +65,5 @@
 - 실제 지도, 전체 workspace 편집기, 제안 미리보기·적용 UI
 - 그룹 진단 상세, 두리 분석 리포트 전용 화면
 - 실제 로그인·회원가입·초대 수락 API, OAuth, JWT refresh
+- Quiz questions/status/submit API와 server/local 결과 병합
 - 푸시, WebSocket, 네이티브 gesture와 bottom sheet
