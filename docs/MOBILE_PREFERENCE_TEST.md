@@ -93,7 +93,7 @@ interface PersonalPreferenceDraft {
 - member/guest: 기존 도메인 Store의 `preferenceResultsByUserId[userId]`
 - anonymous: feature Store의 비영속 `anonymousResult`
 
-member/guest 저장 성공 시 여행방 member 응답 상태, `preferenceTestCompleted`, `onboardingIntroSeen`을 갱신하고 draft를 제거한 뒤 result route로 replace한다. 저장 실패 시 기존 완료 결과와 draft를 모두 유지한다.
+member/guest 저장 성공 시 `preferenceResultsByUserId`, `preferenceTestCompleted`, `onboardingIntroSeen`을 갱신하고 draft를 제거한 뒤 result route로 replace한다. 여행방 member에는 완료 flag를 저장하지 않으며 응답 상태는 결과의 version과 답변 유효성에서 파생한다. 저장 실패 시 기존 완료 결과와 draft를 모두 유지한다.
 
 ## 8. anonymous / guest / member 정책
 
@@ -141,8 +141,8 @@ draft의 `configVersion`이 현재 version과 다르면 hydration normalization�
 
 계약 확정 전에는 실제 endpoint를 호출하지 않는다.
 
-## 14. 다음 단계 그룹 응답 현황
+## 14. 그룹 응답 현황 연결
 
-현재 `selectTripPreferenceResponseStatus`, `selectCompletedPreferenceMemberIds`, `selectPendingPreferenceMembers`, `selectTripPreferenceProgress`가 결과 존재 여부로 완료/미완료와 count를 계산한다.
+`selectMemberPreferenceStatus`와 `selectRoomPreferenceResponseSummary`가 실제 결과의 userId, version, 6개 답변을 검증해 completed/pending/invalid와 completion rate를 계산한다. Auth Session의 `preferenceTestCompleted`도 hydration 뒤 같은 실제 결과 존재 여부와 맞춘다.
 
-다음 단계에서는 completion rate, 여행방 완료/대기 목록, 그룹 진단 실행 조건, guest 병합 ID 재매핑, server 동기화 상태를 이 selector 위에 연결한다.
+여행방 상세에는 멤버별 상태, partial/complete 진단, 5개 계획 차원 spread, tag와 GroupPlanningProfile 기반이 연결되어 있다. 자세한 정책은 `MOBILE_GROUP_PREFERENCE_DIAGNOSIS.md`를 따른다. guest 병합 ID 재매핑과 server 동기화는 계약 대기다.

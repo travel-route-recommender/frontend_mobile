@@ -17,5 +17,12 @@ export function deriveGroupPlanningProfile(diagnosis?: GroupPreferenceDiagnosis)
       ? { average: diagnosis?.dimensions[dimension].average, spread: diagnosis?.dimensions[dimension].spread }
       : { average: undefined, spread: undefined },
   ])) as Pick<GroupPlanningProfile, GroupPlanningDimension>;
-  return { dataStatus, completedMemberCount, totalMemberCount, ...dimensionProfiles };
+  return {
+    dataStatus,
+    completedMemberCount,
+    totalMemberCount,
+    commonTags: dataStatus === "insufficient" ? [] : [...(diagnosis?.commonPreferredTags ?? [])],
+    sharedPreferredTags: dataStatus === "insufficient" ? [] : [...(diagnosis?.sharedPreferredTags ?? [])],
+    ...dimensionProfiles,
+  };
 }

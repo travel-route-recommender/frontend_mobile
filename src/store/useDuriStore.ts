@@ -155,7 +155,7 @@ export const useDuriStore = create<DuriState>()(
             ...state.tripsById,
             [tripId]: {
               ...trip,
-              members: [...trip.members, { userId, role: "member", preferenceStatus: state.preferenceResultsByUserId[userId] ? "completed" : "pending" }],
+              members: [...trip.members, { userId, role: "member" }],
             },
           },
           activeTripId: state.currentUserId === userId ? tripId : state.activeTripId,
@@ -213,7 +213,6 @@ export const useDuriStore = create<DuriState>()(
             members: memberUserIds.map((userId, index) => ({
               userId,
               role: index === 0 ? "owner" : "member",
-              preferenceStatus: state.preferenceResultsByUserId[userId] ? "completed" : "pending",
             })),
           };
 
@@ -554,25 +553,11 @@ export const useDuriStore = create<DuriState>()(
           const targetUserId = userId ?? state.currentUserId;
           if (targetUserId !== state.currentUserId || !state.usersById[targetUserId]) return state;
           saved = calculatePersonalPreferenceResult(targetUserId, answers, completedAt);
-          const tripsById = Object.fromEntries(
-            Object.entries(state.tripsById).map(([tripId, trip]) => [
-              tripId,
-              trip.members.some((member) => member.userId === targetUserId)
-                ? {
-                    ...trip,
-                    members: trip.members.map((member) => member.userId === targetUserId
-                      ? { ...member, preferenceStatus: "completed" as const }
-                      : member),
-                  }
-                : trip,
-            ]),
-          );
           return {
             preferenceResultsByUserId: {
               ...state.preferenceResultsByUserId,
               [targetUserId]: saved,
             },
-            tripsById,
           };
         });
 
@@ -584,7 +569,7 @@ export const useDuriStore = create<DuriState>()(
       name: "duri-mobile-store",
       storage: createJSONStorage(() => AsyncStorage),
       skipHydration: true,
-      version: 3,
+      version: 4,
       migrate: (persistedState) => normalizePersistedState(persistedState),
       merge: (persistedState, currentState) => ({
         ...currentState,

@@ -10,6 +10,12 @@
 - anonymous 체험 결과, guest/member 결과 영속 정책 분리
 - 재테스트 확인과 기존 결과 보호
 - API/hybrid Quiz 계약 대기 오류와 mock fallback 차단
+- 여행방 멤버별 completed/pending/invalid 응답 상태와 완료 비율
+- 0~1명 insufficient, 2명 이상 partial/complete 그룹 성향 진단
+- 웹 기준 5개 계획 차원 spread와 common/compatible/needs-tuning 분류
+- 응답자 tag 집계, 모바일 조율 지표, GroupPlanningProfile 기반
+- 여행방 상세 응답 현황·그룹 진단·내 테스트/결과/재테스트 CTA
+- 실행 가능한 15개 순수 함수 fixture 검증
 - React Native theme token과 공통 컴포넌트
 - normalized mock data와 AsyncStorage persist
 - SecureStore TokenStorage adapter 골격
@@ -35,7 +41,7 @@
 ## 미구현
 
 - 지도, 장소 기반 위치 권한
-- 그룹 성향 진단 상세 화면
+- 그룹 진단 전용 상세 route (여행방 상세 내 요약·차원 카드는 완료)
 - 후보 보드와 일정 편집 gesture
 - 두리 분석 리포트, 제안 preview·apply UI
 - guest → member 계정 병합

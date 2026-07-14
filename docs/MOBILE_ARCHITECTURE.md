@@ -18,7 +18,7 @@ Expo SDK 57의 Expo Router를 사용한다. `app/`은 route 선언과 parameter 
 
 ## Store와 persist
 
-웹의 normalized 구조를 유지한다. 상태에는 사용자, 지역, 장소, 여행방, 후보, 일정, 성향 결과, 분석 cache 자리와 사용자별 저장 ID가 있다. `zustand/middleware`의 `createJSONStorage`와 AsyncStorage를 사용하며 storage key는 `duri-mobile-store`, persist version은 `3`이다. migration은 알려지지 않은 저장값을 검증하고 normalized relation을 복구한다.
+웹의 normalized 구조를 유지한다. 상태에는 사용자, 지역, 장소, 여행방, 후보, 일정, 성향 결과, 분석 cache 자리와 사용자별 저장 ID가 있다. `zustand/middleware`의 `createJSONStorage`와 AsyncStorage를 사용하며 storage key는 `duri-mobile-store`, persist version은 `4`, domain schema version은 `3`이다. migration은 알려지지 않은 저장값을 검증하고 normalized relation을 복구한다.
 
 `skipHydration`으로 자동 초기화를 끄고 root layout에서 명시적으로 rehydrate한다. hydrate가 끝나기 전에는 빈 상태나 route redirect를 렌더하지 않는다. 복구 실패 시 재시도 가능한 ErrorState를 표시한다.
 
@@ -47,6 +47,8 @@ QueryClient는 module singleton이다. query retry는 최대 1회, mutation retr
 개인 성향 결과, 그룹 진단, GroupPlanningProfile, 일정 분석, suggestion fingerprint, preview와 적용 함수는 React와 Store를 import하지 않는 순수 함수다. 같은 normalized 입력에 대해 웹과 같은 분석 결과를 내도록 기준 구현을 유지한다.
 
 개인 성향 질문 config, 도메인 타입과 결과 계산 파일은 `Frontend_new` 기준과 동일하다. 화면은 `preferenceSubmissionService`를 통해 제출하며 mock만 local 계산을 허용한다. api/hybrid는 Quiz 계약 전까지 네트워크를 호출하거나 local 결과로 fallback하지 않는다.
+
+그룹 응답 상태와 진단은 `TripMember.userId -> usersById -> preferenceResultsByUserId` 관계에서 파생한다. `TripMember`에 완료 flag를 저장하지 않는다. selector가 version과 6개 필수 답변을 검증하고, Duri group domain이 웹 기준 5개 계획 차원의 spread와 GroupPlanningProfile을 계산한다. completion rate, coverage, match rate, tag 집계와 그룹 프로필은 persist하지 않는다.
 
 ## 딥링크
 

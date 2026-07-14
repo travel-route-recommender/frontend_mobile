@@ -2,6 +2,14 @@ import type { EntityId, Place, TripCandidate } from "../domain";
 import { analyzeTrip } from "../duri/duri-analysis";
 import type { DuriAnalysisInput } from "../duri/duri-analysis";
 import { diagnoseGroupPreferences } from "../duri/group-preferences";
+import {
+  selectMemberPreferenceStatus,
+  selectRoomPreferenceResponseSummary,
+} from "../features/trips/selectors";
+import type {
+  MemberPreferenceStatus,
+  RoomPreferenceResponseSummary,
+} from "../features/trips/selectors";
 import type { DuriState } from "./useDuriStore";
 
 const emptyEntityIds: EntityId[] = [];
@@ -80,57 +88,34 @@ export const selectTripMembers = (state: DuriState, tripId: EntityId) => {
   return trip?.members.map((member) => state.usersById[member.userId]).filter(Boolean) ?? [];
 };
 
-export type TripPreferenceMemberView = {
-  userId: EntityId;
-  name: string;
-  initial: string;
-  completed: boolean;
-  isCurrentUser: boolean;
-};
+export type TripPreferenceMemberView = MemberPreferenceStatus;
 
-export type TripPreferenceProgress = {
-  completedCount: number;
-  totalCount: number;
+export type TripPreferenceProgress = RoomPreferenceResponseSummary & {
   status: "not-started" | "in-progress" | "completed";
-  members: TripPreferenceMemberView[];
   completedMembers: TripPreferenceMemberView[];
   pendingMembers: TripPreferenceMemberView[];
 };
 
-export const selectTripPreferenceResponseStatus = (state: DuriState, tripId: EntityId) => {
-  const trip = selectTripById(state, tripId);
-  return trip?.members.map((member) => {
-    const user = state.usersById[member.userId];
-    return {
-      userId: member.userId,
-      name: user?.name ?? "참여자",
-      initial: user?.initial ?? "?",
-      completed: Boolean(state.preferenceResultsByUserId[member.userId]),
-      isCurrentUser: member.userId === state.currentUserId,
-    };
-  }) ?? [];
-};
+export const selectTripPreferenceResponseStatus = selectMemberPreferenceStatus;
 
 export const selectCompletedPreferenceMemberIds = (state: DuriState, tripId: EntityId) =>
-  selectTripPreferenceResponseStatus(state, tripId).flatMap((member) => member.completed ? [member.userId] : []);
+  selectRoomPreferenceResponseSummary(state, tripId).completedMemberIds;
 
 export const selectPendingPreferenceMembers = (state: DuriState, tripId: EntityId) =>
-  selectTripPreferenceResponseStatus(state, tripId).filter((member) => !member.completed);
+  selectTripPreferenceResponseStatus(state, tripId).filter((member) => member.state !== "completed");
 
 export const selectTripPreferenceProgress = (state: DuriState, tripId: EntityId): TripPreferenceProgress => {
-  const members = selectTripPreferenceResponseStatus(state, tripId);
-  const completedMembers = members.filter((member) => member.completed);
-  const pendingMembers = members.filter((member) => !member.completed);
-  const status = members.length > 0 && completedMembers.length === members.length
+  const summary = selectRoomPreferenceResponseSummary(state, tripId);
+  const completedMembers = summary.members.filter((member) => member.state === "completed");
+  const pendingMembers = summary.members.filter((member) => member.state !== "completed");
+  const status = summary.isComplete
     ? "completed"
-    : completedMembers.length > 0
+    : summary.completedCount > 0
       ? "in-progress"
       : "not-started";
   return {
-    completedCount: completedMembers.length,
-    totalCount: members.length,
+    ...summary,
     status,
-    members,
     completedMembers,
     pendingMembers,
   };
@@ -211,4 +196,3 @@ export function resolveCandidatePlaces(
     return place ? [{ candidate, place }] : [];
   });
 }
-

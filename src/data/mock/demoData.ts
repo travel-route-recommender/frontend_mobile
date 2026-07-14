@@ -170,9 +170,9 @@ export function createDemoData(): DuriDomainState {
     budgetLevel: "standard",
     intensity: "balanced",
     members: [
-      { userId: "user-soomin", role: "owner", preferenceStatus: "completed" },
-      { userId: "user-jiyoon", role: "member", preferenceStatus: "completed" },
-      { userId: "user-minjae", role: "member", preferenceStatus: "pending" },
+      { userId: "user-soomin", role: "owner" },
+      { userId: "user-jiyoon", role: "member" },
+      { userId: "user-minjae", role: "member" },
     ],
   };
 
@@ -224,7 +224,7 @@ export function createDemoData(): DuriDomainState {
   ];
 
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     currentUserId: DEMO_CURRENT_USER_ID,
     activeTripId: trip.id,
     usersById: Object.fromEntries(users.map((user) => [user.id, user])),
@@ -263,5 +263,4 @@ export function createDemoData(): DuriDomainState {
     },
   };
 }
-
 

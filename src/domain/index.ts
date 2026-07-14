@@ -1,7 +1,6 @@
 export type { EntityId, ISODateString, TimeString, User } from "./user";
 export type { Place, Region } from "./place";
 export type {
-  PreferenceResponseStatus,
   TripBudgetLevel,
   TripCandidate,
   TripIntensity,

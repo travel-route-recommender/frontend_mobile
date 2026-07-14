@@ -2,3 +2,7 @@ export * from "./types";
 export * from "./diagnoseGroupPreferences";
 export * from "./deriveGroupPlanningProfile";
 export * from "./planningProfileEvidence";
+export * from "./normalizePreferenceResult";
+export * from "./diagnosePreferenceDimension";
+export * from "./calculateGroupMatchRate";
+export * from "./summarizeGroupPreferredTags";

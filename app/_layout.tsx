@@ -9,6 +9,7 @@ import { ErrorState, LoadingState } from "../src/components/feedback";
 import { useAuthSessionHydration } from "../src/features/auth/hooks/useAuthSessionHydration";
 import { useAuthSessionStore } from "../src/features/auth/store/useAuthSessionStore";
 import { usePreferenceDraftHydration } from "../src/features/preferences/hooks/usePreferenceDraftHydration";
+import { normalizePreferenceResult } from "../src/duri/group-preferences";
 import { queryClient } from "../src/query/queryClient";
 import { useStoreHydration } from "../src/store/useStoreHydration";
 import { useDuriStore } from "../src/store/useDuriStore";
@@ -31,13 +32,18 @@ function HydratedNavigator() {
 function SessionAwareNavigator() {
   const sessionKind = useAuthSessionStore((state) => state.sessionKind);
   const sessionUserId = useAuthSessionStore((state) => state.currentSessionUserId);
+  const preferenceTestCompleted = useAuthSessionStore((state) => state.preferenceTestCompleted);
+  const setPreferenceTestCompleted = useAuthSessionStore((state) => state.setPreferenceTestCompleted);
   const domainUserId = useDuriStore((state) => state.currentUserId);
   const sessionUserExists = useDuriStore((state) => sessionUserId ? Boolean(state.usersById[sessionUserId]) : false);
+  const hasSupportedPreferenceResult = useDuriStore((state) => sessionUserId ? Boolean(normalizePreferenceResult(state.preferenceResultsByUserId[sessionUserId], sessionUserId)) : false);
   const setCurrentUser = useDuriStore((state) => state.setCurrentUser);
   const expectedUserId = sessionKind === "member" || sessionKind === "guest" ? sessionUserId ?? "" : "";
   const shouldReconcile = domainUserId !== expectedUserId && (!expectedUserId || sessionUserExists);
+  const shouldReconcilePreference = !shouldReconcile && Boolean(expectedUserId) && preferenceTestCompleted !== hasSupportedPreferenceResult;
   useEffect(() => { if (shouldReconcile) setCurrentUser(expectedUserId || null); }, [expectedUserId, setCurrentUser, shouldReconcile]);
-  if (shouldReconcile) return <View style={styles.loading}><LoadingState label="로그인 상태를 맞추고 있어요" /></View>;
+  useEffect(() => { if (shouldReconcilePreference) setPreferenceTestCompleted(hasSupportedPreferenceResult); }, [hasSupportedPreferenceResult, setPreferenceTestCompleted, shouldReconcilePreference]);
+  if (shouldReconcile || shouldReconcilePreference) return <View style={styles.loading}><LoadingState label="로그인과 성향 결과 상태를 맞추고 있어요" /></View>;
   return <><StatusBar style="dark" /><Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }} /></>;
 }
 const styles = StyleSheet.create({ loading: { flex: 1, backgroundColor: colors.background } });

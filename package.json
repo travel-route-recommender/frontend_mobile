@@ -45,6 +45,7 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
+    "verify:group-preferences": "tsc -p tsconfig.group-verification.json && node .group-verification/scripts/verify-group-preferences.js",
     "build": "expo export --platform all"
   },
   "private": true

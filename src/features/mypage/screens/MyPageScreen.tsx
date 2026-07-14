@@ -9,7 +9,6 @@ import { useAuthSessionStore } from "../../auth/store/useAuthSessionStore";
 
 export function MyPageScreen() {
   const sessionKind = useAuthSessionStore((session) => session.sessionKind);
-  const preferenceTestCompleted = useAuthSessionStore((session) => session.preferenceTestCompleted);
   const { requireMember, memberGatePrompt } = useMemberGate();
   const { logout } = useAuthFlow();
   const state = useDuriStore();
@@ -26,7 +25,7 @@ export function MyPageScreen() {
   </Screen>;
 
   return <Screen>
-    <View style={styles.header}><Avatar name={user?.initial ?? user?.name ?? "여행자"} uri={user?.profileImageUrl} size={64} /><View style={styles.headerCopy}><Text style={styles.title}>{user?.name ?? "여행자"}</Text><Text style={styles.subtitle}>{sessionKind === "guest" ? "초대받은 여행에 게스트로 참여 중이에요" : result || preferenceTestCompleted ? "개인 여행 성향 분석을 완료했어요" : "여행 성향 테스트를 기다리고 있어요"}</Text></View></View>
+    <View style={styles.header}><Avatar name={user?.initial ?? user?.name ?? "여행자"} uri={user?.profileImageUrl} size={64} /><View style={styles.headerCopy}><Text style={styles.title}>{user?.name ?? "여행자"}</Text><Text style={styles.subtitle}>{sessionKind === "guest" ? "초대받은 여행에 게스트로 참여 중이에요" : result ? "개인 여행 성향 분석을 완료했어요" : "여행 성향 테스트를 기다리고 있어요"}</Text></View></View>
     <View style={styles.stats}><Metric value={trips.length} label="여행" /><Metric value={savedCount} label="저장" /><Metric value={result ? result.traits.length : 0} label="취향 키워드" /></View>
     <SectionHeader title="나의 여행 성향" />
     <Card style={styles.preference}>

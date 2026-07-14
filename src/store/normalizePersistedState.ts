@@ -21,7 +21,7 @@ import { normalizeLegacyPreferenceResult } from "../duri/preferences";
 import { createDemoData, type DuriDomainState } from "../data/mock/demoData";
 import { getTripDates, isValidScheduleRange, sortItineraryItemsByDateAndTime } from "../utils/schedule";
 
-export const CURRENT_SCHEMA_VERSION = 2;
+export const CURRENT_SCHEMA_VERSION = 3;
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -98,23 +98,22 @@ function normalizePlaces(value: unknown, fallback: Record<EntityId, Place>) {
   }));
 }
 
-function normalizeMembers(value: unknown, usersById: Record<EntityId, User>) {
+function normalizeMembers(value: unknown) {
   if (!Array.isArray(value)) return [];
   const seen = new Set<EntityId>();
   return value.flatMap((entry): TripMember[] => {
     if (!isRecord(entry)) return [];
     const userId = asString(entry.userId);
-    if (!userId || !usersById[userId] || seen.has(userId)) return [];
+    if (seen.has(userId)) return [];
     seen.add(userId);
     return [{
       userId,
       role: entry.role === "owner" ? "owner" : "member",
-      preferenceStatus: entry.preferenceStatus === "completed" ? "completed" : "pending",
     }];
   });
 }
 
-function normalizeTrips(value: unknown, fallback: Record<EntityId, TripRoom>, usersById: Record<EntityId, User>) {
+function normalizeTrips(value: unknown, fallback: Record<EntityId, TripRoom>) {
   const source = sourceRecord(value, fallback);
   return Object.fromEntries(Object.entries(source).flatMap(([key, entry]) => {
     if (!isRecord(entry)) return [];
@@ -134,7 +133,7 @@ function normalizeTrips(value: unknown, fallback: Record<EntityId, TripRoom>, us
       transport,
       budgetLevel,
       intensity,
-      members: normalizeMembers(entry.members, usersById),
+      members: normalizeMembers(entry.members),
     };
     return [[id, trip]];
   }));
@@ -230,8 +229,20 @@ function normalizePreferenceResults(value: unknown, usersById: Record<EntityId, 
     const preferredTags = asStringArray(entry.preferredTags);
     const hasLegacySignal = typeof entry.profileType === "string" || traits.length > 0 || preferredTags.length > 0;
     if (!answers && !hasLegacySignal) return [];
+    if (answers) {
+      const result: UserPreferenceResult = {
+        userId,
+        answers,
+        profileType: asString(entry.profileType, "균형형 여행자"),
+        traits,
+        preferredTags,
+        completedAt: asString(entry.completedAt),
+        // 명시적인 미지원 버전은 selector에서 invalid로 판정할 수 있도록 보존한다.
+        version: typeof entry.version === "number" ? entry.version : 0,
+      };
+      return [[userId, result]];
+    }
     const safeValue: Partial<UserPreferenceResult> = {
-      ...(answers ? { answers } : {}),
       ...(typeof entry.profileType === "string" ? { profileType: entry.profileType } : {}),
       traits,
       preferredTags,
@@ -255,7 +266,7 @@ export function normalizePersistedState(value: unknown, fallback = createDemoDat
   const usersById = normalizeUsers(source.usersById, fallback.usersById);
   const regionsById = normalizeRegions(source.regionsById, fallback.regionsById);
   const placesById = normalizePlaces(source.placesById, fallback.placesById);
-  const tripsById = normalizeTrips(source.tripsById, fallback.tripsById, usersById);
+  const tripsById = normalizeTrips(source.tripsById, fallback.tripsById);
   const tripOrder = normalizeTripOrder(source.tripOrder ?? fallback.tripOrder, tripsById);
   const currentUserCandidate = typeof source.currentUserId === "string" ? source.currentUserId : fallback.currentUserId;
   const currentUserId = usersById[currentUserCandidate] ? currentUserCandidate : "";
@@ -270,16 +281,6 @@ export function normalizePersistedState(value: unknown, fallback = createDemoDat
     usersById,
     placesById,
   );
-  const consistentTripsById = Object.fromEntries(Object.entries(tripsById).map(([tripId, trip]) => [
-    tripId,
-    {
-      ...trip,
-      members: trip.members.map((member) => ({
-        ...member,
-        preferenceStatus: preferenceResultsByUserId[member.userId] ? "completed" as const : "pending" as const,
-      })),
-    },
-  ]));
   const activeCandidate = typeof source.activeTripId === "string" ? source.activeTripId : fallback.activeTripId;
   const activeTripId = tripsById[activeCandidate]?.members.some((member) => member.userId === currentUserId)
     ? activeCandidate
@@ -292,7 +293,7 @@ export function normalizePersistedState(value: unknown, fallback = createDemoDat
     usersById,
     regionsById,
     placesById,
-    tripsById: consistentTripsById,
+    tripsById,
     tripOrder,
     candidatesByTripId,
     itineraryByTripId,
@@ -301,5 +302,3 @@ export function normalizePersistedState(value: unknown, fallback = createDemoDat
     savedPlaceIdsByUserId,
   };
 }
-
-
