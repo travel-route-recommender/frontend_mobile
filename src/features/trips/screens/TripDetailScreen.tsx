@@ -21,6 +21,7 @@ import {
 import { GroupPreferenceDiagnosisCard, PreferenceResponseSummaryCard } from "../components/preferences";
 import { selectRoomPreferenceResponseSummary, selectTripRoomCardViewModel } from "../selectors";
 import type { TripPreparationStepId } from "../types";
+import { useExploreSearchStore } from "../../explore/store/useExploreSearchStore";
 
 export function TripHomeScreen() {
   const router = useRouter();
@@ -31,6 +32,7 @@ export function TripHomeScreen() {
   const hydrationError = useDuriStore((state) => state.hydrationError);
   const setActiveTrip = useDuriStore((state) => state.setActiveTrip);
   const addTripMember = useDuriStore((state) => state.addTripMember);
+  const startTripExplore = useExploreSearchStore((state) => state.startTripExplore);
   const source = useDuriStore(useShallow((state) => ({
     currentUserId: state.currentUserId,
     tripsById: state.tripsById,
@@ -65,7 +67,7 @@ export function TripHomeScreen() {
   const currentMember = summary.members.find((member) => member.userId === source.currentUserId);
   const completed = trip.status === "completed";
   const openWorkspace = () => router.push({ pathname: "/trips/[tripId]/workspace", params: { tripId } });
-  const explore = () => { setActiveTrip(tripId); router.push("/(tabs)/explore"); };
+  const explore = () => { setActiveTrip(tripId); startTripExplore(trip.regionId); router.push("/(tabs)/explore"); };
   const startMyTest = () => router.push("/tests/personal");
   const handlePreparationAction = (stepId: TripPreparationStepId) => {
     if (stepId === "preferences") { if (currentMember?.state !== "completed") startMyTest(); return; }

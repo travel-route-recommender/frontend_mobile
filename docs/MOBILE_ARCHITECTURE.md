@@ -10,6 +10,8 @@ Expo SDK 57의 Expo Router를 사용한다. `app/`은 route 선언과 parameter 
 - `src/components/feedback`: Loading, Empty, Error 상태
 - `src/features`: 화면과 feature별 네이티브 UI
 - `src/features/trip-creation`: 5단계 생성 화면, versioned draft Store, validation과 platform date picker
+- `src/features/places`: Place ViewModel, 검색/유사 장소/권한 순수 함수, 저장·후보 action controller와 데이터 모드 경계
+- `src/features/explore`: 목록·지역 보드 화면과 목록/지도 공유용 비영속 검색 Store
 - `src/domain`: 플랫폼 비의존 도메인 타입
 - `src/duri`: 플랫폼 비의존 성향·분석·제안 엔진
 - `src/data/mock`: normalized demo data
@@ -26,6 +28,8 @@ Expo SDK 57의 Expo Router를 사용한다. `app/`은 route 선언과 parameter 
 개인 성향 테스트의 진행 draft는 도메인 완료 결과와 분리한다. `duri-personal-preference-draft`는 현재 문항, 부분 답변, 소유 범위, config version과 시각만 저장한다. 여행방 생성 초안도 `duri-create-trip-draft` version 1의 별도 Store로 분리하며 Region/User ID와 date-only 입력만 보관한다. root layout은 domain/auth/두 draft Store의 hydration을 모두 기다린다. anonymous 체험 결과는 메모리에만 두며 AsyncStorage에 persist하지 않는다.
 
 여행 목록 카드, 5단계 준비율, 후보·일정 수, 응답률과 D-day는 selector/순수 함수에서 파생한다. `TripRoom`이나 persist state에 중복 저장하지 않는다. `createTrip`은 owner·trip·관계 초기화·activeTrip을 단일 update로 반영한다.
+
+Place 원본은 placesById, 개인 저장은 savedPlaceIdsByUserId, 여행 후보는 candidatesByTripId, 일정 배치는 itineraryByTripId로 분리한다. PlaceCard는 ViewModel만 받고 Store를 import하지 않는다. 탐색 keyword/region/category/sort/viewMode는 비민감·비영속 feature Store에서 목록과 지역 보드가 공유한다. Place에 좌표가 추가되기 전에는 native map dependency나 임의 marker를 사용하지 않는다.
 
 access token, refresh token, 비밀번호와 secret은 AsyncStorage persist 대상이 아니다.
 
@@ -44,6 +48,8 @@ QueryClient는 module singleton이다. query retry는 최대 1회, mutation retr
 - `hybrid`: 캐시·로컬 엔진 경계를 정한 뒤 구현. 현재 명시적 미지원 오류
 
 Rooms 계약이 없는 현재는 api/hybrid에서 목록·상세·생성을 mock으로 fallback하지 않는다. mock의 동행자 추가는 기존 demo User만 대상으로 하며 실제 초대를 가장하지 않는다.
+
+Places/Saves/Candidates도 같은 원칙을 적용한다. 화면은 `placeRepository` 정책을 통해 availability를 받고, api/hybrid 계약 전에는 mock Place나 로컬 relation mutation으로 성공을 가장하지 않는다.
 
 환경 변수는 `.env.example`에 공개 가능한 값만 둔다. `EXPO_PUBLIC_*`에는 secret을 넣지 않는다.
 

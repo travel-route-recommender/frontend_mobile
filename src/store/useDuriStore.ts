@@ -28,6 +28,7 @@ import { normalizePersistedState } from "./normalizePersistedState";
 import { DEFAULT_PLACE_DURATION_MINUTES } from "../data/workspaceSchedule";
 import { isValidISODate } from "../utils/formatters";
 import { createUniqueEntityId } from "../utils/ids";
+import { toggleUniqueId } from "../utils/entityRelations";
 import {
   findOverlappingItem,
   getTripDates,
@@ -236,9 +237,7 @@ export const useDuriStore = create<DuriState>()(
           if (!state.placesById[placeId] || !state.usersById[targetUserId]) return state;
           const storedIds = state.savedPlaceIdsByUserId?.[targetUserId];
           const currentIds = Array.isArray(storedIds) ? storedIds : [];
-          const nextIds = currentIds.includes(placeId)
-            ? currentIds.filter((id) => id !== placeId)
-            : [...currentIds, placeId];
+          const nextIds = toggleUniqueId(currentIds, placeId);
           return {
             savedPlaceIdsByUserId: {
               ...state.savedPlaceIdsByUserId,

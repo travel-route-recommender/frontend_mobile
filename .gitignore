@@ -22,6 +22,7 @@ expo-env.d.ts
 .metro-health-check*
 .group-verification/
 .trip-flow-verification/
+.place-flow-verification/
 
 # debug
 npm-debug.*

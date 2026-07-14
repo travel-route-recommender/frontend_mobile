@@ -7,14 +7,14 @@
 | 웹 route | 웹 기준 화면 | 모바일 route | 모바일 화면 | 상태 |
 |---|---|---|---|---|
 | `/` | `DuriHomePage` | `app/index.tsx` → `app/(tabs)/home.tsx` | `SessionBootstrapScreen` → `HomeScreen` | 세션 분기 완료 |
-| `/explore` | `DuriExploreListPage` | `app/(tabs)/explore.tsx` | `ExploreScreen` | 목록·검색·저장 완료 |
-| `/explore/map` | `DuriExploreMapPage` | `app/explore/map.tsx` | `MapPlaceholderScreen` | 지도 SDK 대기 |
-| `/places/:placeId` | `PlaceDetailRoute` | `app/places/[placeId].tsx` | `PlaceDetailScreen` | 기본 기능 완료 |
+| `/explore` | `DuriExploreListPage` | `app/(tabs)/explore.tsx` | `ExploreScreen` | 검색·지역/카테고리·정렬·후보 연결 완료 |
+| `/explore/map` | `DuriExploreMapPage` | `app/explore/map.tsx` | `ExploreMapScreen` | 공유 필터 기반 좌표 없는 지역 보드 fallback 완료 |
+| `/places/:placeId` | `PlaceDetailRoute`, `DuriPlaceDetailSheet` | `app/places/[placeId].tsx` | `PlaceDetailScreen` | 저장·후보 선택·유사 장소·오류 상태 완료 |
 | `/trips` | `TripListPage`, `TravelRoomCard` | `app/(tabs)/trips.tsx` | `TripListScreen`, `TripRoomCard` | 필터·정렬·ViewModel 카드 완료 |
 | `/trips/new` | `NewTripPage`, `TripWizardSteps` | `app/trips/new.tsx` | `CreateTripWizardScreen` | 5단계·draft 복구·native 날짜 선택 완료 |
 | `/trips/:tripId` | `TripRoomHomePage`, `TripRoomHomeSections` | `app/trips/[tripId]/index.tsx` | `TripHomeScreen` | 준비율·응답/진단·후보/일정 요약 완료 |
 | `/trips/:tripId/workspace` | `TripWorkspaceRoute` | `app/trips/[tripId]/workspace.tsx` | `WorkspaceScreen` | 기반 화면만 완료 |
-| `/saved` | `SavedPage` | `app/(tabs)/saved.tsx` | `SavedScreen` | 저장 해제·빈 상태 완료 |
+| `/saved` | `SavedPlacesPage` | `app/(tabs)/saved.tsx` | `SavedScreen` | 검색·카테고리·누락 관계·후보 연결 완료 |
 | `/mypage` | `MyPage` | `app/(tabs)/mypage.tsx` | `MyPageScreen` | 기본 요약 완료 |
 | `/tests/personal` | `PersonalPreferenceTestPage` | `app/tests/personal/index.tsx` | `PersonalTestScreen` | 전체 질문·저장 완료 |
 | - | 웹은 마지막 문항에서 바로 제출 | `app/tests/personal/review.tsx` | `PersonalReviewScreen` | 모바일 답변 검토·수정 완료 |
@@ -54,6 +54,7 @@
 - 개인 성향 문항·계산·도메인은 웹 기준 파일과 동일하게 유지하고, 모바일에 영속 draft·검토·재테스트 보호 UX를 추가
 - 웹 group-preferences의 5개 계획 차원과 spread 규칙을 유지하고, 모바일에 결과 유효성·coverage·tag 집계·조율 지표·네이티브 상태 카드를 추가
 - 웹 여행 목록의 진행/완료 정렬, 5단계 생성 순서와 준비율 점수 규칙을 유지하고, 모바일에 FlatList 필터·native date picker·영속 생성 초안을 추가
+- 웹 탐색의 keyword/category/후보·일정 상태와 저장 화면 여행방 선택 정책을 유지하고, 모바일에 Region 필터·결정적 정렬·공유 탐색 Store·좌표 없는 지역 보드를 추가
 
 ### C. 모바일에서 재작성
 
@@ -64,7 +65,7 @@
 
 ## 아직 미구현
 
-- 실제 지도, 전체 workspace 편집기, 후보 CRUD, 제안 미리보기·적용 UI
+- 실제 좌표 지도, 전체 workspace 후보 보드·일정 편집기, 후보 제거 정책, 제안 미리보기·적용 UI
 - 그룹 진단 전용 route와 두리 분석 리포트 전용 화면 (여행방 상세 그룹 진단은 완료)
 - 실제 로그인·회원가입·초대 수락 API, OAuth, JWT refresh
 - Quiz questions/status/submit API와 server/local 결과 병합

@@ -1,0 +1,24 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "customConditions": [],
+    "target": "ES2022",
+    "rootDir": ".",
+    "outDir": ".place-flow-verification",
+    "declaration": false,
+    "sourceMap": false
+  },
+  "include": [
+    "scripts/verify-place-flow.ts",
+    "src/domain/**/*.ts",
+    "src/features/auth/types/**/*.ts",
+    "src/features/places/types.ts",
+    "src/features/places/logic/**/*.ts",
+    "src/features/places/selectors/**/*.ts",
+    "src/utils/entityRelations.ts"
+  ]
+}
+
