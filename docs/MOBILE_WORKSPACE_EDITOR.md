@@ -94,7 +94,7 @@ gesture reorder를 도입하려면 RN/Expo SDK 호환성, ScrollView 충돌, 접
 
 ## 21. 두리 분석·제안 연결
 
-현재 화면은 itinerary가 있으면 분석 준비 상태만 안내한다. 기존 로컬 분석·fingerprint·suggestion 로직은 변경하지 않았다. 다음 단계에서는 report를 읽기 전용으로 표시하고, 제안별 before/after preview와 stale fingerprint 검증 후 원자적 적용을 연결한다.
+현재 화면은 itinerary가 있으면 독립 Duri report route로 이동한다. report에서 local 분석과 제안을 명시적으로 실행하며, 제안 상세는 before/after/diff, stale fingerprint, 적용 확인과 Zustand 단일 update 기반 atomic apply를 제공한다. 다음 단계는 server Duri와 Schedule batch 계약, 실제 Directions 입력이다.
 
 ## 22. Schedule API mapper 대기
 

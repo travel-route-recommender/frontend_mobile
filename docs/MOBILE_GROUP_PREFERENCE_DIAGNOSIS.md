@@ -144,4 +144,4 @@ partial은 항상 “현재 응답한 멤버 기준”과 결과 변경 가능�
 
 서버 계약이 확정되면 Room member ID와 Quiz result userId의 동일성, 결과 version, partial sync 시각, idempotency를 먼저 정의한다. Server compatibility 결과는 source와 version이 명확할 때만 local diagnosis를 대체하며 두 결과를 혼합하지 않는다.
 
-다음 단계는 여행방 목록에 응답 진행률을 표시하고, 생성 Wizard에서 초대 member의 안정적인 userId를 확정하며, 여행방 홈에서 응답 CTA와 계획 진행 단계를 연결하는 것이다. 그 뒤 GroupPlanningProfile을 일정 분석에 적용하고 guest→member ID/result 병합 정책을 추가한다.
+여행방 목록·홈 응답 진행률, 생성 Wizard의 ID 기반 member 선택, 응답 CTA와 계획 진행 단계, GroupPlanningProfile의 Duri 일정 분석 반영까지 연결됐다. 다음 단계는 backend Room/Quiz ID 계약과 guest→member ID/result 병합 정책이다.

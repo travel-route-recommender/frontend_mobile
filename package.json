@@ -51,6 +51,8 @@
     "verify:place-flow": "tsc -p tsconfig.place-flow-verification.json && node .place-flow-verification/scripts/verify-place-flow.js",
     "verify:workspace-editor": "tsc -p tsconfig.workspace-verification.json && node .workspace-verification/scripts/verify-workspace-editor.js",
     "verify:duri-analysis": "tsc -p tsconfig.duri-verification.json && node .duri-verification/scripts/verify-duri-analysis.js",
+    "validate:state": "tsc -p tsconfig.state-integrity-verification.json && node .state-integrity-verification/scripts/validate-state.js",
+    "verify:state-integrity": "tsc -p tsconfig.state-integrity-verification.json && node .state-integrity-verification/scripts/verify-state-integrity.js",
     "build": "expo export --platform all"
   },
   "private": true

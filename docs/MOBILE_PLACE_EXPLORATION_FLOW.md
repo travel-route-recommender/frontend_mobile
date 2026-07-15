@@ -66,4 +66,4 @@ SavedScreen은 saved ID를 placesById로 resolve한다. 누락 ID는 유효 장�
 
 ## Workspace 연결과 다음 단계
 
-후보 보드는 addedByUserIds, itinerary 기반 scheduled 상태, 권한 있는 제거, 날짜별 일정 배치와 위·아래 시간 재배치를 구현했다. 다음 단계에서는 Duri report와 suggestion preview/apply, 서버 room/place/candidate/schedule ID 및 원자적 mutation 계약을 확정해야 한다.
+후보 보드는 addedByUserIds, itinerary 기반 scheduled 상태, 권한 있는 제거, 날짜별 일정 배치와 위·아래 시간 재배치를 구현했다. Duri report, suggestion preview와 local atomic apply도 연결됐다. 다음 단계는 서버 room/place/candidate/schedule ID, batch/idempotency와 원자적 mutation 계약 확정이다.

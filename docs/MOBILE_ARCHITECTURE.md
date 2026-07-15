@@ -11,7 +11,7 @@
 - store: 비영속 session/suggestion/receipt와 중복 실행 상태
 - screens/components: report, 세로 preview, 최종 확인
 
-Domain Store의 `applyDuriSuggestionAtomically`만 최종 mutation을 수행하며 성공 시 `itineraryByTripId[tripId]`를 Zustand set 한 번으로 교체한다. stale은 full input fingerprint 비교로 파생하고 영속 schema는 바꾸지 않았다.
+Domain Store의 `applyDuriSuggestionAtomically`만 최종 mutation을 수행하며 성공 시 `itineraryByTripId[tripId]`를 Zustand set 한 번으로 교체한다. stale은 full input fingerprint 비교로 파생한다. Duri session/suggestion/receipt는 비영속이라 Duri 기능 자체는 domain schema를 늘리지 않는다.
 
 ## Router와 화면
 
@@ -35,7 +35,7 @@ Expo SDK 57의 Expo Router를 사용한다. `app/`은 route 선언과 parameter 
 
 ## Store와 persist
 
-웹의 normalized 구조를 유지한다. 상태에는 사용자, 지역, 장소, 여행방, 후보, 일정, 성향 결과, 분석 cache 자리와 사용자별 저장 ID가 있다. `zustand/middleware`의 `createJSONStorage`와 AsyncStorage를 사용하며 storage key는 `duri-mobile-store`, persist version은 `4`, domain schema version은 `3`이다. migration은 알려지지 않은 저장값을 검증하고 normalized relation을 복구한다.
+웹의 normalized 구조를 유지한다. 상태에는 사용자, 지역, 장소, 여행방, 후보, 일정, 성향 결과, legacy 분석 cache 자리와 사용자별 저장 ID가 있다. `zustand/middleware`의 `createJSONStorage`와 AsyncStorage를 사용하며 storage key는 `duri-mobile-store`다. persist와 domain schema는 공통 `CURRENT_SCHEMA_VERSION = 4`를 사용한다. migration은 알려지지 않은 저장값을 검증하고 normalized relation을 복구한다.
 
 `skipHydration`으로 자동 초기화를 끄고 root layout에서 명시적으로 rehydrate한다. hydrate가 끝나기 전에는 빈 상태나 route redirect를 렌더하지 않는다. 복구 실패 시 재시도 가능한 ErrorState를 표시한다.
 
@@ -45,7 +45,13 @@ Expo SDK 57의 Expo Router를 사용한다. `app/`은 route 선언과 parameter 
 
 Place 원본은 placesById, 개인 저장은 savedPlaceIdsByUserId, 여행 후보는 candidatesByTripId, 일정 배치는 itineraryByTripId로 분리한다. PlaceCard는 ViewModel만 받고 Store를 import하지 않는다. 탐색 keyword/region/category/sort/viewMode는 비민감·비영속 feature Store에서 목록과 지역 보드가 공유한다. Place에 좌표가 추가되기 전에는 native map dependency나 임의 marker를 사용하지 않는다.
 
-워크스페이스 selectedDate, 후보 검색·필터, Modal, 종료 시간, 충돌, 날짜별 count와 scheduleState는 비영속 파생/UI 상태다. `ItineraryItem`의 실제 `startTime + durationMinutes`를 시간 범위로 사용하고 후보 배치 여부는 itinerary placeId lookup에서 파생한다. 일정 추가·수정·이동·삭제와 후보 제거는 trip/member/completed 정책을 Store action에서도 검증한다. 새 영속 필드가 없어 persist version은 유지한다.
+워크스페이스 selectedDate, 후보 검색·필터, Modal, 종료 시간, 충돌, 날짜별 count와 scheduleState는 비영속 파생/UI 상태다. `ItineraryItem`의 실제 `startTime + durationMinutes`를 시간 범위로 사용하고 후보 배치 여부는 itinerary placeId lookup에서 파생한다. 일정 추가·수정·이동·삭제와 후보 제거는 trip/member/completed 정책을 Store action에서도 검증한다.
+
+## 상태 무결성 경계
+
+`src/core/state-integrity`의 순수 validator가 auth/domain current user, normalized trip/member/candidate/itinerary/saved/preference 관계와 Duri fingerprint/receipt를 검사한다. validator는 Store를 수정하지 않는다. deterministic repair는 `normalizePersistedState`에만 있으며 빈·중복 ID 제거, 관계 배열 초기화, 일정 정렬처럼 의미를 추정하지 않는 처리만 한다. owner, 누락 날짜, 누락 성향 결과는 만들지 않는다.
+
+개발 진단은 `npm run validate:state`, 손상 fixture 회귀는 `npm run verify:state-integrity`로 실행한다. 세부 계약은 `MOBILE_STATE_INTEGRITY.md`, 전체 route와 E2E 상태는 `MOBILE_E2E_FEATURE_INVENTORY.md`와 `MOBILE_E2E_REGRESSION_REPORT.md`에 있다.
 
 access token, refresh token, 비밀번호와 secret은 AsyncStorage persist 대상이 아니다.
 

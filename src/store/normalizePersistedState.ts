@@ -21,7 +21,7 @@ import { normalizeLegacyPreferenceResult } from "../duri/preferences";
 import { createDemoData, type DuriDomainState } from "../data/mock/demoData";
 import { getTripDates, isValidScheduleRange, sortItineraryItemsByDateAndTime } from "../utils/schedule";
 
-export const CURRENT_SCHEMA_VERSION = 3;
+export const CURRENT_SCHEMA_VERSION = 4;
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -104,7 +104,7 @@ function normalizeMembers(value: unknown) {
   return value.flatMap((entry): TripMember[] => {
     if (!isRecord(entry)) return [];
     const userId = asString(entry.userId);
-    if (seen.has(userId)) return [];
+    if (!userId || seen.has(userId)) return [];
     seen.add(userId);
     return [{
       userId,
@@ -185,6 +185,7 @@ function normalizeItinerary(
   return Object.fromEntries(Object.keys(tripsById).map((tripId) => {
     const trip = tripsById[tripId];
     const validDates = new Set(getTripDates(trip.startDate, trip.endDate));
+    const memberIds = new Set(trip.members.map((member) => member.userId));
     const entries = Array.isArray(source[tripId]) ? source[tripId] : [];
     const seen = new Set<EntityId>();
     const items = entries.flatMap((entry): ItineraryItem[] => {
@@ -200,7 +201,9 @@ function normalizeItinerary(
         startTime: asString(entry.startTime),
         durationMinutes: asFiniteNumber(entry.durationMinutes),
         itemType,
-        preferredByUserIds: unique(asStringArray(entry.preferredByUserIds)).filter((userId) => Boolean(usersById[userId])),
+        preferredByUserIds: unique(asStringArray(entry.preferredByUserIds)).filter(
+          (userId) => Boolean(usersById[userId]) && memberIds.has(userId),
+        ),
         ...(asString(entry.note) ? { note: asString(entry.note) } : {}),
       };
       if (!id || seen.has(id) || !validDates.has(item.date) || !isValidScheduleRange(item)) return [];

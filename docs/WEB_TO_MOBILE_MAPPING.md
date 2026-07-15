@@ -1,5 +1,9 @@
 # 웹 → 모바일 대응표
 
+## E2E·상태 무결성 보강 (2026-07-15)
+
+웹의 normalized entity/relation 원칙은 모바일 schema 4에서도 유지한다. 모바일은 auth/domain hydration barrier, owner-bound UI draft, session별 권한, state-integrity validator를 추가했다. `candidateCount`, `itineraryCount`, 준비율, 그룹 진단, scheduled, stale/fingerprint와 화면 ViewModel은 저장하지 않고 관계에서 파생한다. 전체 route별 계약은 `MOBILE_E2E_FEATURE_INVENTORY.md`에 있다.
+
 ## 두리 분석·제안 매핑 (2026-07-14)
 
 | 웹 기준 | 모바일 구현 | 비고 |
@@ -38,7 +42,7 @@
 | `/invite` | `InviteJoinPage` | `app/(auth)/invite.tsx` | `InviteJoinScreen` | mock guest 완료·API 계약 대기 표시 |
 | `/onboarding/profile` | 프로필 설정 | `app/(onboarding)/profile.tsx` | `ProfileSetupScreen` | 완료 |
 | `/onboarding/intro` | 서비스 소개 | `app/(onboarding)/intro.tsx` | `OnboardingIntroScreen` | 완료 |
-| `/duri` | `DuriPage` | 여행별 workspace 내부 | `WorkspaceScreen` 분석 카드 | 별도 리포트 화면 미구현 |
+| `/duri` | `DuriPage` | `/trips/[tripId]/analysis` 및 suggestion 상세 | `DuriAnalysisScreen`, `DuriSuggestionPreviewScreen` | 리포트·preview·local atomic apply 완료 |
 | `/tests` | `PreferenceTestHomePage` | 없음 | 개인 테스트 직접 진입 | 미구현 |
 | `/terms` | `TermsPage` | `app/(auth)/terms.tsx` | `TermsScreen` | 임시 안내 완료·정식 법률 문서 대기 |
 
@@ -80,7 +84,8 @@
 ## 아직 미구현
 
 - 실제 좌표 지도, workspace 제안 미리보기·원자적 적용 UI
-- 그룹 진단 전용 route와 두리 분석 리포트 전용 화면 (여행방 상세 그룹 진단은 완료)
+- 그룹 진단 전용 route (여행방 상세 요약·차원 카드는 완료)
+- 실제 Duri server API, Schedule batch/idempotency, Directions 기반 이동시간
 - 실제 로그인·회원가입·초대 수락 API, OAuth, JWT refresh
 - Quiz questions/status/submit API와 server/local 결과 병합
 - 푸시, WebSocket, 네이티브 gesture와 bottom sheet

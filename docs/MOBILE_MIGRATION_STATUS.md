@@ -1,5 +1,16 @@
 # 모바일 마이그레이션 상태
 
+## 2026-07-15 전체 E2E·상태 무결성 감사 완료
+
+- 실제 Expo project/Git 경계와 수정 전 lint/typecheck/Doctor/export 기준선 확인
+- 전체 route inventory와 session별 권한, hydration/persist/mode 회귀 matrix 작성
+- 사용자·여행방·후보·일정·저장·성향·Duri 순수 state validator 추가
+- domain persist/schema version을 4로 단일화하고 빈 member ID, 비멤버 itinerary 선호 참조, active trip membership을 안전하게 보강
+- 손상 persist migration, session isolation, Duri stale fixture와 `validate:state` 진단 추가
+- API/hybrid와 server Duri는 계약 미확정 시 mock/local로 fallback하지 않는 정책 유지
+
+실기기 cold launch/process kill/deep-link/keyboard/큰 글자 회귀와 실제 API E2E는 다음 단계다. 상세 결과는 `MOBILE_E2E_REGRESSION_REPORT.md`에 있다.
+
 ## 2026-07-14 두리 분석 단계 완료
 
 - workspace 진입 카드, 독립 report와 suggestion 상세 route
@@ -71,7 +82,7 @@
 
 ## 부분 완료
 
-- workspace 두리 분석: 일정 편집과 분석 준비 경계는 완료, report·제안 preview/apply UI는 다음 단계
+- workspace 두리 분석: report·제안 preview·atomic local apply까지 완료, 실제 server API와 Directions는 대기
 - auth API: UI와 adapter 경계는 완료, 실제 서버 계약은 대기
 - Quiz API: 로컬 기준 로직과 adapter 경계는 완료, 실제 서버 계약은 대기
 - 초대 딥링크: code를 native 초대 화면으로 전달

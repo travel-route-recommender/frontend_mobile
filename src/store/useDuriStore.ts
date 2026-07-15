@@ -24,7 +24,7 @@ import type {
   SuggestionApplyResult,
 } from "../duri/duri-suggestions";
 import { createDemoData, type DuriDomainState } from "../data/mock/demoData";
-import { normalizePersistedState } from "./normalizePersistedState";
+import { CURRENT_SCHEMA_VERSION, normalizePersistedState } from "./normalizePersistedState";
 import { DEFAULT_PLACE_DURATION_MINUTES } from "../data/workspaceSchedule";
 import { isValidISODate } from "../utils/formatters";
 import { createUniqueEntityId } from "../utils/ids";
@@ -252,7 +252,12 @@ export const useDuriStore = create<DuriState>()(
         return createdTripId;
       },
       setActiveTrip: (tripId) =>
-        set((state) => (state.tripsById[tripId] ? { activeTripId: tripId } : state)),
+        set((state) => {
+          const trip = state.tripsById[tripId];
+          return trip?.members.some((member) => member.userId === state.currentUserId)
+            ? { activeTripId: tripId }
+            : state;
+        }),
       toggleSavedPlace: (placeId, userId) =>
         set((state) => {
           const targetUserId = userId ?? state.currentUserId;
@@ -676,7 +681,7 @@ export const useDuriStore = create<DuriState>()(
       name: "duri-mobile-store",
       storage: createJSONStorage(() => AsyncStorage),
       skipHydration: true,
-      version: 4,
+      version: CURRENT_SCHEMA_VERSION,
       migrate: (persistedState) => normalizePersistedState(persistedState),
       merge: (persistedState, currentState) => ({
         ...currentState,
