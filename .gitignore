@@ -26,6 +26,7 @@ expo-env.d.ts
 .workspace-verification/
 .duri-verification/
 .state-integrity-verification/
+.preference-verification/
 
 # debug
 npm-debug.*

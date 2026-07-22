@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { router } from "expo-router";
 import { Avatar, Card, PrimaryButton, Screen, SecondaryButton, SectionHeader } from "../../../components/common";
@@ -6,6 +7,9 @@ import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import { useMemberGate } from "../../auth/hooks/useMemberGate";
 import { useAuthFlow } from "../../auth/hooks/useAuthFlow";
 import { useAuthSessionStore } from "../../auth/store/useAuthSessionStore";
+import { getMockFriendProfile } from "../../compatibility/config/mock-friends";
+import { selectSavedFriendIds, useFriendCompatibilityStore } from "../../compatibility/store/use-friend-compatibility-store";
+import { useTravelPreferenceSurveyResult } from "../../preferences/hooks/useTravelPreferenceSurveyResult";
 
 export function MyPageScreen() {
   const sessionKind = useAuthSessionStore((session) => session.sessionKind);
@@ -14,6 +18,13 @@ export function MyPageScreen() {
   const state = useDuriStore();
   const user = state.usersById[state.currentUserId];
   const result = state.preferenceResultsByUserId[state.currentUserId];
+  const preferenceOwner = useMemo(() => sessionKind === "anonymous" ? null : ({ kind: "user", userId: state.currentUserId } as const), [sessionKind, state.currentUserId]);
+  const detailedResult = useTravelPreferenceSurveyResult(preferenceOwner);
+  const savedFriendIds = useFriendCompatibilityStore((friendState) => selectSavedFriendIds(friendState, state.currentUserId));
+  const friends = savedFriendIds.flatMap((friendId) => {
+    const friend = getMockFriendProfile(friendId) ?? state.usersById[friendId];
+    return friend ? [friend] : [];
+  });
   const trips = Object.values(state.tripsById).filter((trip) => trip.members.some((member) => member.userId === state.currentUserId));
   const savedCount = sessionKind === "member" ? (state.savedPlaceIdsByUserId[state.currentUserId] ?? []).length : 0;
 
@@ -32,9 +43,18 @@ export function MyPageScreen() {
       <Text style={styles.profileType}>{result?.profileType ?? "아직 결과가 없어요"}</Text>
       <Text style={styles.description}>{result ? result.traits.join(" · ") : "간단한 테스트로 여행할 때 중요하게 생각하는 점을 알아보세요."}</Text>
       {result ? <View style={styles.tags}>{result.preferredTags.map((tag) => <View key={tag} style={styles.tag}><Text style={styles.tagText}>#{tag}</Text></View>)}</View> : null}
-      {result ? <><PrimaryButton label="결과 자세히 보기" onPress={() => router.push("/tests/personal/result")} /><SecondaryButton label="테스트 다시 하기" onPress={() => router.push({ pathname: "/tests/personal/result", params: { retest: "1" } })} /></> : <PrimaryButton label="내 여행 성향 알아보기" onPress={() => router.push("/tests/personal")} />}
+      {result ? <><PrimaryButton label="결과 자세히 보기" onPress={() => router.push("/tests/personal/result")} /><SecondaryButton label="테스트 다시 하기" onPress={() => router.push({ pathname: "/tests/personal/result", params: { retest: "1" } })} />{sessionKind === "member" ? <SecondaryButton label="친구와 궁합 테스트" onPress={() => router.push("/tests/compatibility")} /> : null}</> : <PrimaryButton label="내 여행 성향 알아보기" onPress={() => router.push("/tests/personal")} />}
+      {sessionKind === "member" && result && !detailedResult ? <Text style={styles.guestCopy}>궁합 테스트에는 7단계 상세 마이테스트 결과가 필요해요.</Text> : null}
       {sessionKind === "guest" ? <Text style={styles.guestCopy}>게스트 결과는 현재 초대 계정에 저장돼요. 정식 계정 전환 시 자동 이전은 아직 지원하지 않아요.</Text> : null}
     </Card>
+    {sessionKind === "member" ? <>
+      <SectionHeader title="친구" actionLabel="관리" onAction={() => router.push("/friends")} />
+      <Card style={styles.friendSection}>
+        <Text style={styles.description}>{friends.length ? `${friends.length}명의 친구와 여행 궁합을 확인할 수 있어요.` : "친구를 저장하고 여행 궁합을 확인해 보세요."}</Text>
+        {friends.length ? <View style={styles.friendList}>{friends.map((friend) => <View key={friend.id} style={styles.friend}><Avatar name={friend.initial || friend.name} uri={friend.profileImageUrl} size={40} /><Text style={styles.friendName}>{friend.name}</Text></View>)}</View> : null}
+        <SecondaryButton label="친구 관리" onPress={() => router.push("/friends")} />
+      </Card>
+    </> : null}
     <SectionHeader title="계정과 참여" />
     {sessionKind === "guest" ? <PrimaryButton label="회원 계정 만들기" onPress={() => requireMember(() => undefined, "회원 기능 이용")} /> : <SecondaryButton label="온보딩 안내 다시 보기" onPress={() => router.push("/(onboarding)/intro")} />}
     <SecondaryButton label="초대 코드로 참여하기" onPress={() => router.push("/(auth)/invite")} />
@@ -49,4 +69,5 @@ const styles = StyleSheet.create({
   header: { flexDirection: "row", alignItems: "center", gap: spacing.md, paddingTop: spacing.xl, paddingBottom: spacing.lg }, headerCopy: { flex: 1 }, title: { ...typography.title, color: colors.text }, subtitle: { ...typography.caption, color: colors.textSecondary },
   stats: { flexDirection: "row", backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.xl }, metric: { flex: 1, alignItems: "center", paddingVertical: spacing.md }, metricValue: { ...typography.title, color: colors.primary }, metricLabel: { ...typography.caption, color: colors.textSecondary },
   preference: { gap: spacing.sm, marginVertical: spacing.sm, marginBottom: spacing.xl }, profileType: { ...typography.subtitle, color: colors.text }, description: { ...typography.body, color: colors.textSecondary }, tags: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs }, tag: { backgroundColor: colors.primarySoft, borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 6 }, tagText: { ...typography.caption, color: colors.primary }, guestCopy: { ...typography.caption, color: colors.textSecondary, backgroundColor: colors.surfaceMuted, borderRadius: radius.sm, padding: spacing.sm },
+  friendSection: { gap: spacing.sm, marginVertical: spacing.sm, marginBottom: spacing.xl }, friendList: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }, friend: { minWidth: 88, alignItems: "center", gap: spacing.xs, borderRadius: radius.md, backgroundColor: colors.surfaceMuted, padding: spacing.sm }, friendName: { ...typography.caption, color: colors.text },
 });

@@ -47,6 +47,7 @@
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
     "verify:group-preferences": "tsc -p tsconfig.group-verification.json && node .group-verification/scripts/verify-group-preferences.js",
+    "verify:preference-compatibility": "tsc -p tsconfig.preference-verification.json && node .preference-verification/scripts/verify-preference-compatibility.js",
     "verify:trip-flow": "tsc -p tsconfig.trip-flow-verification.json && node .trip-flow-verification/scripts/verify-trip-flow.js",
     "verify:place-flow": "tsc -p tsconfig.place-flow-verification.json && node .place-flow-verification/scripts/verify-place-flow.js",
     "verify:workspace-editor": "tsc -p tsconfig.workspace-verification.json && node .workspace-verification/scripts/verify-workspace-editor.js",

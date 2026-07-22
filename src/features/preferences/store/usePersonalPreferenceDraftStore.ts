@@ -1,12 +1,16 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import type { PreferenceDimension, PreferenceScore } from "../../../domain";
-import { PERSONAL_TEST_VERSION, personalTestQuestions } from "../../../duri/preferences";
-import { normalizePreferenceDraftAnswers } from "../logic/validatePreferenceAnswers";
-import type { PersonalPreferenceDraft, PreferenceDraftOwner, PreferencePreviewResult } from "../types";
+import { PERSONAL_SURVEY_DRAFT_VERSION, preferenceSteps } from "../config/travel-preference-test-config";
+import { normalizeTravelPreferenceSurveyAnswers, validateTravelPreferenceSurvey } from "../logic/travel-preference-survey";
+import type {
+  CompletedPreferenceSurvey,
+  PersonalPreferenceDraft,
+  PersonalPreferenceDraftAnswers,
+  PreferenceDraftOwner,
+} from "../types";
 
-export const PREFERENCE_DRAFT_STORAGE_VERSION = 1;
+export const PREFERENCE_DRAFT_STORAGE_VERSION = 6;
 export const PREFERENCE_DRAFT_STORAGE_KEY = "duri-personal-preference-draft";
 
 type UnknownRecord = Record<string, unknown>;
@@ -26,17 +30,19 @@ function normalizeOwner(value: unknown): PreferenceDraftOwner | null {
 
 function normalizeDraft(value: unknown): { draft: PersonalPreferenceDraft | null; notice: string | null } {
   if (!isRecord(value)) return { draft: null, notice: null };
-  if (value.configVersion !== PERSONAL_TEST_VERSION) return { draft: null, notice: "문항이 변경되어 이전 진행 내용은 안전하게 초기화했어요. 기존 완료 결과는 유지돼요." };
+  if (value.configVersion !== PERSONAL_SURVEY_DRAFT_VERSION) {
+    return { draft: null, notice: "테스트 구성이 새로워져 이전 진행 내용은 안전하게 초기화했어요. 기존 완료 결과는 유지돼요." };
+  }
   const owner = normalizeOwner(value.owner);
   if (!owner || typeof value.startedAt !== "string" || typeof value.updatedAt !== "string") return { draft: null, notice: null };
-  const maxIndex = Math.max(personalTestQuestions.length - 1, 0);
+  const maxIndex = Math.max(preferenceSteps.length - 1, 0);
   const rawIndex = typeof value.currentQuestionIndex === "number" && Number.isInteger(value.currentQuestionIndex) ? value.currentQuestionIndex : 0;
   return {
     draft: {
-      configVersion: PERSONAL_TEST_VERSION,
+      configVersion: PERSONAL_SURVEY_DRAFT_VERSION,
       owner,
       currentQuestionIndex: Math.max(0, Math.min(rawIndex, maxIndex)),
-      answers: normalizePreferenceDraftAnswers(value.answers),
+      answers: normalizeTravelPreferenceSurveyAnswers(value.answers),
       startedAt: value.startedAt,
       updatedAt: value.updatedAt,
     },
@@ -44,19 +50,28 @@ function normalizeDraft(value: unknown): { draft: PersonalPreferenceDraft | null
   };
 }
 
+function normalizeCompletedSurvey(value: unknown): CompletedPreferenceSurvey | null {
+  if (!isRecord(value)) return null;
+  const owner = normalizeOwner(value.owner);
+  if (!owner || typeof value.completedAt !== "string") return null;
+  const answers = normalizeTravelPreferenceSurveyAnswers(value.answers);
+  if (!validateTravelPreferenceSurvey(answers).valid) return null;
+  return { owner, answers, completedAt: value.completedAt };
+}
+
 export interface PersonalPreferenceDraftState {
   draft: PersonalPreferenceDraft | null;
-  anonymousResult: PreferencePreviewResult | null;
+  completedSurvey: CompletedPreferenceSurvey | null;
   draftNotice: string | null;
   isHydrated: boolean;
   errorMessage: string | null;
   startTest(owner: PreferenceDraftOwner, startedAt?: string): void;
-  selectAnswer(dimension: PreferenceDimension, value: PreferenceScore, updatedAt?: string): void;
+  updateAnswers(patch: Partial<PersonalPreferenceDraftAnswers>, updatedAt?: string): void;
   goNext(updatedAt?: string): void;
   goPrevious(updatedAt?: string): void;
   goToQuestion(index: number, updatedAt?: string): void;
   resetDraft(): void;
-  setAnonymousResult(result: PreferencePreviewResult | null): void;
+  setCompletedSurvey(result: CompletedPreferenceSurvey | null): void;
   acknowledgeDraftNotice(): void;
   setHydrated(hydrated: boolean): void;
   setError(message: string | null): void;
@@ -66,22 +81,46 @@ export const usePersonalPreferenceDraftStore = create<PersonalPreferenceDraftSta
   persist(
     (set) => ({
       draft: null,
-      anonymousResult: null,
+      completedSurvey: null,
       draftNotice: null,
       isHydrated: false,
       errorMessage: null,
-      startTest: (owner, startedAt = nowIso()) => set({ draft: { configVersion: PERSONAL_TEST_VERSION, owner, currentQuestionIndex: 0, answers: {}, startedAt, updatedAt: startedAt } }),
-      selectAnswer: (dimension, value, updatedAt = nowIso()) => set((state) => {
-        if (!state.draft) return state;
-        const question = personalTestQuestions.find((entry) => entry.dimension === dimension);
-        if (!question?.choices.some((choice) => choice.value === value)) return state;
-        return { draft: { ...state.draft, answers: { ...state.draft.answers, [dimension]: value }, updatedAt } };
+      startTest: (owner, startedAt = nowIso()) => set({
+        draft: {
+          configVersion: PERSONAL_SURVEY_DRAFT_VERSION,
+          owner,
+          currentQuestionIndex: 0,
+          answers: {},
+          startedAt,
+          updatedAt: startedAt,
+        },
       }),
-      goNext: (updatedAt = nowIso()) => set((state) => state.draft ? { draft: { ...state.draft, currentQuestionIndex: Math.min(state.draft.currentQuestionIndex + 1, Math.max(personalTestQuestions.length - 1, 0)), updatedAt } } : state),
-      goPrevious: (updatedAt = nowIso()) => set((state) => state.draft ? { draft: { ...state.draft, currentQuestionIndex: Math.max(state.draft.currentQuestionIndex - 1, 0), updatedAt } } : state),
-      goToQuestion: (index, updatedAt = nowIso()) => set((state) => state.draft ? { draft: { ...state.draft, currentQuestionIndex: Math.max(0, Math.min(index, Math.max(personalTestQuestions.length - 1, 0))), updatedAt } } : state),
+      updateAnswers: (patch, updatedAt = nowIso()) => set((state) => state.draft ? {
+        draft: {
+          ...state.draft,
+          answers: { ...state.draft.answers, ...patch },
+          updatedAt,
+        },
+      } : state),
+      goNext: (updatedAt = nowIso()) => set((state) => state.draft ? {
+        draft: {
+          ...state.draft,
+          currentQuestionIndex: Math.min(state.draft.currentQuestionIndex + 1, Math.max(preferenceSteps.length - 1, 0)),
+          updatedAt,
+        },
+      } : state),
+      goPrevious: (updatedAt = nowIso()) => set((state) => state.draft ? {
+        draft: { ...state.draft, currentQuestionIndex: Math.max(state.draft.currentQuestionIndex - 1, 0), updatedAt },
+      } : state),
+      goToQuestion: (index, updatedAt = nowIso()) => set((state) => state.draft ? {
+        draft: {
+          ...state.draft,
+          currentQuestionIndex: Math.max(0, Math.min(index, Math.max(preferenceSteps.length - 1, 0))),
+          updatedAt,
+        },
+      } : state),
       resetDraft: () => set({ draft: null }),
-      setAnonymousResult: (anonymousResult) => set({ anonymousResult }),
+      setCompletedSurvey: (completedSurvey) => set({ completedSurvey }),
       acknowledgeDraftNotice: () => set({ draftNotice: null }),
       setHydrated: (isHydrated) => set({ isHydrated }),
       setError: (errorMessage) => set({ errorMessage }),
@@ -94,21 +133,36 @@ export const usePersonalPreferenceDraftStore = create<PersonalPreferenceDraftSta
       migrate: (persistedState) => {
         const source = isRecord(persistedState) ? persistedState : {};
         const normalized = normalizeDraft(source.draft);
-        return { draft: normalized.draft, draftNotice: normalized.notice };
+        const completedSurvey = normalizeCompletedSurvey(source.completedSurvey);
+        return {
+          draft: normalized.draft,
+          completedSurvey,
+          draftNotice: normalized.notice,
+        };
       },
       merge: (persistedState, currentState) => {
         const source = isRecord(persistedState) ? persistedState : {};
         const normalized = normalizeDraft(source.draft);
-        return { ...currentState, draft: normalized.draft, draftNotice: normalized.notice };
+        const completedSurvey = normalizeCompletedSurvey(source.completedSurvey);
+        return {
+          ...currentState,
+          draft: normalized.draft,
+          completedSurvey,
+          draftNotice: normalized.notice,
+        };
       },
       onRehydrateStorage: (state) => {
-        state.setHydrated(false); state.setError(null);
+        state.setHydrated(false);
+        state.setError(null);
         return (hydratedState, error) => {
           if (error) hydratedState?.setError("진행 중인 여행 성향 테스트를 불러오지 못했어요.");
           hydratedState?.setHydrated(true);
         };
       },
-      partialize: (state) => ({ draft: state.draft }),
+      partialize: (state) => ({
+        draft: state.draft,
+        completedSurvey: state.completedSurvey?.owner.kind === "user" ? state.completedSurvey : null,
+      }),
     },
   ),
 );

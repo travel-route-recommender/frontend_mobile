@@ -22,7 +22,8 @@ route 파일은 `src/features/auth/screens`의 화면만 export한다. 긴 화�
 |---|---|---|
 | `/(onboarding)/profile` | `ProfileSetupScreen` | `profileCompleted` |
 | `/(onboarding)/intro` | `OnboardingIntroScreen` | `onboardingIntroSeen` |
-| `/tests/personal` | 기존 `PersonalTestScreen` | 실제 결과 저장 성공 시 `preferenceTestCompleted` |
+| `/(onboarding)/quick-test` | `OnboardingPreferenceTestScreen` | 6문항 간단 테스트 결과 저장 성공 시 `preferenceTestCompleted` |
+| `/tests/personal` | `PersonalTestScreen` | 마이페이지에서 실행하는 상세 여행 성향 테스트 |
 
 `app/index.tsx`의 bootstrap은 domain, auth, preference draft Store hydration이 끝난 뒤 세션 상태, 프로필 완료, 소개 확인 순으로 진입 위치를 결정한다. root layout은 인증 세션의 사용자 ID를 기존 도메인 Store의 `currentUserId`와 맞춘다.
 
@@ -115,7 +116,7 @@ route 파일은 `src/features/auth/screens`의 화면만 export한다. 긴 화�
 - `onboardingIntroSeen`: 소개 화면을 확인했거나 “다음에 하기”를 누르면 `true`.
 - `preferenceTestCompleted`: member/guest 성향 결과가 실제 도메인 Store에 저장된 뒤에만 `true`.
 
-“다음에 하기”는 `preferenceTestCompleted`를 바꾸지 않는다. anonymous 체험 결과도 이 값을 바꾸지 않는다. 개인 성향 테스트는 웹 기준 6문항, 영속 draft, 답변 검토와 재테스트 보호 흐름까지 구현되어 있다.
+“다음에 하기”는 `preferenceTestCompleted`를 바꾸지 않는다. anonymous 체험 결과도 이 값을 바꾸지 않는다. 회원가입 온보딩에서는 기존 6문항 간단 테스트를 사용하고, 마이페이지의 마이테스트에서는 일정표 편집을 포함한 상세 테스트를 사용한다. 두 화면의 진행 상태는 서로 공유하지 않는다.
 
 ## 12. reference에서 반영한 디자인
 

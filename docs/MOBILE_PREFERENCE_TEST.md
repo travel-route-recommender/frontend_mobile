@@ -1,10 +1,41 @@
 # 모바일 개인 여행 성향 테스트
 
-개인 여행 성향 테스트의 데이터와 계산 기준은 `Frontend_new`의 현재 구현이다. `travel-client-reference`에서는 카드 배치와 결과 표현만 참고했으며 문항·계산 로직은 사용하지 않았다.
+개인 여행 성향 테스트 화면은 7단계의 행동형·복합 응답 방식으로 개편되었다. 백엔드 Quiz 계약은 아직 연결하지 않으며, Store에는 완료된 7단계 원본 응답만 저장한다. `TravelPreferenceSurveyResult`와 기존 여행방 그룹 진단용 `legacyProjection`은 원본 응답에서 필요할 때 계산한다.
+
+## 0.1 7단계 전용 결과 구조
+
+`calculateTravelPreferenceSurveyResult`는 다음 정보를 하나의 결과로 만든다.
+
+- 원본 7단계 `answers`
+- 일정 span·활동·휴식·자유시간·밀도 특징값
+- 명소·로컬 배치 개수와 시간
+- 이동 수단별 0/100 선호도
+- 숙소 3축 0~100 점수
+- 도전 성향, 체력, 예산 배분, 명소·로컬 점수
+- `surveyVersion`, `algorithmVersion`, `completedAt`
+- 기존 그룹 진단용 projection은 `calculateLegacyPreferenceProjection`에서 별도 계산
+
+member/guest의 완료 원본은 `completedSurvey`에 영속화하고 anonymous 완료 원본은 같은 필드에 비영속 상태로 둔다. 상세 결과는 `useTravelPreferenceSurveyResult`가 완료 원본 또는 고정 mock fixture에서 계산한다. 백엔드 DTO와 endpoint는 계약이 확정되기 전까지 정의하지 않는다.
+
+## 0. 현재 화면 구성
+
+화면 기준 파일은 `src/features/preferences/config/travel-preference-test-config.ts`다.
+
+| 순서 | 단계 | 응답 방식 |
+|---:|---|---|
+| 1 | 일정 밀도 | 가운데 정렬된 08:00~24:00 세로 일정표에 8개 액티비티를 드래그 배치, 블록 이동 중 모든 날짜 위 공통 레이어에 표시, 위아래 1시간 단위 리사이즈, 인접 날짜 일부 노출, 일정표 바깥 왼쪽 `-`/오른쪽 `+`로 마지막 날짜 삭제·추가 |
+| 2 | 이동 방식 | 자차·렌터카, 버스·지하철·열차·택시, 도보 복수 선택 |
+| 3 | 숙소 스타일 | 잠만 자는 곳↔여행의 일부, 위치↔시설, 편안함↔가격의 8단계 척도 |
+| 4 | 도전 성향 | 검증된 곳↔새로운 곳의 4단계 척도 |
+| 5 | 체력 수준 | 낮음·보통·좋음 3단계 자기평가 |
+| 6 | 예산 소비 방향 | 숙소·맛집·체험·쇼핑·이동에 100코인을 5개 단위로 배분 |
+| 7 | 여행지 탐색 | 명소 필수도와 로컬 관심도를 각각 4단계로 측정 |
+
+입력, 검토, 결과 상세 화면은 모두 새 응답을 사용한다. 목적지별 상위 태그와 태그 계층은 백엔드 계약 전이므로 현재는 대표 상위 태그를 사용한다.
 
 ## 1. 질문 config 구조
 
-기준 파일은 `src/duri/preferences/personalTestConfig.ts`다.
+`src/duri/preferences/personalTestConfig.ts`는 현재 그룹 진단 및 로컬 결과 계산과의 호환을 위한 6차원 설정이다. 실제 입력 화면의 질문 config로 사용하지 않는다.
 
 ```ts
 interface PreferenceQuestion {
@@ -26,19 +57,21 @@ interface PreferenceQuestion {
 | 5 | `personal-meal` | `mealStyle` |
 | 6 | `personal-planning` | `planningStyle` |
 
-화면, 진행률, 검토 목록, 전체 검증은 항상 `personalTestQuestions.length`와 config의 선택지 배열을 사용한다. 마지막 index나 문항 수를 상수로 중복 하드코딩하지 않는다.
+새 화면, 진행률, 검토 목록, 전체 검증은 항상 `preferenceSteps.length`를 사용한다. 마지막 index나 단계 수를 상수로 중복 하드코딩하지 않는다.
 
 ## 2. 답변 타입
 
-- 선택 값: `PreferenceScore = 0 | 1 | 2`
-- 완료 답변: `PersonalPreferenceAnswers = Record<PreferenceDimension, PreferenceScore>`
-- 진행 중 답변: `Partial<Record<PreferenceDimension, PreferenceScore>>`
+- 숙소 척도 값: `AccommodationScaleValue = 1 | ... | 8`
+- 도전·탐색 척도 값: `FourPointScaleValue = 1 | 2 | 3 | 4`
+- 복합 응답: `PersonalPreferenceDraftAnswers`의 날짜별 시간 블록, 세부 이동수단, 숙소 3축, 도전 성향, 체력, 코인 배분, 명소·로컬 필드
+- 호환 결과 값: `PreferenceScore = 0 | 1 | 2`
+- 그룹 진단용 완료 답변: `PersonalPreferenceAnswers = Record<PreferenceDimension, PreferenceScore>`
 
-제출 전 `validatePreferenceAnswers`가 config 존재, version, 모든 답변, 알 수 없는 차원, 선택지에 없는 값을 검증한다.
+제출 전 `validateTravelPreferenceSurvey`가 7단계 완료 여부와 100코인 합계를 검증한다. 이후 `calculateTravelPreferenceSurveyResult`가 전용 결과를 만들고, `deriveLegacyPreferenceAnswers`는 기존 그룹 진단에 필요한 6차원 호환 projection을 만드는 데에만 사용한다.
 
 ## 3. 결과 계산 구조
 
-`calculatePersonalPreferenceResult`는 React, React Native, Zustand, Router, storage를 import하지 않는 순수 기준 함수다.
+`calculateTravelPreferenceSurveyResult`와 `calculatePersonalPreferenceResult`는 React, React Native, Zustand, Router, storage를 import하지 않는 순수 기준 함수다.
 
 - `profileType`: `pace + activity`
   - 0~1: `여유로운 여행자`
@@ -49,7 +82,7 @@ interface PreferenceQuestion {
 - `version`: `PERSONAL_TEST_VERSION`, 현재 1
 - `completedAt`: 최종 제출 시 한 번 생성한 ISO 8601 문자열
 
-결과 계산과 Store 저장은 분리되어 있다. API/hybrid 계약 대기 오류가 발생하면 계산 결과를 사용자 결과로 저장하지 않는다.
+결과 계산과 Store 저장은 분리되어 있다. API/hybrid 계약 대기 오류가 발생하면 계산 결과를 사용자 결과로 저장하지 않는다. `mock` 결과 서비스는 검증된 원본 응답을 순수 계산 함수에 전달하며 백엔드 request builder를 사용하지 않는다.
 
 ## 4. Frontend_new에서 재사용한 로직
 
@@ -73,25 +106,27 @@ reference의 `surveyQuestions.js`, `computeResult.js`, 5문항 고정 구조, Co
 
 ## 6. draft 상태
 
-`usePersonalPreferenceDraftStore`는 완료 결과와 분리된 feature Store다.
+`usePersonalPreferenceDraftStore`는 작성 중 draft와 마지막 완료 원본 응답만 관리하는 feature Store다.
 
 ```ts
 interface PersonalPreferenceDraft {
   configVersion: number;
   owner: { kind: "anonymous" } | { kind: "user"; userId: string };
   currentQuestionIndex: number;
-  answers: Partial<PersonalPreferenceAnswers>;
+  answers: PersonalPreferenceDraftAnswers;
   startedAt: string;
   updatedAt: string;
 }
 ```
 
-`startTest`, `selectAnswer`, `goNext`, `goPrevious`, `goToQuestion`, `resetDraft` action을 제공한다. 중간 답변이 있으면 이어하기/처음부터 다시 하기를 선택할 수 있고 나가기 Modal에서 기기 저장 정책을 안내한다.
+`startTest`, `updateAnswers`, `goNext`, `goPrevious`, `goToQuestion`, `resetDraft`, `setCompletedSurvey` action을 제공한다. 중간 답변이 있으면 이어하기/처음부터 다시 하기를 선택할 수 있고 나가기 Modal에서 기기 저장 정책을 안내한다. Store에는 완료 원본만 보존하고 결과 상세와 친구 궁합 점수는 원본에서 파생한다.
 
 ## 7. 완료 결과 상태
 
-- member/guest: 기존 도메인 Store의 `preferenceResultsByUserId[userId]`
-- anonymous: feature Store의 비영속 `anonymousResult`
+- member/guest 전용 원본: feature Store의 `completedSurvey`
+- member/guest 기존 호환 결과: 도메인 Store의 `preferenceResultsByUserId[userId]`
+- anonymous 원본: feature Store의 비영속 `completedSurvey`
+- 상세 결과와 anonymous 호환 preview: `useTravelPreferenceSurveyResult`에서 계산
 
 member/guest 저장 성공 시 `preferenceResultsByUserId`, `preferenceTestCompleted`, `onboardingIntroSeen`을 갱신하고 draft를 제거한 뒤 result route로 replace한다. 여행방 member에는 완료 flag를 저장하지 않으며 응답 상태는 결과의 version과 답변 유효성에서 파생한다. 저장 실패 시 기존 완료 결과와 draft를 모두 유지한다.
 
@@ -108,17 +143,17 @@ anonymous 결과에는 로그인·회원가입 유도와 비영속 안내를 표
 ## 9. mock / api / hybrid
 
 - `mock`: 웹 기준 순수 로컬 계산을 실행하고 세션 정책에 맞게 저장 또는 체험 표시
-- `api`: Quiz DTO·endpoint를 추측하지 않으며 제출 시 계약 대기 오류. 네트워크 호출과 mock fallback 없음
+- `api`: Quiz DTO·endpoint를 추측하지 않으며 계산 요청 시 계약 대기 오류. 네트워크 호출과 mock fallback 없음
 - `hybrid`: 현재 Quiz 계약이 없으므로 제출 보류. 공개 로컬 기능과 draft는 유지
 
-`preferenceSubmissionService`가 mode 분기를 담당하므로 화면은 환경 변수를 직접 분기하지 않는다.
+`preferenceResultService`가 mode 분기를 담당하므로 화면은 환경 변수를 직접 분기하지 않는다. 현재 공개 타입은 화면에서 로컬 계산에 필요한 입력과 결과뿐이며 백엔드 전송 DTO가 아니다.
 
 ## 10. AsyncStorage persist
 
 - key: `duri-personal-preference-draft`
-- persist version: 1
-- 저장: active draft만
-- 저장하지 않음: anonymousResult, 오류, hydration UI 상태
+- persist version: 6
+- 저장: active draft와 member/guest의 마지막 완료 원본 응답
+- 저장하지 않음: 파생 상세 결과, anonymous 완료 응답, 오류, hydration UI 상태
 
 완료 결과는 기존 `duri-mobile-store`에 저장된다. Auth의 `duri-auth-session`에는 완료 여부 boolean만 저장하고 결과를 중복 저장하지 않는다.
 
@@ -132,7 +167,9 @@ draft의 `configVersion`이 현재 version과 다르면 hydration normalization�
 
 ## 13. 백엔드 Quiz 계약 대기
 
-- questions/status/submit request·response DTO
+- questions/status/submit endpoint와 서버 response DTO
+- submit 요청·응답 DTO와 인증 정책
+- 클라이언트 계산 결과 검증 및 `algorithmVersion` 정책
 - 질문 cache와 version 정책
 - submit idempotency와 오류 코드
 - server/local 결과 source-of-truth
