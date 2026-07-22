@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { StyleSheet, Text, View } from "react-native";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { useShallow } from "zustand/react/shallow";
 import { AppHeader, Screen } from "../../../components/common";
 import { ErrorState } from "../../../components/feedback";
@@ -11,7 +11,10 @@ import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import { dateToDateOnly } from "../../trips/utils/tripDateUtils";
 import { formatTripDateRange } from "../../../utils/formatters";
 import { CandidateBoard } from "../components/CandidateBoard";
+import { WorkspaceBoardSheet, type WorkspaceBoardSheetSnap, type WorkspaceBoardTab } from "../components/WorkspaceBoardSheet";
 import { WorkspaceDateTabs } from "../components/WorkspaceDateTabs";
+import { WorkspaceDayCanvas } from "../components/WorkspaceDayCanvas";
+import { WorkspaceDayPager } from "../components/WorkspaceDayPager";
 import { WorkspaceItinerary } from "../components/WorkspaceItinerary";
 import {
   ConfirmationModal,
@@ -46,6 +49,7 @@ function mutationMessage(result: string) {
   if (result === "overlap") return "다른 일정과 시간이 겹쳐 변경하지 않았어요.";
   if (result === "duplicate-place") return "이미 여행 일정에 배치된 장소예요.";
   if (result === "boundary") return "이 방향으로는 더 이동할 수 없어요.";
+  if (result === "invalid-date") return "여행 날짜를 확인해 주세요.";
   if (result === "scheduled") return "일정에 배치된 후보예요. 먼저 모든 일정에서 제거해 주세요.";
   return "요청을 처리하지 못했어요. 데이터를 다시 확인해 주세요.";
 }
@@ -76,6 +80,8 @@ export function WorkspaceScreen() {
   const addPlaceToItinerary = useDuriStore((state) => state.addPlaceToItinerary);
   const updateItineraryItem = useDuriStore((state) => state.updateItineraryItem);
   const moveItineraryItem = useDuriStore((state) => state.moveItineraryItem);
+  const moveItineraryItemToIndex = useDuriStore((state) => state.moveItineraryItemToIndex);
+  const extendTripByOneDay = useDuriStore((state) => state.extendTripByOneDay);
   const removeItineraryItem = useDuriStore((state) => state.removeItineraryItem);
   const removeCandidatePlace = useDuriStore((state) => state.removeCandidatePlace);
   const startTripExplore = useExploreSearchStore((state) => state.startTripExplore);
@@ -83,11 +89,13 @@ export function WorkspaceScreen() {
   const [requestedDate, setRequestedDate] = useState(affectedDate);
   const [candidateKeyword, setCandidateKeyword] = useState("");
   const [candidateFilter, setCandidateFilter] = useState<CandidateBoardFilter>("all");
-  const [candidateExpanded, setCandidateExpanded] = useState(true);
+  const [activeBoard, setActiveBoard] = useState<WorkspaceBoardTab>("itinerary");
+  const [boardSnap, setBoardSnap] = useState<WorkspaceBoardSheetSnap>("mid");
   const [selectCandidateOpen, setSelectCandidateOpen] = useState(false);
   const [editor, setEditor] = useState<EditorState>();
   const [removeItemId, setRemoveItemId] = useState<string>();
   const [removeCandidateId, setRemoveCandidateId] = useState<string>();
+  const [draggingItemId, setDraggingItemId] = useState<string>();
   const [feedback, setFeedback] = useState<WorkspaceFeedback>(() => duriApplied === "1"
     ? { message: "두리의 제안을 일정에 반영했어요. 현재 일정으로 다시 분석할 수 있어요.", ...(affectedDate ? { targetDate: affectedDate } : {}) }
     : { message: "" });
@@ -104,14 +112,15 @@ export function WorkspaceScreen() {
     [selectedDate, source, tripId, workspace],
   );
   const filteredCandidates = useMemo(
-    () => filterCandidatePlaceViewModels(candidateViews, candidateKeyword, candidateFilter),
-    [candidateFilter, candidateKeyword, candidateViews],
+    () => filterCandidatePlaceViewModels(candidateViews, candidateKeyword, candidateFilter, source.currentUserId),
+    [candidateFilter, candidateKeyword, candidateViews, source.currentUserId],
   );
   const itineraryViews = useMemo(
     () => workspace ? buildItineraryItemViewModels(source, tripId, selectedDate, workspace.dates.map((date) => date.date)) : [],
     [selectedDate, source, tripId, workspace],
   );
   const selectedDateView = workspace?.dates.find((date) => date.date === selectedDate);
+  const selectedDayIndex = workspace?.dates.findIndex((date) => date.date === selectedDate) ?? -1;
   const rawItinerary = source.itineraryByTripId[tripId] ?? [];
   const analysisInput = useMemo(() => buildDuriAnalysisInputFromState(source, tripId), [source, tripId]);
   const currentAnalysisFingerprint = useMemo(() => analysisInput ? createDuriInputFingerprint(createDuriAnalysisSnapshot(analysisInput)) : "", [analysisInput]);
@@ -197,6 +206,37 @@ export function WorkspaceScreen() {
     showFeedback(result === "success" ? `일정을 ${direction === "up" ? "위" : "아래"}로 이동하고 시간을 다시 배치했어요.` : mutationMessage(result));
   };
 
+  const moveItemToIndex = (itemId: string, targetIndex: number) => {
+    const currentIndex = itineraryViews.findIndex((item) => item.id === itemId);
+    if (currentIndex === targetIndex) return;
+    const result = moveItineraryItemToIndex(tripId, itemId, targetIndex);
+    showFeedback(result === "success" ? "일정 순서를 변경하고 시간을 다시 배치했어요." : mutationMessage(result));
+  };
+
+  const addDay = () => {
+    if (!workspace.canEdit) {
+      showFeedback(workspace.readOnlyReason ?? "여행 날짜를 수정할 수 없어요.");
+      return;
+    }
+    const result = extendTripByOneDay(tripId);
+    if (result.status !== "success") {
+      showFeedback(mutationMessage(result.status));
+      return;
+    }
+    setRequestedDate(result.endDate);
+    showFeedback(`DAY ${workspace.dates.length + 1}을 추가했어요.`, result.endDate);
+  };
+
+  const openBoard = (tab: WorkspaceBoardTab, snap: WorkspaceBoardSheetSnap = "expanded") => {
+    setActiveBoard(tab);
+    setBoardSnap(snap);
+  };
+
+  const changeBoard = (tab: WorkspaceBoardTab) => {
+    setActiveBoard(tab);
+    if (boardSnap === "collapsed") setBoardSnap("mid");
+  };
+
   const requestCandidateRemoval = (candidateView: CandidatePlaceViewModel) => {
     const candidate = (source.candidatesByTripId[tripId] ?? []).find((item) => item.placeId === candidateView.placeId);
     const decision = canRemoveCandidate({ sessionKind, currentUserId: source.currentUserId, trip, candidate, itinerary: rawItinerary });
@@ -232,49 +272,89 @@ export function WorkspaceScreen() {
         : "일정 편집"
       : "일정 편집";
 
-  return <Screen keyboardAware testID="workspace-editor-screen">
-    <AppHeader title={workspace.title} subtitle={`${workspace.regionName} · ${formatTripDateRange(workspace.startDate, workspace.endDate)}`} onBack={() => router.back()} />
-    <View style={styles.metrics}><Metric value={workspace.candidateCount} label="후보" /><Metric value={workspace.unscheduledCandidateCount} label="미배치" /><Metric value={workspace.itineraryCount} label="일정" /><Metric value={workspace.memberCount} label="동행자" /></View>
-    {!workspace.canEdit ? <View style={styles.readOnly}><Text style={styles.readOnlyTitle}>읽기 전용 워크스페이스</Text><Text style={styles.readOnlyText}>{workspace.readOnlyReason}</Text></View> : null}
-    <WorkspaceFeedbackBanner message={feedback.message} onClose={() => setFeedback({ message: "" })} />
-    <View style={styles.section}><Text style={styles.eyebrow}>TRIP DATES</Text><Text style={styles.sectionTitle}>여행 날짜</Text><WorkspaceDateTabs dates={workspace.dates} selectedDate={selectedDate} onSelect={setRequestedDate} /></View>
-    <CandidateBoard
-      candidates={filteredCandidates}
-      totalCount={workspace.candidateCount}
-      unscheduledCount={workspace.unscheduledCandidateCount}
-      keyword={candidateKeyword}
-      filter={candidateFilter}
-      expanded={candidateExpanded}
-      canEdit={workspace.canEdit}
-      onKeywordChange={setCandidateKeyword}
-      onFilterChange={setCandidateFilter}
-      onToggleExpanded={() => setCandidateExpanded((value) => !value)}
-      onExplore={explore}
-      onOpenCandidate={(placeId) => source.placesById[placeId] ? router.push({ pathname: "/places/[placeId]", params: { placeId } }) : showFeedback("장소 정보가 누락되어 상세 화면을 열 수 없어요.")}
-      onCandidateAction={openAddEditor}
-      onRemoveCandidate={requestCandidateRemoval}
-    />
-    {selectedDateView ? <WorkspaceItinerary
-      date={selectedDateView}
-      items={itineraryViews}
-      unscheduledCandidateCount={workspace.unscheduledCandidateCount}
-      canEdit={workspace.canEdit}
-      onAdd={() => setSelectCandidateOpen(true)}
-      onExplore={explore}
-      onMoveUp={(itemId) => moveItem(itemId, "up")}
-      onMoveDown={(itemId) => moveItem(itemId, "down")}
-      onEdit={openEditEditor}
-      onRemove={setRemoveItemId}
-    /> : null}
-    <DuriAnalysisEntryCard
-      itineraryCount={workspace.itineraryCount}
-      session={analysisState.session}
-      stale={analysisStale}
-      loading={analysisState.status === "loading"}
-      engineAvailable={duriAnalysisService.available && workspaceScheduleService.available}
-      engineMessage={!workspaceScheduleService.available ? workspaceScheduleService.message : duriAnalysisService.unavailableMessage}
-      onOpen={() => router.push({ pathname: "/trips/[tripId]/analysis", params: { tripId } })}
-    />
+  const itineraryBoard = selectedDateView ? <WorkspaceItinerary
+    date={selectedDateView}
+    items={itineraryViews}
+    unscheduledCandidateCount={workspace.unscheduledCandidateCount}
+    canEdit={workspace.canEdit}
+    onAdd={() => setSelectCandidateOpen(true)}
+    onExplore={explore}
+    onMoveUp={(itemId) => moveItem(itemId, "up")}
+    onMoveDown={(itemId) => moveItem(itemId, "down")}
+    onMoveToIndex={moveItemToIndex}
+    onEdit={openEditEditor}
+    onRemove={setRemoveItemId}
+    onDragStateChange={setDraggingItemId}
+  /> : null;
+
+  const candidateBoard = <CandidateBoard
+    candidates={filteredCandidates}
+    totalCount={workspace.candidateCount}
+    unscheduledCount={workspace.unscheduledCandidateCount}
+    keyword={candidateKeyword}
+    filter={candidateFilter}
+    canEdit={workspace.canEdit}
+    onKeywordChange={setCandidateKeyword}
+    onFilterChange={setCandidateFilter}
+    onSearchFocus={() => setBoardSnap("expanded")}
+    onExplore={explore}
+    onOpenCandidate={(placeId) => source.placesById[placeId] ? router.push({ pathname: "/places/[placeId]", params: { placeId } }) : showFeedback("장소 정보가 누락되어 상세 화면을 열 수 없어요.")}
+    onCandidateAction={openAddEditor}
+    onRemoveCandidate={requestCandidateRemoval}
+  />;
+
+  return <Screen scroll={false} padded={false} keyboardAware testID="workspace-editor-screen">
+    <View style={styles.root}>
+      <ScrollView
+        style={styles.canvasScroll}
+        contentContainerStyle={styles.canvasContent}
+        keyboardShouldPersistTaps="handled"
+        scrollEnabled={!draggingItemId}
+        showsVerticalScrollIndicator={false}
+      >
+        <AppHeader title={workspace.title} subtitle={`${workspace.regionName} · ${formatTripDateRange(workspace.startDate, workspace.endDate)}`} onBack={() => router.back()} />
+        <View style={styles.metrics}><Metric value={workspace.candidateCount} label="후보" /><Metric value={workspace.unscheduledCandidateCount} label="미배치" /><Metric value={workspace.itineraryCount} label="일정" /><Metric value={workspace.memberCount} label="동행자" /></View>
+        {!workspace.canEdit ? <View style={styles.readOnly}><Text style={styles.readOnlyTitle}>읽기 전용 워크스페이스</Text><Text style={styles.readOnlyText}>{workspace.readOnlyReason}</Text></View> : null}
+        <WorkspaceFeedbackBanner message={feedback.message} onClose={() => setFeedback({ message: "" })} />
+        <View style={styles.section}><Text style={styles.eyebrow}>TRIP DATES</Text><Text style={styles.sectionTitle}>여행 날짜</Text><WorkspaceDateTabs dates={workspace.dates} selectedDate={selectedDate} onSelect={setRequestedDate} onAddDay={addDay} addDisabled={!workspace.canEdit} /></View>
+        {selectedDateView ? <WorkspaceDayPager
+          selectedIndex={Math.max(selectedDayIndex, 0)}
+          dayCount={workspace.dates.length}
+          disabled={Boolean(draggingItemId)}
+          onSelectIndex={(index) => {
+            const nextDate = workspace.dates[index]?.date;
+            if (nextDate) setRequestedDate(nextDate);
+          }}
+        ><WorkspaceDayCanvas
+            date={selectedDateView}
+            items={itineraryViews}
+            onOpenItinerary={() => openBoard("itinerary")}
+            onOpenCandidates={() => openBoard("candidates")}
+          /></WorkspaceDayPager> : null}
+        <DuriAnalysisEntryCard
+          itineraryCount={workspace.itineraryCount}
+          session={analysisState.session}
+          stale={analysisStale}
+          loading={analysisState.status === "loading"}
+          engineAvailable={duriAnalysisService.available && workspaceScheduleService.available}
+          engineMessage={!workspaceScheduleService.available ? workspaceScheduleService.message : duriAnalysisService.unavailableMessage}
+          onOpen={() => router.push({ pathname: "/trips/[tripId]/analysis", params: { tripId } })}
+        />
+      </ScrollView>
+      {selectedDateView ? <WorkspaceBoardSheet
+        activeTab={activeBoard}
+        snap={boardSnap}
+        dayLabel={selectedDateView.dayLabel}
+        dateLabel={`${selectedDateView.monthDayLabel} ${selectedDateView.weekdayLabel}`}
+        itineraryCount={itineraryViews.length}
+        candidateCount={workspace.candidateCount}
+        itineraryBoard={itineraryBoard}
+        candidateBoard={candidateBoard}
+        contentScrollEnabled={!draggingItemId}
+        onTabChange={changeBoard}
+        onSnapChange={setBoardSnap}
+      /> : null}
+    </View>
 
     <SelectCandidateModal visible={selectCandidateOpen} candidates={candidateViews} onClose={() => setSelectCandidateOpen(false)} onSelect={(candidate) => { setSelectCandidateOpen(false); openAddEditor(candidate); }} onExplore={() => { setSelectCandidateOpen(false); explore(); }} />
     <ScheduleEditorModal
@@ -300,6 +380,9 @@ function Metric({ value, label }: { value: number; label: string }) {
 }
 
 const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: colors.background },
+  canvasScroll: { flex: 1 },
+  canvasContent: { width: "100%", maxWidth: 560, alignSelf: "center", paddingHorizontal: spacing.lg, paddingBottom: 260 },
   metrics: { flexDirection: "row", backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.lg },
   metric: { flex: 1, alignItems: "center", paddingVertical: spacing.md },
   metricValue: { ...typography.subtitle, color: colors.primary },

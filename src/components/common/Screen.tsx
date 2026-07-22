@@ -5,15 +5,16 @@ import { colors, spacing } from "../../theme/tokens";
 
 type ScreenProps = PropsWithChildren<{
   scroll?: boolean;
+  scrollEnabled?: boolean;
   padded?: boolean;
   keyboardAware?: boolean;
   testID?: string;
 }>;
 
-export function Screen({ children, scroll = true, padded = true, keyboardAware = false, testID }: ScreenProps) {
+export function Screen({ children, scroll = true, scrollEnabled = true, padded = true, keyboardAware = false, testID }: ScreenProps) {
   const contentStyle = [styles.content, padded && styles.padded];
   const body = scroll ? (
-    <ScrollView contentContainerStyle={contentStyle} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+    <ScrollView contentContainerStyle={contentStyle} keyboardShouldPersistTaps="handled" scrollEnabled={scrollEnabled} showsVerticalScrollIndicator={false}>
       {children}
     </ScrollView>
   ) : (

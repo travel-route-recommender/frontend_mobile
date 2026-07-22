@@ -1,6 +1,6 @@
 import type { EntityId } from "../../domain";
 
-export type CandidateBoardFilter = "all" | "unscheduled" | "scheduled";
+export type CandidateBoardFilter = "all" | "common" | "mine" | "companion";
 export type CandidateScheduleState =
   | "unscheduled"
   | "scheduled-on-selected-date"
@@ -73,4 +73,3 @@ export type WorkspaceFeedback = {
   message: string;
   targetDate?: string;
 };
-

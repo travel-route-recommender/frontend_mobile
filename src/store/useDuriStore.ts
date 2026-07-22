@@ -35,7 +35,11 @@ import {
   isValidScheduleRange,
   sortItineraryItemsByDateAndTime,
 } from "../utils/schedule";
-import { moveItemWithinDate } from "../features/workspace/logic/workspaceDateTime";
+import {
+  addDaysToDate,
+  moveItemToIndexWithinDate,
+  moveItemWithinDate,
+} from "../features/workspace/logic/workspaceDateTime";
 import type { ItineraryMoveDirection } from "../features/workspace/types";
 import type {
   ApplyDuriSuggestionAtomicallyInput,
@@ -103,6 +107,10 @@ export type ItineraryMutationResult =
   | "overlap"
   | "boundary";
 
+export type ExtendTripEndDateResult =
+  | { status: "success"; endDate: string }
+  | { status: "invalid-trip" | "trip-not-editable" | "not-member" | "invalid-date" };
+
 type DuriActions = {
   hydrationError: string | null;
   setHydrationError: (message: string | null) => void;
@@ -113,6 +121,7 @@ type DuriActions = {
   addTripMember: (tripId: EntityId, userId: EntityId) => void;
   updateCurrentUserProfile: (input: UpdateCurrentUserProfileInput) => boolean;
   createTrip: (input: CreateTripInput) => EntityId;
+  extendTripByOneDay: (tripId: EntityId) => ExtendTripEndDateResult;
   setActiveTrip: (tripId: EntityId) => void;
   toggleSavedPlace: (placeId: EntityId, userId?: EntityId) => void;
   addCandidatePlace: (tripId: EntityId, placeId: EntityId, addedByUserId?: EntityId) => AddCandidatePlaceResult;
@@ -125,6 +134,7 @@ type DuriActions = {
     patch: Partial<Omit<ItineraryItem, "id" | "tripId">>,
   ) => ItineraryMutationResult;
   moveItineraryItem: (tripId: EntityId, itineraryItemId: EntityId, direction: ItineraryMoveDirection) => ItineraryMutationResult;
+  moveItineraryItemToIndex: (tripId: EntityId, itineraryItemId: EntityId, targetIndex: number) => ItineraryMutationResult;
   reorderItinerary: (tripId: EntityId, orderedItemIds: EntityId[]) => ItineraryMutationResult;
   applyDuriSuggestion: (tripId: EntityId, suggestion: DuriSuggestion) => SuggestionApplyResult;
   applyDuriSuggestionAtomically: (input: ApplyDuriSuggestionAtomicallyInput) => ApplyDuriSuggestionAtomicallyResult;
@@ -250,6 +260,34 @@ export const useDuriStore = create<DuriState>()(
         });
 
         return createdTripId;
+      },
+      extendTripByOneDay: (tripId) => {
+        let result: ExtendTripEndDateResult = { status: "invalid-trip" };
+        set((state) => {
+          const trip = state.tripsById[tripId];
+          if (!trip) return state;
+          if (trip.status === "completed") {
+            result = { status: "trip-not-editable" };
+            return state;
+          }
+          if (!trip.members.some((member) => member.userId === state.currentUserId)) {
+            result = { status: "not-member" };
+            return state;
+          }
+          const endDate = addDaysToDate(trip.endDate, 1);
+          if (!endDate) {
+            result = { status: "invalid-date" };
+            return state;
+          }
+          result = { status: "success", endDate };
+          return {
+            tripsById: {
+              ...state.tripsById,
+              [tripId]: { ...trip, endDate },
+            },
+          };
+        });
+        return result;
       },
       setActiveTrip: (tripId) =>
         set((state) => {
@@ -526,6 +564,38 @@ export const useDuriStore = create<DuriState>()(
             return state;
           }
           const moved = moveItemWithinDate(state.itineraryByTripId[tripId] ?? [], itineraryItemId, direction);
+          if (moved.status !== "success") {
+            result = moved.status === "boundary" ? "boundary" : moved.status;
+            return state;
+          }
+          result = "success";
+          return {
+            itineraryByTripId: {
+              ...state.itineraryByTripId,
+              [tripId]: moved.items,
+            },
+          };
+        });
+        return result;
+      },
+      moveItineraryItemToIndex: (tripId, itineraryItemId, targetIndex) => {
+        let result: ItineraryMutationResult = "invalid-trip";
+        set((state) => {
+          const trip = state.tripsById[tripId];
+          if (!trip) return state;
+          if (trip.status === "completed") {
+            result = "trip-not-editable";
+            return state;
+          }
+          if (!trip.members.some((member) => member.userId === state.currentUserId)) {
+            result = "not-member";
+            return state;
+          }
+          const moved = moveItemToIndexWithinDate(
+            state.itineraryByTripId[tripId] ?? [],
+            itineraryItemId,
+            targetIndex,
+          );
           if (moved.status !== "success") {
             result = moved.status === "boundary" ? "boundary" : moved.status;
             return state;

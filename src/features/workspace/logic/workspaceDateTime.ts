@@ -36,6 +36,12 @@ export function buildTripDateRange(startDate: string, endDate: string): Workspac
   return result;
 }
 
+export function addDaysToDate(date: string, days: number) {
+  if (!isValidDateOnly(date) || !Number.isInteger(days)) return null;
+  const next = Date.parse(`${date}T00:00:00Z`) + days * 86_400_000;
+  return new Date(next).toISOString().slice(0, 10);
+}
+
 export function parseTimeToMinutes(value: string): number | null {
   if (!/^\d{2}:\d{2}$/.test(value)) return null;
   const [hour, minute] = value.split(":").map(Number);
@@ -181,8 +187,33 @@ export function moveItemWithinDate(
   };
 }
 
+export function moveItemToIndexWithinDate(
+  items: readonly ItineraryItem[],
+  itemId: string,
+  targetIndex: number,
+): MoveWithinDateResult {
+  const source = items.find((item) => item.id === itemId);
+  if (!source) return { status: "invalid-item", items: [...items] };
+  const sameDate = sortItineraryItemsByDateAndTime(items.filter((item) => item.date === source.date));
+  const sourceIndex = sameDate.findIndex((item) => item.id === itemId);
+  if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= sameDate.length) {
+    return { status: "boundary", items: [...items] };
+  }
+  if (sourceIndex === targetIndex) return { status: "success", items: normalizeItineraryOrder(items) };
+
+  const direction: ItineraryMoveDirection = targetIndex < sourceIndex ? "up" : "down";
+  let nextItems = [...items];
+  let currentIndex = sourceIndex;
+  while (currentIndex !== targetIndex) {
+    const moved = moveItemWithinDate(nextItems, itemId, direction);
+    if (moved.status !== "success") return moved;
+    nextItems = moved.items;
+    currentIndex += direction === "up" ? -1 : 1;
+  }
+  return { status: "success", items: nextItems };
+}
+
 export function moveItemToDate(items: readonly ItineraryItem[], itemId: string, date: string, startTime: string) {
   if (!items.some((item) => item.id === itemId)) return [...items];
   return normalizeItineraryOrder(items.map((item) => item.id === itemId ? { ...item, date, startTime } : item));
 }
-

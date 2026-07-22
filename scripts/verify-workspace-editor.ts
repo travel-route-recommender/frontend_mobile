@@ -2,9 +2,11 @@ import type { ItineraryItem, Place, Region, TripCandidate, TripRoom, User } from
 import { createDemoData } from "../src/data/mock/demoData";
 import { canEditTripWorkspace } from "../src/features/workspace/logic/workspaceCapabilities";
 import {
+  addDaysToDate,
   buildTripDateRange,
   doTimeRangesOverlap,
   moveItemToDate,
+  moveItemToIndexWithinDate,
   moveItemWithinDate,
   normalizeItineraryOrder,
   parseTimeToMinutes,
@@ -15,6 +17,7 @@ import {
   buildCandidateScheduleLookup,
   buildItineraryItemViewModels,
   buildWorkspaceViewModel,
+  filterCandidatePlaceViewModels,
   selectCandidateScheduleState,
   selectItineraryItemsForDate,
 } from "../src/features/workspace/selectors/workspaceSelectors";
@@ -110,8 +113,63 @@ const demo = createDemoData();
 const restored = normalizePersistedState(demo);
 assert(restored.itineraryByTripId[demo.activeTripId]?.length === demo.itineraryByTripId[demo.activeTripId]?.length && restored.candidatesByTripId[demo.activeTripId]?.length === demo.candidatesByTripId[demo.activeTripId]?.length, "29. 앱 재시작 정규화 후 후보·일정 유지");
 
+const orderedThree = [...ordered, item("third", "cafe", "2026-07-18", "14:00")];
+const draggedToEnd = moveItemToIndexWithinDate(orderedThree, "first", 2);
+assert(draggedToEnd.status === "success" && draggedToEnd.items.map((entry) => entry.id).join() === "second,third,first", "30. 드래그로 여러 칸 순서 변경");
+assert(draggedToEnd.items.map((entry) => entry.startTime).join() === "10:00,12:00,14:00", "31. 드래그 후 시간 슬롯 보존");
+assert(moveItemToIndexWithinDate(orderedThree, "first", 3).status === "boundary", "32. 드래그 대상 인덱스 범위 검증");
+assert(addDaysToDate("2026-01-31", 1) === "2026-02-01", "33. DAY 추가 월 경계");
+assert(addDaysToDate("2026-12-31", 1) === "2027-01-01", "34. DAY 추가 연도 경계");
+
+const extendedState = { ...emptyState, tripsById: { trip: { ...trip(), endDate: "2026-07-20" } } };
+const extendedView = buildWorkspaceViewModel(extendedState, "trip", "2026-07-20", "member", "2026-01-01");
+assert(extendedView?.dates.length === 3 && extendedView.selectedDate === "2026-07-20", "35. 추가 DAY 생성 및 자동 선택 모델");
+
+const demoTrip = demo.tripsById[demo.activeTripId];
+const persistedEndDate = addDaysToDate(demoTrip.endDate, 1);
+assert(Boolean(persistedEndDate), "36. demo 여행 종료일 확장");
+const extendedDemo = {
+  ...demo,
+  tripsById: {
+    ...demo.tripsById,
+    [demo.activeTripId]: { ...demoTrip, endDate: persistedEndDate as string },
+  },
+  itineraryByTripId: {
+    ...demo.itineraryByTripId,
+    [demo.activeTripId]: [
+      ...(demo.itineraryByTripId[demo.activeTripId] ?? []),
+      {
+        id: "persisted-added-day-rest",
+        tripId: demo.activeTripId,
+        date: persistedEndDate as string,
+        startTime: "08:00",
+        durationMinutes: 30,
+        itemType: "rest" as const,
+        preferredByUserIds: [],
+      },
+    ],
+  },
+};
+const restoredExtended = normalizePersistedState(extendedDemo);
+assert(restoredExtended.tripsById[demo.activeTripId]?.endDate === persistedEndDate, "37. 확장된 종료일 재시작 복원");
+assert(restoredExtended.itineraryByTripId[demo.activeTripId]?.some((entry) => entry.id === "persisted-added-day-rest"), "38. 추가 DAY 일정 재시작 복원");
+
+const relationshipFilterState = {
+  ...emptyState,
+  candidatesByTripId: {
+    trip: [
+      candidate("cafe"),
+      { ...candidate("market"), addedByUserIds: ["owner", "guest"] },
+    ],
+  },
+};
+const relationshipCandidates = buildCandidatePlaceViewModels(relationshipFilterState, "trip", "2026-07-18");
+assert(filterCandidatePlaceViewModels(relationshipCandidates, "", "all", "owner").length === 2, "39. 후보 전체 필터");
+assert(filterCandidatePlaceViewModels(relationshipCandidates, "", "common", "owner")[0]?.placeId === "market", "40. 공통 관심 필터");
+assert(filterCandidatePlaceViewModels(relationshipCandidates, "", "mine", "owner").length === 2, "41. 내가 담은 장소 필터");
+assert(filterCandidatePlaceViewModels(relationshipCandidates, "", "companion", "owner")[0]?.placeId === "market", "42. 동행자가 담은 장소 필터");
+
 const conflictValidation = validateCreateItineraryItem({ sessionKind: "member", currentUserId: "owner", trip: trip(), candidate: candidate("market"), place: places.market, itinerary: [item("existing", "cafe", "2026-07-18", "10:00", 90)], date: "2026-07-18", startTime: "11:00", endTime: "12:00" });
 assert(!conflictValidation.valid && conflictValidation.conflictItemIds[0] === "existing", "추가 validation은 겹치는 item ID를 반환해야 한다");
 
-console.log("Workspace editor verification passed: 29 scenarios + conflict validation");
-
+console.log("Workspace editor verification passed: 42 scenarios + conflict validation");

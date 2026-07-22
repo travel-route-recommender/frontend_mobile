@@ -158,12 +158,14 @@ export function filterCandidatePlaceViewModels(
   candidates: readonly CandidatePlaceViewModel[],
   keyword: string,
   filter: CandidateBoardFilter,
+  currentUserId = "",
 ) {
   const normalized = normalizeSearchKeyword(keyword);
   return candidates.filter((candidate) => {
     const matchesFilter = filter === "all"
-      || (filter === "unscheduled" && candidate.scheduleState === "unscheduled")
-      || (filter === "scheduled" && candidate.scheduleState !== "unscheduled");
+      || (filter === "common" && candidate.addedByCount > 1)
+      || (filter === "mine" && candidate.addedByUserIds.includes(currentUserId))
+      || (filter === "companion" && candidate.addedByUserIds.some((userId) => userId !== currentUserId));
     if (!matchesFilter) return false;
     if (!normalized) return true;
     return normalizeSearchKeyword([
@@ -207,4 +209,3 @@ export function buildItineraryItemViewModels(
     };
   });
 }
-

@@ -10,7 +10,9 @@ workspace 하단 `DuriAnalysisEntryCard`는 분석 전/중/current/stale/engine 
 
 ## 1. 화면 구조
 
-기존 `app/trips/[tripId]/workspace.tsx` route는 선언만 유지하고 실제 구현은 `src/features/workspace/screens/WorkspaceScreen.tsx`에 둔다. 화면은 여행방 헤더와 관계 수치, 여행 날짜 탭, 접을 수 있는 후보 보드, 선택 날짜 타임라인, 두리 분석 연결 경계 순서다. 후보는 가로 `FlatList`, 전체 화면과 일정은 세로 ScrollView 구조라 같은 방향의 큰 중첩 목록을 만들지 않는다.
+기존 `app/trips/[tripId]/workspace.tsx` route는 선언만 유지하고 실제 구현은 `src/features/workspace/screens/WorkspaceScreen.tsx`에 둔다. 화면 상단 캔버스는 여행방 헤더와 관계 수치, 기존 가로 여행 날짜 탭, 선택 날짜의 최대 3개 일정 요약, 두리 분석 연결 경계를 제공한다. 실제 편집은 화면 아래의 단일 `WorkspaceBoardSheet`가 담당하며 `일정 보드`와 `후보 장소`를 segmented tab으로 전환한다. 한 번에 선택된 DAY 하나만 표시하고 날짜 탭 선택과 요약 캔버스 좌우 스와이프가 같은 `selectedDate`를 갱신한다.
+
+시트는 화면 높이 기준 약 28%·58%·88%의 collapsed/mid/expanded snap을 제공한다. 전용 handle을 누르거나 위아래로 끌어 높이를 바꾸며, safe-area 하단 inset을 포함한다. 외부 bottom-sheet 패키지는 추가하지 않고 SDK 57의 React Native `Animated`, `PanResponder`, `useWindowDimensions`와 기존 safe-area-context를 사용한다.
 
 ## 2. 후보와 일정 관계
 
@@ -22,15 +24,15 @@ workspace 하단 `DuriAnalysisEntryCard`는 분석 전/중/current/stale/engine 
 
 ## 4. 여행 날짜 생성
 
-`buildTripDateRange`는 `YYYY-MM-DD` 시작일과 종료일을 UTC date-only epoch로 계산하고 양 끝 날짜를 포함한다. 시스템 timezone과 무관하며 당일치기, 월·연도·윤년 경계를 처리한다. 시작일이 종료일보다 늦거나 유효하지 않으면 빈 배열을 반환한다. 서버 계약처럼 임의의 최대 여행 일수는 추가하지 않았다.
+`buildTripDateRange`는 `YYYY-MM-DD` 시작일과 종료일을 UTC date-only epoch로 계산하고 양 끝 날짜를 포함한다. 시스템 timezone과 무관하며 당일치기, 월·연도·윤년 경계를 처리한다. 시작일이 종료일보다 늦거나 유효하지 않으면 빈 배열을 반환한다. 마지막 날짜 탭 뒤의 `+ DAY 추가`는 종료일에 하루를 더하고 새 DAY를 즉시 선택한다. 서버 계약처럼 임의의 최대 여행 일수는 추가하지 않았다.
 
 ## 5. selectedDate
 
-선택 날짜는 화면 로컬 상태이며 persist하지 않는다. 요청 날짜가 유효하면 유지하고, 아니면 오늘이 여행 기간 안인지 확인한 뒤 일정이 존재하는 첫 날짜, 시작일 순서로 선택한다. 후보 검색·필터·보드 접힘·열린 Modal도 비영속 UI 상태다.
+선택 날짜는 화면 로컬 상태이며 persist하지 않는다. 요청 날짜가 유효하면 유지하고, 아니면 오늘이 여행 기간 안인지 확인한 뒤 일정이 존재하는 첫 날짜, 시작일 순서로 선택한다. 날짜 탭과 좌우 스와이프는 별도의 page 상태를 만들지 않고 이 값만 바꾼다. 마지막 DAY를 추가하면 새 종료일로 즉시 이동한다. 후보 검색·필터·보드 접힘·열린 Modal도 비영속 UI 상태다.
 
 ## 6. 후보 보드 필터
 
-후보 검색은 장소명, 주소, category label, tags를 공백 정규화 후 비교한다. 필터는 전체·미배치·배치 완료다. 누락 Place 후보도 삭제·복구 정책을 안내하기 위해 카드로 유지하지만 일정 추가와 상세 이동은 차단한다.
+후보 검색은 장소명, 주소, category label, tags를 공백 정규화 후 비교한다. 필터는 전체·공통 관심·내가 담은 장소·동행자가 담은 장소이며 기존 `addedByUserIds` 관계만 사용해 파생한다. 배치 여부는 각 카드에 계속 표시한다. 누락 Place 후보도 삭제·복구 정책을 안내하기 위해 카드로 유지하지만 일정 추가와 상세 이동은 차단한다.
 
 ## 7. 일정 정렬 기준
 
@@ -58,7 +60,7 @@ Edit Modal에서 날짜, 시작·종료 시간, note를 변경한다. Place 교�
 
 ## 13. 순서 변경
 
-gesture drag-and-drop은 사용하지 않는다. 위·아래 버튼은 같은 날짜의 인접 항목 두 개를 대상으로 하며, 첫 항목의 위와 마지막 항목의 아래는 비활성화한다. 실제 정렬 기준이 시간인 도메인에 맞춰 두 항목의 체류 시간과 기존 사이 간격을 보존하면서 시작 시간을 원자적으로 재배치한다. 다른 날짜에는 영향을 주지 않는다.
+일정 카드의 이동 핸들을 길게 누른 뒤 같은 DAY 안에서 위아래로 끌어 놓으면 측정한 카드 중심과 가장 가까운 위치로 이동한다. React Native 기본 `PanResponder`와 `Animated`를 사용해 패키지를 추가하지 않았으며, 드래그 중에는 바깥 세로 ScrollView와 DAY 좌우 스와이프를 잠근다. 실제 정렬 기준이 시간인 도메인에 맞춰 대상 위치까지 기존 인접 이동 규칙을 반복 계산한 후 Store를 한 번만 갱신하므로, 체류 시간과 시간 슬롯을 보존하고 다른 날짜에는 영향을 주지 않는다. 위·아래 버튼은 접근성과 제스처 대안으로 계속 제공한다.
 
 ## 14. 일정 삭제
 
@@ -82,19 +84,19 @@ member와 초대 guest는 자신이 참여한 진행 여행방을 편집할 수 
 
 ## 18. persist
 
-기존 `candidatesByTripId`, `itineraryByTripId`, `activeTripId`가 `duri-mobile-store` version 4에 포함된다. 이번 단계에 새 영속 필드를 추가하지 않아 migration이나 persist version을 변경하지 않았다. 기존 정규화기는 중복 ID, 잘못된 날짜·시간과 관계를 복구한다.
+기존 `tripsById`, `candidatesByTripId`, `itineraryByTripId`, `activeTripId`가 `duri-mobile-store` version 4에 포함된다. DAY 추가는 별도 필드를 만들지 않고 해당 여행방의 기존 `endDate`만 늘린다. 재정렬된 시작 시간과 새 DAY의 일정도 기존 itinerary 관계로 저장된다. 새 영속 필드가 없어 migration이나 persist version은 변경하지 않았고, 기존 정규화기는 확장된 여행 기간 안의 일정을 재시작 후 복원한다.
 
 ## 19. 파생 데이터 비영속 원칙
 
-selectedDate, 후보 검색·필터, 보드 접힘, Modal, 종료 시간, 충돌, 날짜별 count, 후보 scheduleState, ViewModel은 저장하지 않는다. 후보 수·일정 수·준비율·TripHome 요약은 기존 relation selector에서 자동 갱신된다.
+selectedDate, 후보 검색·필터, 활성 보드 탭, 시트 snap, Modal, 드래그 중인 항목, 종료 시간, 충돌, 날짜별 count, 후보 scheduleState, ViewModel은 저장하지 않는다. 후보 수·일정 수·준비율·TripHome 요약은 기존 relation selector에서 자동 갱신된다. 두리 분석 입력은 특정 DAY가 아니라 전체 여행 기간과 전체 itinerary를 사용하므로 DAY 추가나 어느 날짜의 일정 변경도 기존 분석을 stale로 만든다.
 
-## 20. 향후 gesture 전환
+## 20. native gesture 검증 경계
 
-gesture reorder를 도입하려면 RN/Expo SDK 호환성, ScrollView 충돌, 접근성 대체 버튼, 시간 슬롯 재배치 정책을 먼저 확정해야 한다. gesture가 추가돼도 현재 위·아래 버튼은 접근성 대안으로 유지한다.
+PanResponder 기반 일정 드래그, DAY 스와이프, bottom sheet handle은 서로 다른 영역에 responder를 연결한다. 일정 드래그 중에는 시트 내부 ScrollView와 DAY 스와이프를 잠그며, 시트 자체 이동은 handle 영역에서만 시작한다. TypeScript·lint·순수 로직 검증 및 Expo export로 정적 확인하고 실제 터치 장치에서 길게 누르기, 내부 스크롤, snap 감각을 최종 확인해야 한다. 위·아래 버튼은 native gesture 검증 여부와 무관하게 항상 사용할 수 있는 대안이다.
 
 ## 21. 두리 분석·제안 연결
 
-현재 화면은 itinerary가 있으면 독립 Duri report route로 이동한다. report에서 local 분석과 제안을 명시적으로 실행하며, 제안 상세는 before/after/diff, stale fingerprint, 적용 확인과 Zustand 단일 update 기반 atomic apply를 제공한다. 다음 단계는 server Duri와 Schedule batch 계약, 실제 Directions 입력이다.
+현재 화면은 itinerary가 있으면 독립 Duri report route로 이동한다. report에서 local 분석과 제안을 명시적으로 실행하며, 제안 상세는 before/after/diff, stale fingerprint, 적용 확인과 Zustand 단일 update 기반 atomic apply를 제공한다. 분석과 제안 적용 범위는 현재 선택한 DAY에 제한되지 않고 전체 여행 일정이다. 다음 단계는 server Duri와 Schedule batch 계약, 실제 Directions 입력이다.
 
 ## 22. Schedule API mapper 대기
 
