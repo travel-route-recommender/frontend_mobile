@@ -1,3 +1,347 @@
+# 두리 모바일 (Duri Mobile)
+
+함께 여행할 사람들의 장소 후보, 일정, 여행 성향을 한곳에서 조율하는 **두리**의 React Native + Expo 모바일 애플리케이션입니다.
+
+이 저장소는 웹에서 검증한 핵심 여행 계획 흐름을 Android, iOS, Web에서 실행 가능한 모바일 UI로 옮긴 프론트엔드 프로토타입입니다. 현재 기본 데이터 소스는 `mock`, 두리 분석 엔진은 `local`이며, 실제 운영 인증·백엔드 API·지도 SDK는 아직 연결하지 않았습니다.
+
+> **현재 상태**
+> 로그인부터 장소 탐색, 여행방 생성, 후보 수집, 일정 편집, 개인·그룹 성향 진단, 두리 일정 분석과 제안 적용까지 로컬 데모 흐름으로 실행할 수 있습니다. `api`, `hybrid`, `server` 모드는 계약이 확정되지 않은 기능을 mock 데이터로 몰래 대체하지 않고 명시적인 연결 대기 상태를 보여줍니다.
+
+## 목차
+
+- [주요 기능](#주요-기능)
+- [기술 스택](#기술-스택)
+- [빠른 시작](#빠른-시작)
+- [환경 변수](#환경-변수)
+- [데모 계정](#데모-계정)
+- [주요 화면과 라우트](#주요-화면과-라우트)
+- [프로젝트 구조](#프로젝트-구조)
+- [상태와 데이터 흐름](#상태와-데이터-흐름)
+- [워크스페이스 편집기](#워크스페이스-편집기)
+- [두리 분석과 제안](#두리-분석과-제안)
+- [검증과 빌드](#검증과-빌드)
+- [현재 제약 사항](#현재-제약-사항)
+- [문제 해결](#문제-해결)
+- [문서](#문서)
+- [기여 방법](#기여-방법)
+
+## 주요 기능
+
+### 인증과 온보딩
+
+- 이메일·Kakao mock 로그인, 이메일 가입 UI
+- 익명 둘러보기, 초대 코드 기반 guest 참여
+- `anonymous`, `guest`, `member` 세션과 기능 권한 분리
+- 닉네임·프리셋 아바타 설정 및 온보딩 소개
+- 앱 시작 시 인증·도메인·작성 중 초안의 명시적 hydration
+
+### 홈과 장소 탐색
+
+- 홈, 탐색, 여행방, 저장, 마이페이지의 5개 하단 탭
+- 장소명·주소·지역·카테고리·태그·설명 통합 검색
+- 지역·카테고리 필터와 정렬
+- 장소 상세, 비슷한 장소, 개인 저장, 여행 후보 추가
+- 목록과 지역 보드가 공유하는 탐색 상태
+
+### 여행방
+
+- 진행 중·완료·전체 여행방 필터
+- 목적지 → 날짜 → 조건 → 동행자 → 확인의 5단계 생성 Wizard
+- D-day, 멤버, 후보, 일정, 성향 응답률, 준비율 요약
+- 작성 중인 여행방 초안 저장과 복구
+- mock 데이터에 포함된 동행자 추가
+
+### 여행 워크스페이스
+
+- `DAY 1 / DAY 2 / + DAY 추가` 형태의 가로 날짜 selector
+- 선택한 DAY의 일정 요약 캔버스와 좌우 스와이프
+- 약 28% / 58% / 88%로 전환되는 하단 작업 시트
+- 한 시트 안에서 `일정 보드`와 `후보 장소` 전환
+- 일정 추가·수정·날짜 이동·삭제·순서 변경
+- 길게 누른 뒤 끌어 놓는 일정 재정렬과 위·아래 버튼 fallback
+- 후보 검색과 `전체 / 공통 관심 / 내가 담은 장소 / 동행자가 담은 장소` 필터
+- 시간 범위, 30분 단위, 중복 배치, 일정 충돌, 편집 권한 검증
+
+### 여행 성향과 두리 분석
+
+- 웹 기준 6문항 개인 여행 성향 테스트
+- 중간 답변 복구, 답변 검토, 결과 저장, 재테스트 보호
+- 여행방 멤버별 응답 상태와 그룹 여행 성향 진단
+- 일정 밀도·식사·충돌·날짜 균형·동선·후보 활용 분석
+- 일정 개선 제안의 before/after와 항목별 diff
+- 분석 이후 일정이 바뀐 경우 stale fingerprint로 적용 차단
+- 전체 다음 일정을 검증한 뒤 한 번에 반영하는 atomic apply
+
+## 기술 스택
+
+| 구분 | 기술 |
+| --- | --- |
+| 앱 프레임워크 | Expo SDK 57 (`expo ~57.0.4`) |
+| UI 런타임 | React 19.2.3, React Native 0.86.0 |
+| 라우팅 | Expo Router 57, typed routes |
+| 언어 | TypeScript 6 |
+| 클라이언트 상태 | Zustand 5 |
+| 영속 저장 | AsyncStorage, Expo SecureStore adapter |
+| 서버 상태 경계 | TanStack Query 5 |
+| 애니메이션·제스처 | React Native Animated/PanResponder, Reanimated, Gesture Handler |
+| 이미지·네이티브 UI | Expo Image, Expo UI, Expo Symbols |
+| 품질 도구 | Expo ESLint, TypeScript, 순수 fixture 검증 스크립트 |
+
+Expo SDK 57은 React Native 0.86, React 19.2.3, Node.js 22.13.x 이상 조합을 기준으로 합니다. 세부 SDK 정보는 [Expo SDK 57 문서](https://docs.expo.dev/versions/v57.0.0/)를 참고하세요.
+
+## 빠른 시작
+
+### 1. 준비물
+
+- Node.js `22.13.x` 이상
+- npm
+- Android 테스트: Android Studio와 Emulator 또는 Android 기기
+- iOS 테스트: macOS, Xcode와 Simulator 또는 iOS 기기
+- 기기 테스트 시 SDK 57을 지원하는 Expo Go 또는 development build
+
+### 2. 저장소 받기
+
+```bash
+git clone https://github.com/travel-route-recommender/frontend_mobile.git
+cd frontend_mobile
+npm ci
+```
+
+`package-lock.json`이 포함되어 있으므로 같은 의존성 구성을 재현하려면 `npm install`보다 `npm ci`를 권장합니다.
+
+### 3. 환경 파일 만들기
+
+macOS 또는 Linux:
+
+```bash
+cp .env.example .env
+```
+
+Windows PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+현재 로컬 데모는 `.env.example`의 기본값 그대로 실행할 수 있습니다.
+
+### 4. 개발 서버 실행
+
+```bash
+npm start
+```
+
+Expo 터미널에서 다음 방식으로 실행할 수 있습니다.
+
+- `a`: Android Emulator
+- `i`: iOS Simulator(macOS 필요)
+- `w`: Web
+- QR 코드: Expo Go 또는 development build가 설치된 실제 기기
+
+플랫폼을 바로 지정하려면 다음 스크립트를 사용합니다.
+
+```bash
+npm run android
+npm run ios
+npm run web
+```
+
+## 환경 변수
+
+공개 가능한 클라이언트 설정만 `.env`에 둡니다.
+
+| 변수 | 허용 값 | 기본값 | 현재 동작 |
+| --- | --- | --- | --- |
+| `EXPO_PUBLIC_DATA_SOURCE` | `mock`, `api`, `hybrid` | `mock` | `mock`만 전체 로컬 흐름 제공. 나머지는 계약 대기 상태 표시 |
+| `EXPO_PUBLIC_API_BASE_URL` | API base URL | `http://localhost:3000/api/v1` | 향후 API client가 사용할 주소. 현재 endpoint 미구현 |
+| `EXPO_PUBLIC_DURI_ENGINE` | `local`, `server` | `local` | `local` 분석 사용. `server`는 계약 대기 상태 표시 |
+
+기본 예시:
+
+```dotenv
+EXPO_PUBLIC_DATA_SOURCE=mock
+EXPO_PUBLIC_API_BASE_URL=http://localhost:3000/api/v1
+EXPO_PUBLIC_DURI_ENGINE=local
+```
+
+`EXPO_PUBLIC_*` 값은 앱 번들에 포함될 수 있으므로 비밀번호, API secret, private key, refresh token을 넣으면 안 됩니다. 환경 변수를 바꾼 뒤에는 Expo 개발 서버를 다시 시작하세요.
+
+## 데모 계정
+
+`mock` 모드에서 아래 값을 사용할 수 있습니다.
+
+| 항목 | 값 |
+| --- | --- |
+| 이메일 | `demo@duri.app` |
+| 비밀번호 | `duri2026` |
+| 초대 코드 | `DEMO2026` |
+| 데모 회원 ID | `user-soomin` |
+| 데모 guest ID | `guest-demo2026` |
+
+이 값은 실제 계정이나 운영 서버에 전송되지 않습니다. 이메일 가입, 비밀번호 길이, 닉네임 길이, 초대 코드 규칙도 현재 mock UI 검증용 정책입니다.
+
+## 주요 화면과 라우트
+
+Expo Router의 route group은 URL에 포함되지 않습니다.
+
+| 영역 | 라우트 | 설명 |
+| --- | --- | --- |
+| 진입 | `/` | hydration과 세션 상태에 따라 첫 화면 결정 |
+| 인증 | `/login`, `/signup-choice`, `/signup-email`, `/invite`, `/terms` | 로그인·가입·초대·임시 약관 |
+| 온보딩 | `/profile`, `/intro` | 프로필과 서비스 소개 |
+| 하단 탭 | `/home`, `/explore`, `/trips`, `/saved`, `/mypage` | 앱의 5개 주요 탭 |
+| 장소 | `/explore/map`, `/places/[placeId]` | 지역 보드와 장소 상세 |
+| 여행방 | `/trips/new`, `/trips/[tripId]` | 여행방 생성과 상세 |
+| 워크스페이스 | `/trips/[tripId]/workspace` | 날짜별 후보·일정 편집 |
+| 두리 분석 | `/trips/[tripId]/analysis` | 전체 여행 일정 분석 리포트 |
+| 두리 제안 | `/trips/[tripId]/suggestions/[suggestionId]` | 제안 비교·확인·적용 |
+| 개인 성향 | `/tests/personal`, `/tests/personal/review`, `/tests/personal/result` | 테스트·검토·결과 |
+| 딥링크 | `/invite/[code]` | `tripmatch://invite/:code` 수신 경계 |
+
+잘못된 `placeId`, `tripId`, 초대 코드와 존재하지 않는 route에는 복구 가능한 오류 상태 또는 not-found 화면을 제공합니다.
+
+## 프로젝트 구조
+
+```text
+frontend_mobile/
+├─ app/                         # Expo Router route 선언과 parameter 경계
+│  ├─ (auth)/                  # 로그인·가입·초대
+│  ├─ (onboarding)/            # 프로필·온보딩
+│  ├─ (tabs)/                  # 홈·탐색·여행·저장·마이
+│  ├─ places/[placeId].tsx
+│  ├─ trips/[tripId]/          # 여행 홈·워크스페이스·분석·제안
+│  └─ tests/personal/          # 개인 성향 테스트
+├─ assets/                      # 앱 아이콘·splash 등 정적 자산
+├─ docs/                        # 기능·아키텍처·회귀 검증 문서
+├─ scripts/                     # 순수 로직 및 상태 무결성 검증기
+├─ src/
+│  ├─ components/              # 공통 UI와 feedback 상태
+│  ├─ config/                  # 환경 변수 parser
+│  ├─ core/state-integrity/    # normalized 상태 validator
+│  ├─ data/mock/               # 정규화된 데모 데이터
+│  ├─ domain/                  # 플랫폼 비의존 도메인 타입
+│  ├─ duri/                    # 플랫폼 비의존 분석·제안 엔진
+│  ├─ features/                # 기능별 화면·컴포넌트·서비스·순수 로직
+│  ├─ query/                   # QueryClient와 query key
+│  ├─ services/                # API·token·data source 경계
+│  ├─ store/                   # Zustand domain Store와 migration
+│  ├─ theme/                   # 색상·간격·radius 등 디자인 토큰
+│  └─ utils/                   # 공통 유틸리티
+├─ .env.example
+├─ app.json
+└─ package.json
+```
+
+`app/` 파일은 가능한 한 얇게 유지합니다. 실제 화면과 기능 코드는 `src/features/*`에 두고, 플랫폼과 무관한 계산은 `src/domain`, `src/duri`, feature별 `logic` 또는 `selectors`로 분리합니다.
+
+## 상태와 데이터 흐름
+
+### 정규화된 도메인 상태
+
+사용자, 지역, 장소, 여행방, 후보 장소, 일정, 성향 결과, 저장 장소는 ID 기반 map과 relation으로 관리합니다. Place 객체를 후보나 일정에 복제하지 않으며 화면에 필요한 수치와 상태는 selector에서 파생합니다.
+
+대표 흐름은 다음과 같습니다.
+
+```text
+Place
+  ├─ savedPlaceIdsByUserId     개인 저장
+  ├─ candidatesByTripId        여행방 후보
+  └─ itineraryByTripId         날짜·시간이 있는 실제 일정
+```
+
+### 영속 저장
+
+- 도메인 Store: AsyncStorage `duri-mobile-store`, schema version 4
+- 개인 성향 작성 초안: `duri-personal-preference-draft`
+- 여행방 생성 초안: `duri-create-trip-draft`
+- 탐색 필터, 선택 DAY, 열린 modal, bottom sheet snap, 분석 session과 receipt: 비영속 상태
+- access token, refresh token, 비밀번호, secret: AsyncStorage 저장 금지
+
+root layout은 Store hydration이 모두 끝나기 전에 빈 화면이나 잘못된 redirect를 렌더하지 않습니다. 저장 데이터 복구에 실패하면 재시도 가능한 오류 화면을 표시합니다.
+
+### 데이터 모드 원칙
+
+- `mock`: 정규화 Store, local service와 데모 데이터를 사용합니다.
+- `api`: 실제 DTO와 endpoint가 확정되기 전까지 명시적인 unavailable 결과를 반환합니다.
+- `hybrid`: 서버 ID와 local ID, 캐시 경계가 합의되기 전까지 서로 다른 데이터를 섞지 않습니다.
+
+API 연결 실패를 mock 성공으로 위장하지 않는 것이 이 프로젝트의 중요한 데이터 원칙입니다.
+
+## 워크스페이스 편집기
+
+워크스페이스는 상단의 맥락 확인 영역과 하단의 실제 작업 영역으로 나뉩니다.
+
+```text
+여행방 헤더와 진행 요약
+DAY 1 / DAY 2 / + DAY 추가
+선택 DAY 일정 요약 캔버스
+────────────────────────────
+Bottom Sheet: 28% / 58% / 88%
+  [일정 보드] [후보 장소]
+  일정 편집 또는 후보 검색·배치
+```
+
+- 날짜 탭과 캔버스 스와이프는 하나의 `selectedDate`를 공유합니다.
+- 시트 이동은 handle에서만 시작해 내부 스크롤·DAY 스와이프·일정 drag와 충돌하지 않게 분리합니다.
+- 일정 drag 중에는 시트 내부 ScrollView와 DAY 스와이프를 잠급니다.
+- 제스처 사용이 어렵거나 실제 기기에서 불안정할 때도 위·아래 이동 버튼으로 같은 작업을 할 수 있습니다.
+- `startTime + durationMinutes`가 일정 시간의 기준이며 종료 시간은 파생합니다.
+- 일정 추가·수정·삭제, 후보 제거는 UI뿐 아니라 Store action에서도 여행방 상태와 membership을 다시 검증합니다.
+
+세부 정책은 [모바일 워크스페이스 편집기](docs/MOBILE_WORKSPACE_EDITOR.md)에 정리되어 있습니다.
+
+## 두리 분석과 제안
+
+`src/duri`는 React와 Store를 import하지 않는 순수 분석 엔진이고, `src/features/duri`는 모바일 application/UI 계층입니다.
+
+분석과 제안 적용 흐름:
+
+1. 한 여행방의 멤버 성향, 후보, 전체 일정을 immutable snapshot으로 구성합니다.
+2. 전체 입력 fingerprint와 algorithm version을 기록합니다.
+3. 일정 문제와 조율 포인트를 분석합니다.
+4. 제안의 before/after, stable ID 기반 diff와 기대 효과를 계산합니다.
+5. 사용자가 적용하기 직전에 fingerprint와 전체 next itinerary를 다시 검증합니다.
+6. `applyDuriSuggestionAtomically`이 해당 여행의 일정을 Zustand update 한 번으로 교체합니다.
+
+분석 뒤 사용자가 일정을 수동으로 바꾸면 기존 제안은 stale 상태가 되어 적용되지 않습니다. 현재는 local 엔진만 동작하며, server 분석과 Schedule batch API는 계약 확정 후 연결할 예정입니다.
+
+## 검증과 빌드
+
+### 기본 품질 검사
+
+```bash
+npm run lint
+npm run typecheck
+npx expo-doctor
+```
+
+### 기능별 회귀 검사
+
+| 명령 | 검증 범위 |
+| --- | --- |
+| `npm run verify:group-preferences` | 멤버 응답 집계와 그룹 성향 진단 |
+| `npm run verify:trip-flow` | 여행방 정렬·날짜·초안·생성·준비율 |
+| `npm run verify:place-flow` | 검색·필터·저장·후보·권한 관계 |
+| `npm run verify:workspace-editor` | DAY, 일정 편집·충돌·순서·후보 관계 |
+| `npm run verify:duri-analysis` | 분석·제안·stale·atomic apply |
+| `npm run validate:state` | 현재 데모 상태의 무결성 진단 |
+| `npm run verify:state-integrity` | 손상 상태 fixture와 안전한 복구 경계 |
+
+### 전체 플랫폼 export
+
+```bash
+npm run build
+```
+
+이 명령은 Android, iOS, Web 번들을 `dist/`에 export해 Metro bundling과 정적 자산 참조를 확인합니다. Play Store용 AAB나 App Store용 IPA를 만드는 production build는 아니며, EAS 프로젝트와 signing 설정이 별도로 필요합니다.
+
+권장 검증 순서:
+
+```bash
+npm run lint
+npm run typecheck
+npm run verify:group-preferences
+npm run verify:trip-flow
 npm run verify:place-flow
 npm run verify:workspace-editor
 npm run verify:duri-analysis
