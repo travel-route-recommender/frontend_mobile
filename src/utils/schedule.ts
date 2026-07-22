@@ -103,7 +103,8 @@ export function findNextAvailableSlot({
   return undefined;
 }
 
-export function getTripDates(startDate: string, endDate: string) {
+export function getTripDates(startDate: string | null | undefined, endDate: string | null | undefined) {
+  if (!startDate || !endDate) return [];
   const start = new Date(`${startDate}T00:00:00Z`);
   const end = new Date(`${endDate}T00:00:00Z`);
   if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end < start) return [];
@@ -141,5 +142,4 @@ export function isValidScheduleRange(range: ScheduleRange) {
     start + range.durationMinutes <= WORKSPACE_END_MINUTES
   );
 }
-
 

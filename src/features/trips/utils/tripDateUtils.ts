@@ -2,7 +2,7 @@ import { isValidISODate } from "../../../utils/formatters";
 
 const DAY_MS = 86_400_000;
 
-function dateOnlyUtc(value: string) {
+function dateOnlyUtc(value: string | null | undefined) {
   if (!isValidISODate(value)) return undefined;
   const [year, month, day] = value.split("-").map(Number);
   return Date.UTC(year, month - 1, day);
@@ -21,21 +21,22 @@ export function dateOnlyToLocalDate(value: string, fallback = new Date()) {
   return new Date(year, month - 1, day, 12, 0, 0, 0);
 }
 
-export function getTripDayCount(startDate: string, endDate: string) {
+export function getTripDayCount(startDate: string | null | undefined, endDate: string | null | undefined) {
   const start = dateOnlyUtc(startDate);
   const end = dateOnlyUtc(endDate);
   if (start === undefined || end === undefined || end < start) return undefined;
   return Math.round((end - start) / DAY_MS) + 1;
 }
 
-export function formatTripDurationLabel(startDate: string, endDate: string) {
+export function formatTripDurationLabel(startDate: string | null | undefined, endDate: string | null | undefined) {
+  if (!startDate && !endDate) return "기간 미정";
   const days = getTripDayCount(startDate, endDate);
   if (days === undefined) return "기간 확인 필요";
   if (days === 1) return "당일치기";
   return `${days - 1}박 ${days}일`;
 }
 
-export function getTripTimingLabel(startDate: string, endDate: string, today = dateToDateOnly(new Date())) {
+export function getTripTimingLabel(startDate: string | null | undefined, endDate: string | null | undefined, today = dateToDateOnly(new Date())) {
   const start = dateOnlyUtc(startDate);
   const end = dateOnlyUtc(endDate);
   const current = dateOnlyUtc(today);

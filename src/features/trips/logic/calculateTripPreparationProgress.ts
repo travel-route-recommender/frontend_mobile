@@ -11,7 +11,10 @@ export interface TripPreparationInput {
 }
 
 export function calculateTripPreparationProgress(input: TripPreparationInput): TripPreparationProgress {
-  const validRoom = Boolean(input.trip.regionId) && isValidISODate(input.trip.startDate) && isValidISODate(input.trip.endDate) && input.trip.endDate >= input.trip.startDate;
+  const validDateState = input.trip.dateUndecided
+    ? input.trip.startDate === null && input.trip.endDate === null
+    : isValidISODate(input.trip.startDate) && isValidISODate(input.trip.endDate) && input.trip.endDate >= input.trip.startDate;
+  const validRoom = Boolean(input.trip.regionId) && validDateState;
   const preferenceStatus: TripPreparationStep["status"] = input.preferenceTargetCount > 0 && input.completedPreferenceCount === input.preferenceTargetCount
     ? "completed"
     : input.completedPreferenceCount > 0

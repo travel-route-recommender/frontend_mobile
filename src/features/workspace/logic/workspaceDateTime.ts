@@ -11,13 +11,15 @@ import type { ItineraryMoveDirection, WorkspaceDate } from "../types";
 
 const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
-export function isValidDateOnly(value: string) {
+export function isValidDateOnly(value: string | null | undefined) {
+  if (!value) return false;
   if (!DATE_ONLY_PATTERN.test(value)) return false;
   const parsed = new Date(`${value}T00:00:00Z`);
   return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
-export function buildTripDateRange(startDate: string, endDate: string): WorkspaceDate[] {
+export function buildTripDateRange(startDate: string | null | undefined, endDate: string | null | undefined): WorkspaceDate[] {
+  if (!startDate || !endDate) return [];
   if (!isValidDateOnly(startDate) || !isValidDateOnly(endDate) || startDate > endDate) return [];
   const end = Date.parse(`${endDate}T00:00:00Z`);
   const result: WorkspaceDate[] = [];
@@ -36,7 +38,7 @@ export function buildTripDateRange(startDate: string, endDate: string): Workspac
   return result;
 }
 
-export function addDaysToDate(date: string, days: number) {
+export function addDaysToDate(date: string | null | undefined, days: number) {
   if (!isValidDateOnly(date) || !Number.isInteger(days)) return null;
   const next = Date.parse(`${date}T00:00:00Z`) + days * 86_400_000;
   return new Date(next).toISOString().slice(0, 10);

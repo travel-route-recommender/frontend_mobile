@@ -89,6 +89,7 @@ export function buildWorkspaceViewModel(
 ): WorkspaceViewModel | null {
   const trip = state.tripsById[tripId];
   if (!trip) return null;
+  if (!trip.startDate || !trip.endDate) return null;
   const itinerary = state.itineraryByTripId[tripId] ?? [];
   const candidates = dedupeCandidates(state.candidatesByTripId[tripId] ?? []);
   const rawDates = buildTripDateRange(trip.startDate, trip.endDate);

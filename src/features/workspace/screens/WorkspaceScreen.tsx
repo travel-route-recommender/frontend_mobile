@@ -133,7 +133,7 @@ export function WorkspaceScreen() {
   if (!workspaceScheduleService.available) return <Screen><AppHeader title="여행 워크스페이스" onBack={() => router.back()} /><ErrorState message={workspaceScheduleService.message ?? "워크스페이스 데이터 계약을 확인하고 있어요."} /></Screen>;
   if (source.hydrationError) return <Screen><AppHeader title="여행 워크스페이스" onBack={() => router.back()} /><ErrorState message={source.hydrationError} /></Screen>;
   const canView = Boolean(trip && (sessionKind === "member" || sessionKind === "guest") && trip.members.some((member) => member.userId === source.currentUserId));
-  if (!trip || !workspace || !canView) return <Screen><AppHeader title="여행 워크스페이스" onBack={() => router.back()} /><ErrorState message={!trip ? "여행 정보를 찾을 수 없어요." : sessionKind === "anonymous" ? "로그인하거나 초대받은 여행방에 참여한 뒤 워크스페이스를 볼 수 있어요." : "여행 기간이 잘못되었거나 이 여행방의 참여 권한이 없어요."} /></Screen>;
+  if (!trip || !workspace || !canView) return <Screen><AppHeader title="여행 워크스페이스" onBack={() => router.back()} /><ErrorState message={!trip ? "여행 정보를 찾을 수 없어요." : trip.dateUndecided ? "날짜 미정 여행방은 Day 1 초기 상태로 준비되어 있어요. 실제 날짜를 정하면 일정 편집 보드가 열립니다." : sessionKind === "anonymous" ? "로그인하거나 초대받은 여행방에 참여한 뒤 워크스페이스를 볼 수 있어요." : "여행 기간이 잘못되었거나 이 여행방의 참여 권한이 없어요."} /></Screen>;
 
   const explore = () => {
     setActiveTrip(trip.id);
