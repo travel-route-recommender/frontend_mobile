@@ -10,7 +10,7 @@ workspace 하단 `DuriAnalysisEntryCard`는 분석 전/중/current/stale/engine 
 
 ## 1. 화면 구조
 
-기존 `app/trips/[tripId]/workspace.tsx` route는 선언만 유지하고 실제 구현은 `src/features/workspace/screens/WorkspaceScreen.tsx`에 둔다. 화면 상단 캔버스는 여행방 헤더와 관계 수치, 기존 가로 여행 날짜 탭, 선택 날짜의 최대 3개 일정 요약, 두리 분석 연결 경계를 제공한다. 실제 편집은 화면 아래의 단일 `WorkspaceBoardSheet`가 담당하며 `일정 보드`와 `후보 장소`를 segmented tab으로 전환한다. 한 번에 선택된 DAY 하나만 표시하고 날짜 탭 선택과 요약 캔버스 좌우 스와이프가 같은 `selectedDate`를 갱신한다.
+기존 `app/trips/[tripId]/workspace.tsx` route는 선언만 유지하고 실제 구현은 `src/features/workspace/screens/WorkspaceScreen.tsx`에 둔다. 화면 상단 캔버스는 여행방 헤더와 관계 수치, 기존 가로 여행 날짜 탭, 선택 날짜의 08:00~24:00 시간표, 두리 분석 연결 경계를 제공한다. 일정 추가·이동·길이 조절·편집은 메인 시간표에서 시작하고 화면 아래의 단일 `WorkspaceBoardSheet`는 후보 장소 검색·필터·배치를 담당한다. 한 번에 선택된 DAY 하나만 표시하고 날짜 탭 선택과 시간표 캔버스 좌우 스와이프가 같은 `selectedDate`를 갱신한다.
 
 시트는 화면 높이 기준 약 28%·58%·88%의 collapsed/mid/expanded snap을 제공한다. 전용 handle을 누르거나 위아래로 끌어 높이를 바꾸며, safe-area 하단 inset을 포함한다. 외부 bottom-sheet 패키지는 추가하지 않고 SDK 57의 React Native `Animated`, `PanResponder`, `useWindowDimensions`와 기존 safe-area-context를 사용한다.
 
@@ -60,7 +60,7 @@ Edit Modal에서 날짜, 시작·종료 시간, note를 변경한다. Place 교�
 
 ## 13. 순서 변경
 
-일정 카드의 이동 핸들을 길게 누른 뒤 같은 DAY 안에서 위아래로 끌어 놓으면 측정한 카드 중심과 가장 가까운 위치로 이동한다. React Native 기본 `PanResponder`와 `Animated`를 사용해 패키지를 추가하지 않았으며, 드래그 중에는 바깥 세로 ScrollView와 DAY 좌우 스와이프를 잠근다. 실제 정렬 기준이 시간인 도메인에 맞춰 대상 위치까지 기존 인접 이동 규칙을 반복 계산한 후 Store를 한 번만 갱신하므로, 체류 시간과 시간 슬롯을 보존하고 다른 날짜에는 영향을 주지 않는다. 위·아래 버튼은 접근성과 제스처 대안으로 계속 제공한다.
+일정 블록 오른쪽 이동 핸들을 길게 누른 뒤 같은 DAY 시간축에서 위아래로 끌면 시작 시간이 30분 슬롯에 맞춰 이동한다. 블록 아래 핸들을 끌면 최소 30분부터 자정 종료 범위 안에서 체류시간을 30분씩 늘리거나 줄인다. React Native 기본 `PanResponder`와 `Animated`를 사용해 패키지를 추가하지 않았으며, 조작 중에는 바깥 세로 ScrollView, 시간표 스크롤과 DAY 좌우 스와이프를 잠근다. Store action이 자신을 제외한 시간 충돌과 08:00~24:00 경계를 다시 검증하며 실패하면 원래 위치나 길이를 유지한다. 접근성 `increment/decrement` 동작과 블록 편집 Modal의 직접 시간 선택을 제스처 대안으로 제공한다.
 
 ## 14. 일정 삭제
 
@@ -88,11 +88,11 @@ member와 초대 guest는 자신이 참여한 진행 여행방을 편집할 수 
 
 ## 19. 파생 데이터 비영속 원칙
 
-selectedDate, 후보 검색·필터, 활성 보드 탭, 시트 snap, Modal, 드래그 중인 항목, 종료 시간, 충돌, 날짜별 count, 후보 scheduleState, ViewModel은 저장하지 않는다. 후보 수·일정 수·준비율·TripHome 요약은 기존 relation selector에서 자동 갱신된다. 두리 분석 입력은 특정 DAY가 아니라 전체 여행 기간과 전체 itinerary를 사용하므로 DAY 추가나 어느 날짜의 일정 변경도 기존 분석을 stale로 만든다.
+selectedDate, 후보 검색·필터, 시트 snap, Modal, 드래그·resize 중인 항목과 preview 시간, 종료 시간, 충돌, 날짜별 count, 후보 scheduleState, ViewModel은 저장하지 않는다. 후보 수·일정 수·준비율·TripHome 요약은 기존 relation selector에서 자동 갱신된다. 두리 분석 입력은 특정 DAY가 아니라 전체 여행 기간과 전체 itinerary를 사용하므로 DAY 추가나 어느 날짜의 일정 변경도 기존 분석을 stale로 만든다.
 
 ## 20. native gesture 검증 경계
 
-PanResponder 기반 일정 드래그, DAY 스와이프, bottom sheet handle은 서로 다른 영역에 responder를 연결한다. 일정 드래그 중에는 시트 내부 ScrollView와 DAY 스와이프를 잠그며, 시트 자체 이동은 handle 영역에서만 시작한다. TypeScript·lint·순수 로직 검증 및 Expo export로 정적 확인하고 실제 터치 장치에서 길게 누르기, 내부 스크롤, snap 감각을 최종 확인해야 한다. 위·아래 버튼은 native gesture 검증 여부와 무관하게 항상 사용할 수 있는 대안이다.
+PanResponder 기반 일정 이동·resize, DAY 스와이프, bottom sheet handle은 서로 다른 전용 영역에 responder를 연결한다. 일정 조작 중에는 바깥 ScrollView, 시간표 내부 ScrollView와 DAY 스와이프를 잠그며, 시트 자체 이동은 handle 영역에서만 시작한다. TypeScript·lint·순수 로직 검증 및 Expo export로 정적 확인하고 실제 터치 장치에서 길게 누르기, resize, 내부 스크롤, snap 감각을 최종 확인해야 한다. 편집 Modal과 접근성 조절 동작은 native gesture 검증 여부와 무관하게 사용할 수 있는 대안이다.
 
 ## 21. 두리 분석·제안 연결
 

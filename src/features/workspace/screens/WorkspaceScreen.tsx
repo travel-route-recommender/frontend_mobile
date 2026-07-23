@@ -11,11 +11,10 @@ import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import { dateToDateOnly } from "../../trips/utils/tripDateUtils";
 import { formatTripDateRange } from "../../../utils/formatters";
 import { CandidateBoard } from "../components/CandidateBoard";
-import { WorkspaceBoardSheet, type WorkspaceBoardSheetSnap, type WorkspaceBoardTab } from "../components/WorkspaceBoardSheet";
+import { WorkspaceBoardSheet, type WorkspaceBoardSheetSnap } from "../components/WorkspaceBoardSheet";
 import { WorkspaceDateTabs } from "../components/WorkspaceDateTabs";
-import { WorkspaceDayCanvas } from "../components/WorkspaceDayCanvas";
 import { WorkspaceDayPager } from "../components/WorkspaceDayPager";
-import { WorkspaceItinerary } from "../components/WorkspaceItinerary";
+import { WorkspaceScheduleGrid } from "../components/WorkspaceScheduleGrid";
 import {
   ConfirmationModal,
   ScheduleEditorModal,
@@ -79,8 +78,6 @@ export function WorkspaceScreen() {
   const setActiveTrip = useDuriStore((state) => state.setActiveTrip);
   const addPlaceToItinerary = useDuriStore((state) => state.addPlaceToItinerary);
   const updateItineraryItem = useDuriStore((state) => state.updateItineraryItem);
-  const moveItineraryItem = useDuriStore((state) => state.moveItineraryItem);
-  const moveItineraryItemToIndex = useDuriStore((state) => state.moveItineraryItemToIndex);
   const extendTripByOneDay = useDuriStore((state) => state.extendTripByOneDay);
   const removeItineraryItem = useDuriStore((state) => state.removeItineraryItem);
   const removeCandidatePlace = useDuriStore((state) => state.removeCandidatePlace);
@@ -89,7 +86,6 @@ export function WorkspaceScreen() {
   const [requestedDate, setRequestedDate] = useState(affectedDate);
   const [candidateKeyword, setCandidateKeyword] = useState("");
   const [candidateFilter, setCandidateFilter] = useState<CandidateBoardFilter>("all");
-  const [activeBoard, setActiveBoard] = useState<WorkspaceBoardTab>("itinerary");
   const [boardSnap, setBoardSnap] = useState<WorkspaceBoardSheetSnap>("mid");
   const [selectCandidateOpen, setSelectCandidateOpen] = useState(false);
   const [editor, setEditor] = useState<EditorState>();
@@ -201,16 +197,26 @@ export function WorkspaceScreen() {
     return result;
   };
 
-  const moveItem = (itemId: string, direction: "up" | "down") => {
-    const result = moveItineraryItem(tripId, itemId, direction);
-    showFeedback(result === "success" ? `일정을 ${direction === "up" ? "위" : "아래"}로 이동하고 시간을 다시 배치했어요.` : mutationMessage(result));
+  const moveGridItem = (itemId: string, startTime: string) => {
+    const item = rawItinerary.find((entry) => entry.id === itemId);
+    if (!item || item.startTime === startTime) return;
+    const result = updateItineraryItem(tripId, itemId, { startTime });
+    showFeedback(result === "success"
+      ? `일정을 ${startTime}로 옮겼어요.`
+      : result === "overlap"
+        ? "다른 일정과 시간이 겹쳐 원래 위치로 돌아왔어요."
+        : mutationMessage(result));
   };
 
-  const moveItemToIndex = (itemId: string, targetIndex: number) => {
-    const currentIndex = itineraryViews.findIndex((item) => item.id === itemId);
-    if (currentIndex === targetIndex) return;
-    const result = moveItineraryItemToIndex(tripId, itemId, targetIndex);
-    showFeedback(result === "success" ? "일정 순서를 변경하고 시간을 다시 배치했어요." : mutationMessage(result));
+  const resizeGridItem = (itemId: string, durationMinutes: number) => {
+    const item = rawItinerary.find((entry) => entry.id === itemId);
+    if (!item || item.durationMinutes === durationMinutes) return;
+    const result = updateItineraryItem(tripId, itemId, { durationMinutes });
+    showFeedback(result === "success"
+      ? `체류시간을 ${durationMinutes}분으로 변경했어요.`
+      : result === "overlap"
+        ? "늘린 시간이 다른 일정과 겹쳐 원래 길이로 돌아왔어요."
+        : mutationMessage(result));
   };
 
   const addDay = () => {
@@ -225,16 +231,6 @@ export function WorkspaceScreen() {
     }
     setRequestedDate(result.endDate);
     showFeedback(`DAY ${workspace.dates.length + 1}을 추가했어요.`, result.endDate);
-  };
-
-  const openBoard = (tab: WorkspaceBoardTab, snap: WorkspaceBoardSheetSnap = "expanded") => {
-    setActiveBoard(tab);
-    setBoardSnap(snap);
-  };
-
-  const changeBoard = (tab: WorkspaceBoardTab) => {
-    setActiveBoard(tab);
-    if (boardSnap === "collapsed") setBoardSnap("mid");
   };
 
   const requestCandidateRemoval = (candidateView: CandidatePlaceViewModel) => {
@@ -271,21 +267,6 @@ export function WorkspaceScreen() {
         ? source.placesById[rawItinerary.find((item) => item.id === editor.itemId)?.placeId ?? ""]?.name ?? "일정 편집"
         : "일정 편집"
       : "일정 편집";
-
-  const itineraryBoard = selectedDateView ? <WorkspaceItinerary
-    date={selectedDateView}
-    items={itineraryViews}
-    unscheduledCandidateCount={workspace.unscheduledCandidateCount}
-    canEdit={workspace.canEdit}
-    onAdd={() => setSelectCandidateOpen(true)}
-    onExplore={explore}
-    onMoveUp={(itemId) => moveItem(itemId, "up")}
-    onMoveDown={(itemId) => moveItem(itemId, "down")}
-    onMoveToIndex={moveItemToIndex}
-    onEdit={openEditEditor}
-    onRemove={setRemoveItemId}
-    onDragStateChange={setDraggingItemId}
-  /> : null;
 
   const candidateBoard = <CandidateBoard
     candidates={filteredCandidates}
@@ -325,11 +306,19 @@ export function WorkspaceScreen() {
             const nextDate = workspace.dates[index]?.date;
             if (nextDate) setRequestedDate(nextDate);
           }}
-        ><WorkspaceDayCanvas
+        ><WorkspaceScheduleGrid
             date={selectedDateView}
             items={itineraryViews}
-            onOpenItinerary={() => openBoard("itinerary")}
-            onOpenCandidates={() => openBoard("candidates")}
+            canEdit={workspace.canEdit}
+            interactionItemId={draggingItemId}
+            onAdd={() => setSelectCandidateOpen(true)}
+            onEdit={openEditEditor}
+            onMove={moveGridItem}
+            onResize={resizeGridItem}
+            onInteractionStateChange={(itemId) => {
+              setDraggingItemId(itemId);
+              if (itemId) setBoardSnap("collapsed");
+            }}
           /></WorkspaceDayPager> : null}
         <DuriAnalysisEntryCard
           itineraryCount={workspace.itineraryCount}
@@ -342,16 +331,17 @@ export function WorkspaceScreen() {
         />
       </ScrollView>
       {selectedDateView ? <WorkspaceBoardSheet
-        activeTab={activeBoard}
+        activeTab="candidates"
         snap={boardSnap}
         dayLabel={selectedDateView.dayLabel}
         dateLabel={`${selectedDateView.monthDayLabel} ${selectedDateView.weekdayLabel}`}
         itineraryCount={itineraryViews.length}
         candidateCount={workspace.candidateCount}
-        itineraryBoard={itineraryBoard}
         candidateBoard={candidateBoard}
+        candidateOnly
+        unscheduledCandidateCount={workspace.unscheduledCandidateCount}
         contentScrollEnabled={!draggingItemId}
-        onTabChange={changeBoard}
+        onTabChange={() => undefined}
         onSnapChange={setBoardSnap}
       /> : null}
     </View>

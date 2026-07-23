@@ -2,6 +2,7 @@ import type { ItineraryItem } from "../../../domain";
 import {
   DEFAULT_PLACE_DURATION_MINUTES,
   MIN_DURATION_MINUTES,
+  SLOT_HEIGHT_PX,
   SLOT_MINUTES,
   WORKSPACE_END_MINUTES,
   WORKSPACE_START_MINUTES,
@@ -63,6 +64,51 @@ export function addMinutesToTime(value: string, minutesToAdd: number): string | 
   const start = parseTimeToMinutes(value);
   if (start === null || !Number.isInteger(minutesToAdd)) return null;
   return formatMinutesToTime(start + minutesToAdd);
+}
+
+export function getSnappedStartTimeFromTranslation(
+  startTime: string,
+  durationMinutes: number,
+  translationY: number,
+  slotHeight = SLOT_HEIGHT_PX,
+) {
+  const start = parseTimeToMinutes(startTime);
+  if (
+    start === null
+    || !Number.isFinite(translationY)
+    || !Number.isFinite(slotHeight)
+    || slotHeight <= 0
+    || !Number.isInteger(durationMinutes)
+    || durationMinutes < MIN_DURATION_MINUTES
+  ) return null;
+  const slotDelta = Math.round(translationY / slotHeight);
+  const nextStart = Math.min(
+    Math.max(start + slotDelta * SLOT_MINUTES, WORKSPACE_START_MINUTES),
+    WORKSPACE_END_MINUTES - durationMinutes,
+  );
+  return formatMinutesToTime(nextStart);
+}
+
+export function getSnappedDurationFromTranslation(
+  startTime: string,
+  durationMinutes: number,
+  translationY: number,
+  slotHeight = SLOT_HEIGHT_PX,
+) {
+  const start = parseTimeToMinutes(startTime);
+  if (
+    start === null
+    || !Number.isFinite(translationY)
+    || !Number.isFinite(slotHeight)
+    || slotHeight <= 0
+    || !Number.isInteger(durationMinutes)
+    || durationMinutes < MIN_DURATION_MINUTES
+  ) return null;
+  const slotDelta = Math.round(translationY / slotHeight);
+  return Math.min(
+    Math.max(durationMinutes + slotDelta * SLOT_MINUTES, MIN_DURATION_MINUTES),
+    WORKSPACE_END_MINUTES - start,
+  );
 }
 
 export function calculateDurationMinutes(startTime: string, endTime: string): number | null {
