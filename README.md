@@ -25,6 +25,9 @@ npx expo-doctor
 ## 일정표 esset 관리
 
 일정표·드래그 기능 본체: [DraggableItineraryEditor.tsx (line 35)](/home/soohyun/trip_frontend_mobile/frontend_mobile/src/features/preferences/components/DraggableItineraryEditor.tsx:35)
+
 재사용 에셋 진입점: [itinerary-schedule-builder.tsx (line 1)](/home/soohyun/trip_frontend_mobile/frontend_mobile/src/features/preferences/assets/itinerary-schedule-builder.tsx:1)
+
 8종류 블록의 이름·아이콘·색상: [travel-preference-test-config.ts (line 30)](/home/soohyun/trip_frontend_mobile/frontend_mobile/src/features/preferences/config/travel-preference-test-config.ts:30)
+
 08:00~24:00 시간 슬롯·일정표 행 설정: [travel-preference-test-config.ts (line 41)](/home/soohyun/trip_frontend_mobile/frontend_mobile/src/features/preferences/config/travel-preference-test-config.ts:41)
