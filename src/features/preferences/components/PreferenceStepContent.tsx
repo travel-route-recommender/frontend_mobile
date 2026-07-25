@@ -10,16 +10,18 @@ import {
   mobilitySections,
   staminaOptions,
 } from "../config/travel-preference-test-config";
+import { itineraryMessageQuestions } from "../config/itinerary-message-questions";
 import { getBudgetTotal } from "../logic/travel-preference-survey";
 import type {
   AccommodationScaleValue,
   BudgetCategory,
   FourPointScaleValue,
+  ItineraryPreferenceLevel,
   MobilityMode,
   PersonalPreferenceDraftAnswers,
   PreferenceStepId,
 } from "../types";
-import { DraggableItineraryEditor } from "./DraggableItineraryEditor";
+import { PreferenceMessageQuestion } from "./preference-message-question";
 
 type Props = {
   stepId: PreferenceStepId;
@@ -29,7 +31,7 @@ type Props = {
 
 export function PreferenceStepContent({ stepId, answers, onChange }: Props) {
   switch (stepId) {
-    case "itinerary": return <ItineraryStep answers={answers} onChange={onChange} />;
+    case "itinerary": return <ItineraryMessageStep answers={answers} onChange={onChange} />;
     case "mobility": return <MobilityStep answers={answers} onChange={onChange} />;
     case "accommodation": return <AccommodationStep answers={answers} onChange={onChange} />;
     case "adventure": return <AdventureStep answers={answers} onChange={onChange} />;
@@ -39,8 +41,41 @@ export function PreferenceStepContent({ stepId, answers, onChange }: Props) {
   }
 }
 
-function ItineraryStep({ answers, onChange }: Omit<Props, "stepId">) {
-  return <DraggableItineraryEditor answers={answers} onChange={onChange} />;
+function getFirstUnansweredItineraryMessageIndex(answers: PersonalPreferenceDraftAnswers) {
+  const index = itineraryMessageQuestions.findIndex((question) => !answers.itineraryMessageAnswers?.[question.id]);
+  return index < 0 ? itineraryMessageQuestions.length - 1 : index;
+}
+
+function ItineraryMessageStep({ answers, onChange }: Omit<Props, "stepId">) {
+  const [questionIndex, setQuestionIndex] = useState(() => getFirstUnansweredItineraryMessageIndex(answers));
+  const question = itineraryMessageQuestions[questionIndex];
+  const selectedOptionId = answers.itineraryMessageAnswers?.[question.id];
+
+  const selectOption = (level: ItineraryPreferenceLevel) => {
+    onChange({
+      itineraryMessageAnswers: {
+        ...answers.itineraryMessageAnswers,
+        [question.id]: level,
+      },
+    });
+  };
+
+  return (
+    <PreferenceMessageQuestion
+      categoryIcon={question.categoryIcon}
+      categoryLabel={question.categoryLabel}
+      current={questionIndex + 1}
+      message={question.message}
+      onNext={questionIndex < itineraryMessageQuestions.length - 1 ? () => setQuestionIndex(questionIndex + 1) : undefined}
+      onPrevious={questionIndex > 0 ? () => setQuestionIndex(questionIndex - 1) : undefined}
+      onSelect={selectOption}
+      options={question.options}
+      selectedOptionId={selectedOptionId}
+      senderName={question.senderName}
+      senderStatus={question.senderStatus}
+      total={itineraryMessageQuestions.length}
+    />
+  );
 }
 
 function MobilityStep({ answers, onChange }: Omit<Props, "stepId">) {

@@ -7,6 +7,7 @@
 `calculateTravelPreferenceSurveyResult`는 다음 정보를 하나의 결과로 만든다.
 
 - 원본 7단계 `answers`
+- 8개 활동 카테고리와 일정 밀도의 0·50·100 선호 점수
 - 일정 span·활동·휴식·자유시간·밀도 특징값
 - 명소·로컬 배치 개수와 시간
 - 이동 수단별 0/100 선호도
@@ -23,7 +24,7 @@ member/guest의 완료 원본은 `completedSurvey`에 영속화하고 anonymous 
 
 | 순서 | 단계 | 응답 방식 |
 |---:|---|---|
-| 1 | 일정 밀도 | 가운데 정렬된 08:00~24:00 세로 일정표에 8개 액티비티를 드래그 배치, 블록 이동 중 모든 날짜 위 공통 레이어에 표시, 위아래 1시간 단위 리사이즈, 인접 날짜 일부 노출, 일정표 바깥 왼쪽 `-`/오른쪽 `+`로 마지막 날짜 삭제·추가 |
+| 1 | 여행 활동과 일정 밀도 | 여행 동반자가 묻는 식당·카페·쇼핑·명소 관광·로컬 탐방·액티비티·자연·휴식·일정 밀도 9개 메시지에 선호·중간·불호 의미의 구문형 답장으로 응답. 기존 일정표·드래그 블록은 `ItineraryScheduleBuilderAsset`으로 보존 |
 | 2 | 이동 방식 | 자차·렌터카, 버스·지하철·열차·택시, 도보 복수 선택 |
 | 3 | 숙소 스타일 | 잠만 자는 곳↔여행의 일부, 위치↔시설, 편안함↔가격의 8단계 척도 |
 | 4 | 도전 성향 | 검증된 곳↔새로운 곳의 4단계 척도 |
@@ -32,6 +33,8 @@ member/guest의 완료 원본은 `completedSurvey`에 영속화하고 anonymous 
 | 7 | 여행지 탐색 | 명소 필수도와 로컬 관심도를 각각 4단계로 측정 |
 
 입력, 검토, 결과 상세 화면은 모두 새 응답을 사용한다. 목적지별 상위 태그와 태그 계층은 백엔드 계약 전이므로 현재는 대표 상위 태그를 사용한다.
+
+일정 밀도 메신저 질문의 태그별 측정 항목과 권장 문항 유형은 `docs/ITINERARY_DENSITY_MESSAGE_QUESTION_PLAN.md`를 따른다.
 
 ## 1. 질문 config 구조
 
@@ -63,7 +66,8 @@ interface PreferenceQuestion {
 
 - 숙소 척도 값: `AccommodationScaleValue = 1 | ... | 8`
 - 도전·탐색 척도 값: `FourPointScaleValue = 1 | 2 | 3 | 4`
-- 복합 응답: `PersonalPreferenceDraftAnswers`의 날짜별 시간 블록, 세부 이동수단, 숙소 3축, 도전 성향, 체력, 코인 배분, 명소·로컬 필드
+- 메신저 답변 값: `ItineraryPreferenceLevel = "like" | "neutral" | "dislike"`
+- 복합 응답: `PersonalPreferenceDraftAnswers`의 9개 메신저 답변, 세부 이동수단, 숙소 3축, 도전 성향, 체력, 코인 배분, 명소·로컬 필드
 - 호환 결과 값: `PreferenceScore = 0 | 1 | 2`
 - 그룹 진단용 완료 답변: `PersonalPreferenceAnswers = Record<PreferenceDimension, PreferenceScore>`
 

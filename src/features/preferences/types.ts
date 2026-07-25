@@ -2,6 +2,9 @@ import type { UserPreferenceResult } from "../../domain";
 
 export type PreferenceStepId = "itinerary" | "mobility" | "accommodation" | "adventure" | "stamina" | "budget" | "discovery";
 export type ActivityTagId = "restaurant" | "cafe" | "shopping" | "attraction" | "local" | "experience" | "nature" | "rest";
+export type ItineraryMessageQuestionId = ActivityTagId | "density";
+export type ItineraryPreferenceLevel = "like" | "neutral" | "dislike";
+export type ItineraryMessageAnswers = Partial<Record<ItineraryMessageQuestionId, ItineraryPreferenceLevel>>;
 export type ItineraryHourSlot = "08:00" | "09:00" | "10:00" | "11:00" | "12:00" | "13:00" | "14:00" | "15:00" | "16:00" | "17:00" | "18:00" | "19:00" | "20:00" | "21:00" | "22:00" | "23:00";
 export type ItineraryBlock = { id: string; activityId: ActivityTagId; startSlot: ItineraryHourSlot; durationHours: number };
 export type ItineraryDay = { id: string; blocks: ItineraryBlock[] };
@@ -17,6 +20,7 @@ export type PreferenceDraftOwner =
   | { kind: "user"; userId: string };
 
 export type PersonalPreferenceDraftAnswers = {
+  itineraryMessageAnswers?: ItineraryMessageAnswers;
   itineraryDays?: ItineraryDay[];
   mobilityModes?: MobilityMode[];
   accommodation?: Partial<Record<AccommodationAxis, AccommodationScaleValue>>;
@@ -50,6 +54,10 @@ export type TravelPreferenceSurveyResult = {
   algorithmVersion: number;
   completedAt: string;
   answers: PersonalPreferenceDraftAnswers;
+  itineraryMessagePreference: {
+    categoryScores: Record<ActivityTagId, number>;
+    densityScore: number;
+  };
   scheduleFeatures: {
     dayCount: number;
     scheduleSpanMinutes: number;

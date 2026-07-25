@@ -4,6 +4,9 @@ import {
   calculateLegacyPreferenceProjection,
   calculateTravelPreferenceSurveyResult,
 } from "../src/features/preferences/logic/calculate-travel-preference-result";
+import { itineraryMessageQuestions } from "../src/features/preferences/config/itinerary-message-questions";
+import { isPreferenceStepComplete } from "../src/features/preferences/logic/travel-preference-survey";
+import type { ItineraryMessageAnswers } from "../src/features/preferences/types";
 import {
   calculateFriendCompatibility,
   getCompatibilityType,
@@ -55,4 +58,32 @@ const repeatedGroup = calculateFriendCompatibility(soomin, [yunji, minseok], "20
 assert(repeatedGroup.requesterUserId === soomin.userId && repeatedGroup.friendUserIds.length === 2, "17. 궁합 결과에는 참여자 식별 정보가 포함되어야 한다");
 assert(repeatedGroup.score === group.score, "18. 같은 입력의 클라이언트 궁합 계산은 결정적이어야 한다");
 
-console.log("Preference and compatibility verification passed: 18 assertions");
+assert(
+  itineraryMessageQuestions.length === 9
+    && new Set(itineraryMessageQuestions.map((question) => question.id)).size === 9
+    && itineraryMessageQuestions.every((question) => (
+      question.options.length === 3
+      && question.options.map((option) => option.id).join(",") === "like,neutral,dislike"
+    )),
+  "19. 일정 앞에는 고유한 9개 대화 질문과 선호·중간·불호 답장이 있어야 한다",
+);
+
+const itineraryMessageAnswers = Object.fromEntries(itineraryMessageQuestions.map((question) => [
+  question.id,
+  question.id === "density" ? "neutral" : "like",
+])) as ItineraryMessageAnswers;
+const messageSurveyAnswers = {
+  ...soomin.answers,
+  itineraryDays: undefined,
+  itineraryMessageAnswers,
+};
+assert(isPreferenceStepComplete("itinerary", messageSurveyAnswers), "20. 9개 대화에 모두 답하면 첫 항목이 완료되어야 한다");
+const messageResult = calculateTravelPreferenceSurveyResult("message-user", messageSurveyAnswers, "2026-07-24T00:00:00.000Z");
+assert(
+  messageResult.itineraryMessagePreference.categoryScores.restaurant === 100
+    && messageResult.itineraryMessagePreference.densityScore === 50
+    && messageResult.scheduleFeatures.scheduledMinutes === 0,
+  "21. 대화 응답은 일정 블록을 만들지 않고 카테고리와 밀도 점수로 계산되어야 한다",
+);
+
+console.log("Preference and compatibility verification passed: 21 assertions");

@@ -62,6 +62,7 @@ export function PersonalTestScreen() {
   if (!step) return <Screen><ErrorState message="현재 항목을 찾을 수 없어요. 테스트를 처음부터 다시 시작해 주세요." onRetry={() => startTest(owner)} /></Screen>;
   const isLast = draft.currentQuestionIndex === preferenceSteps.length - 1;
   const stepComplete = isPreferenceStepComplete(step.id, draft.answers);
+  const isMessageStep = step.id === "itinerary";
 
   const restart = () => { startTest(owner); setResumeAccepted(true); setRestartVisible(false); };
   const moveNext = () => {
@@ -88,17 +89,28 @@ export function PersonalTestScreen() {
     />
     {draftNotice ? <View style={styles.notice}><Text style={styles.noticeText}>{draftNotice}</Text><Pressable accessibilityRole="button" onPress={acknowledgeDraftNotice}><Text style={styles.noticeAction}>확인</Text></Pressable></View> : null}
     {params.error ? <View accessibilityLiveRegion="assertive" style={styles.errorBanner}><Text selectable style={styles.errorText}>{params.error}</Text></View> : null}
-    <PreferenceProgressBar current={draft.currentQuestionIndex + 1} total={preferenceSteps.length} />
-    <Card style={styles.questionCard}>
-      <Text style={styles.dimension}>{step.eyebrow}</Text>
-      <Text accessibilityRole="header" style={styles.question}>{step.title}</Text>
-      <Text style={styles.description}>{step.description}</Text>
-      <PreferenceStepContent stepId={step.id} answers={draft.answers} onChange={updateAnswers} />
-    </Card>
+    {!isMessageStep ? <PreferenceProgressBar current={draft.currentQuestionIndex + 1} total={preferenceSteps.length} /> : null}
+    {isMessageStep ? (
+      <View style={styles.messageStage}>
+        <View style={styles.messageIntro}>
+          <Text style={styles.dimension}>{step.eyebrow}</Text>
+          <Text accessibilityRole="header" style={styles.question}>{step.title}</Text>
+          <Text style={styles.description}>{step.description}</Text>
+        </View>
+        <PreferenceStepContent stepId={step.id} answers={draft.answers} onChange={updateAnswers} />
+      </View>
+    ) : (
+      <Card style={styles.questionCard}>
+        <Text style={styles.dimension}>{step.eyebrow}</Text>
+        <Text accessibilityRole="header" style={styles.question}>{step.title}</Text>
+        <Text style={styles.description}>{step.description}</Text>
+        <PreferenceStepContent stepId={step.id} answers={draft.answers} onChange={updateAnswers} />
+      </Card>
+    )}
     <View style={styles.navigation}>
       {!editingFromReview ? <SecondaryButton label="이전" disabled={draft.currentQuestionIndex === 0} onPress={goPrevious} /> : null}
       <PrimaryButton label={editingFromReview ? "답변 검토로 돌아가기" : isLast ? "답변 확인" : "다음"} disabled={!stepComplete} onPress={moveNext} />
-      {!stepComplete ? <Text style={styles.completionHint}>이 항목의 응답을 완료하면 다음으로 이동할 수 있어요.</Text> : null}
+      {!stepComplete ? <Text style={styles.completionHint}>{isMessageStep ? "9개의 대화 질문에 모두 답하면 다음 항목으로 이동할 수 있어요." : "이 항목의 응답을 완료하면 다음으로 이동할 수 있어요."}</Text> : null}
     </View>
     <PreferenceExitModal visible={exitVisible} onExit={exitTest} onContinue={() => setExitVisible(false)} />
   </Screen>;
@@ -109,6 +121,8 @@ const styles = StyleSheet.create({
   notice: { flexDirection: "row", alignItems: "center", gap: spacing.sm, borderRadius: radius.md, backgroundColor: colors.warningSoft, padding: spacing.sm }, noticeText: { ...typography.caption, color: colors.textSecondary, flex: 1 }, noticeAction: { ...typography.caption, color: colors.warning },
   errorBanner: { borderRadius: radius.md, backgroundColor: colors.dangerSoft, padding: spacing.sm }, errorText: { ...typography.caption, color: colors.danger },
   questionCard: { gap: spacing.md, marginTop: spacing.lg },
+  messageStage: { gap: spacing.md, marginTop: spacing.lg },
+  messageIntro: { gap: spacing.sm },
   dimension: { ...typography.caption, color: colors.primary, alignSelf: "flex-start", backgroundColor: colors.primarySoft, borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 6 },
   question: { ...typography.title, color: colors.text }, description: { ...typography.body, color: colors.textSecondary }, navigation: { gap: spacing.sm, marginTop: spacing.md }, completionHint: { ...typography.caption, color: colors.textMuted, textAlign: "center" },
   resumeCard: { alignItems: "center", gap: spacing.sm, marginTop: spacing.xl }, resumeIcon: { fontSize: 42 }, resumeTitle: { ...typography.title, color: colors.text, textAlign: "center" }, resumeDescription: { ...typography.body, color: colors.textSecondary, textAlign: "center", marginBottom: spacing.sm },

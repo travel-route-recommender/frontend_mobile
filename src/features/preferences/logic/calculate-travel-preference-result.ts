@@ -1,7 +1,17 @@
 import { calculatePersonalPreferenceResult } from "../../../duri/preferences";
-import { PERSONAL_SURVEY_DRAFT_VERSION, budgetCategories, itineraryHourSlots, mobilityOptions } from "../config/travel-preference-test-config";
+import {
+  itineraryPreferenceLevelScores,
+} from "../config/itinerary-message-questions";
+import {
+  PERSONAL_SURVEY_DRAFT_VERSION,
+  activityBlocks,
+  budgetCategories,
+  itineraryHourSlots,
+  mobilityOptions,
+} from "../config/travel-preference-test-config";
 import type {
   AccommodationScaleValue,
+  ActivityTagId,
   BudgetCategory,
   FourPointScaleValue,
   MobilityMode,
@@ -11,12 +21,11 @@ import type {
 } from "../types";
 import {
   deriveLegacyPreferenceAnswers,
-  getItineraryDays,
   normalizeTravelPreferenceSurveyAnswers,
   validateTravelPreferenceSurvey,
 } from "./travel-preference-survey";
 
-export const TRAVEL_PREFERENCE_ALGORITHM_VERSION = 1;
+export const TRAVEL_PREFERENCE_ALGORITHM_VERSION = 2;
 
 const clampScore = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
 const scaleFourPoint = (value: FourPointScaleValue | undefined) => clampScore((((value ?? 1) - 1) / 3) * 100);
@@ -36,6 +45,32 @@ function buildTransportPreferences(answers: PersonalPreferenceDraftAnswers) {
   return Object.fromEntries(mobilityOptions.map((mode) => [mode.id, answers.mobilityModes?.includes(mode.id) ? 100 : 0])) as Record<MobilityMode, number>;
 }
 
+function buildItineraryMessagePreference(
+  answers: PersonalPreferenceDraftAnswers,
+  blocks: NonNullable<PersonalPreferenceDraftAnswers["itineraryDays"]>[number]["blocks"],
+  legacyDensityScore: number,
+) {
+  const allocatedMinutes = Object.fromEntries(activityBlocks.map((activity) => [
+    activity.id,
+    blocks
+      .filter((block) => block.activityId === activity.id)
+      .reduce((total, block) => total + block.durationHours * 60, 0),
+  ])) as Record<ActivityTagId, number>;
+  const maxAllocatedMinutes = Math.max(...Object.values(allocatedMinutes), 0);
+  const categoryScores = Object.fromEntries(activityBlocks.map((activity) => {
+    const messageLevel = answers.itineraryMessageAnswers?.[activity.id];
+    const legacyScore = maxAllocatedMinutes
+      ? clampScore((allocatedMinutes[activity.id] / maxAllocatedMinutes) * 100)
+      : 0;
+    return [activity.id, messageLevel ? itineraryPreferenceLevelScores[messageLevel] : legacyScore];
+  })) as Record<ActivityTagId, number>;
+  const densityLevel = answers.itineraryMessageAnswers?.density;
+  return {
+    categoryScores,
+    densityScore: densityLevel ? itineraryPreferenceLevelScores[densityLevel] : legacyDensityScore,
+  };
+}
+
 export function calculateTravelPreferenceSurveyResult(
   userId: string,
   sourceAnswers: PersonalPreferenceDraftAnswers,
@@ -45,13 +80,15 @@ export function calculateTravelPreferenceSurveyResult(
   const validation = validateTravelPreferenceSurvey(answers);
   if (!validation.valid) throw new Error(validation.message);
 
-  const days = getItineraryDays(answers);
+  const days = answers.itineraryDays ?? [];
   const blocks = days.flatMap((day) => day.blocks);
   const scheduledMinutes = blocks.reduce((total, block) => total + block.durationHours * 60, 0);
   const restBlocks = blocks.filter((block) => block.activityId === "rest");
   const restMinutes = restBlocks.reduce((total, block) => total + block.durationHours * 60, 0);
   const activityMinutes = Math.max(0, scheduledMinutes - restMinutes);
   const scheduleSpanMinutes = days.length * itineraryHourSlots.length * 60;
+  const legacyDensityScore = scheduleSpanMinutes ? clampScore((scheduledMinutes / scheduleSpanMinutes) * 100) : 0;
+  const itineraryMessagePreference = buildItineraryMessagePreference(answers, blocks, legacyDensityScore);
   const landmarkBlocks = blocks.filter((block) => block.activityId === "attraction");
   const localBlocks = blocks.filter((block) => block.activityId === "local");
   const placeBlocks = blocks.filter((block) => block.activityId !== "rest");
@@ -65,6 +102,7 @@ export function calculateTravelPreferenceSurveyResult(
     algorithmVersion: TRAVEL_PREFERENCE_ALGORITHM_VERSION,
     completedAt,
     answers,
+    itineraryMessagePreference,
     scheduleFeatures: {
       dayCount: days.length,
       scheduleSpanMinutes,
@@ -76,7 +114,7 @@ export function calculateTravelPreferenceSurveyResult(
       restBlockCount: restBlocks.length,
       averageStayMinutes: blocks.length ? Math.round(scheduledMinutes / blocks.length) : 0,
       averageDailyScheduledMinutes: days.length ? Math.round(scheduledMinutes / days.length) : 0,
-      densityScore: scheduleSpanMinutes ? clampScore((scheduledMinutes / scheduleSpanMinutes) * 100) : 0,
+      densityScore: itineraryMessagePreference.densityScore,
     },
     placeFeatures: {
       selectedPlaceCount: placeBlocks.length,

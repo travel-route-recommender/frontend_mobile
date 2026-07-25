@@ -10,7 +10,7 @@ import type {
   StaminaLevel,
 } from "../types";
 
-export const PERSONAL_SURVEY_DRAFT_VERSION = 4;
+export const PERSONAL_SURVEY_DRAFT_VERSION = 6;
 
 export const preferenceSteps: readonly {
   id: PreferenceStepId;
@@ -18,7 +18,7 @@ export const preferenceSteps: readonly {
   title: string;
   description: string;
 }[] = [
-  { id: "itinerary", eyebrow: "일정 밀도", title: "블록을 드래그해 여행 일정을 채워보세요", description: "액티비티 블록을 일정표로 끌어다 놓아 주세요. 배치한 블록의 위·아래 핸들을 드래그하면 빈 시간만큼 1시간 단위로 늘릴 수 있어요." },
+  { id: "itinerary", eyebrow: "여행 활동과 일정 밀도", title: "여행 동반자와 9개의 대화를 나눠보세요", description: "하고 싶은 활동 8가지와 하루 일정의 빡빡한 정도를 자연스러운 답장으로 알려 주세요." },
   { id: "mobility", eyebrow: "이동 방식", title: "여행지에서 이용하고 싶은 이동 방식은 무엇인가요?", description: "자차와 대중교통을 열어 세부 수단을 고를 수 있어요. 필요한 수단을 모두 선택해 주세요." },
   { id: "accommodation", eyebrow: "숙소 스타일", title: "숙소를 고를 때 어느 쪽에 더 마음이 가나요?", description: "가운데 선택지가 없는 8단계 중 각 기준에서 지금의 취향과 가까운 지점을 선택해 주세요." },
   { id: "adventure", eyebrow: "도전 성향", title: "새로운 장소를 선택할 때 나는 어떤 편인가요?", description: "리뷰가 충분한 검증된 장소와 새롭게 알려지는 장소 사이에서 가까운 쪽을 골라 주세요." },

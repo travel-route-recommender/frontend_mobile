@@ -1,4 +1,5 @@
 import type { PersonalPreferenceAnswers, PreferenceScore } from "../../../domain";
+import { itineraryMessageQuestions } from "../config/itinerary-message-questions";
 import {
   accommodationAxes,
   activityBlocks,
@@ -16,6 +17,7 @@ import type {
   ItineraryBlock,
   ItineraryDay,
   ItineraryHourSlot,
+  ItineraryPreferenceLevel,
   MobilityMode,
   PersonalPreferenceDraftAnswers,
   PreferenceStepId,
@@ -31,6 +33,8 @@ const activityIds = new Set<ActivityTagId>(activityBlocks.map((block) => block.i
 const itineraryHourIds = new Set<ItineraryHourSlot>(itineraryHourSlots);
 const mobilityIds = new Set<MobilityMode>(mobilityOptions.map((option) => option.id));
 const staminaIds = new Set<StaminaLevel>(staminaOptions.map((option) => option.id));
+const itineraryMessageQuestionIds = new Set(itineraryMessageQuestions.map((question) => question.id));
+const itineraryPreferenceLevels = new Set<ItineraryPreferenceLevel>(["like", "neutral", "dislike"]);
 
 export function createEmptyItineraryDay(index: number): ItineraryDay {
   return { id: `day-${index}`, blocks: [] };
@@ -93,6 +97,17 @@ export function normalizeTravelPreferenceSurveyAnswers(value: unknown): Personal
     if (itineraryDays.length) answers.itineraryDays = itineraryDays;
   }
 
+  if (isRecord(value.itineraryMessageAnswers)) {
+    const itineraryMessageAnswers = Object.fromEntries(
+      Object.entries(value.itineraryMessageAnswers).filter(([questionId, level]) => (
+        itineraryMessageQuestionIds.has(questionId as typeof itineraryMessageQuestions[number]["id"])
+        && typeof level === "string"
+        && itineraryPreferenceLevels.has(level as ItineraryPreferenceLevel)
+      )),
+    );
+    if (Object.keys(itineraryMessageAnswers).length) answers.itineraryMessageAnswers = itineraryMessageAnswers;
+  }
+
   if (Array.isArray(value.mobilityModes)) {
     answers.mobilityModes = [...new Set(value.mobilityModes.filter((mode): mode is MobilityMode => typeof mode === "string" && mobilityIds.has(mode as MobilityMode)))];
   }
@@ -130,13 +145,21 @@ export function getFilledItineraryCount(answers: PersonalPreferenceDraftAnswers)
   return getItineraryDays(answers).reduce((total, day) => total + day.blocks.reduce((dayTotal, block) => dayTotal + block.durationHours, 0), 0);
 }
 
+export function getItineraryMessageAnswerCount(answers: PersonalPreferenceDraftAnswers) {
+  return itineraryMessageQuestions.filter((question) => answers.itineraryMessageAnswers?.[question.id]).length;
+}
+
+export function isItineraryMessageSurveyComplete(answers: PersonalPreferenceDraftAnswers) {
+  return getItineraryMessageAnswerCount(answers) === itineraryMessageQuestions.length;
+}
+
 export function getBudgetTotal(answers: PersonalPreferenceDraftAnswers) {
   return budgetCategories.reduce((total, category) => total + (answers.budgetAllocation?.[category.id] ?? 0), 0);
 }
 
 export function isPreferenceStepComplete(stepId: PreferenceStepId, answers: PersonalPreferenceDraftAnswers) {
   switch (stepId) {
-    case "itinerary": return getFilledItineraryCount(answers) > 0;
+    case "itinerary": return isItineraryMessageSurveyComplete(answers) || getFilledItineraryCount(answers) > 0;
     case "mobility": return Boolean(answers.mobilityModes?.length);
     case "accommodation": return accommodationAxes.every((axis) => isAccommodationScaleValue(answers.accommodation?.[axis.id]));
     case "adventure": return isFourPointScaleValue(answers.adventure);
@@ -158,7 +181,9 @@ export function validateTravelPreferenceSurvey(answers: PersonalPreferenceDraftA
   const firstInvalidStepIndex = preferenceSteps.findIndex((step) => !isPreferenceStepComplete(step.id, answers));
   if (firstInvalidStepIndex < 0) return { valid: true, answers };
   const step = preferenceSteps[firstInvalidStepIndex];
-  const message = step.id === "budget"
+  const message = step.id === "itinerary"
+    ? `여행 활동과 일정 밀도 대화에 모두 답해 주세요. 현재 ${getItineraryMessageAnswerCount(answers)} / ${itineraryMessageQuestions.length}개에 답했어요.`
+    : step.id === "budget"
     ? `여행 코인을 100개 모두 배분해 주세요. 현재 ${getBudgetTotal(answers)}개를 배분했어요.`
     : `${step.eyebrow} 항목의 응답을 완료해 주세요.`;
   return { valid: false, message, firstInvalidStepIndex };
@@ -172,7 +197,12 @@ function asLegacyScore(value: number): PreferenceScore {
 
 export function deriveLegacyPreferenceAnswers(answers: PersonalPreferenceDraftAnswers): PersonalPreferenceAnswers {
   const averageFilledHours = getFilledItineraryCount(answers) / getItineraryDays(answers).length;
-  const itineraryScore = averageFilledHours <= 4 ? 0 : averageFilledHours <= 9 ? 1 : 2;
+  const legacyItineraryScore = averageFilledHours <= 4 ? 0 : averageFilledHours <= 9 ? 1 : 2;
+  const itineraryScore = answers.itineraryMessageAnswers?.density === "like"
+    ? 2
+    : answers.itineraryMessageAnswers?.density === "dislike"
+      ? 0
+      : answers.itineraryMessageAnswers?.density === "neutral" ? 1 : legacyItineraryScore;
   const staminaScore = answers.stamina === "low" ? 0 : answers.stamina === "high" ? 2 : 1;
   const drivingModes: MobilityMode[] = ["ownCar", "rentalCar"];
   const transitModes: MobilityMode[] = ["bus", "subway", "train", "taxi"];
@@ -197,7 +227,12 @@ const scaleText = (value: number | undefined, max: number) => value ? `${value} 
 
 export function formatPreferenceStepAnswer(stepId: PreferenceStepId, answers: PersonalPreferenceDraftAnswers) {
   switch (stepId) {
-    case "itinerary": return `${getItineraryDays(answers).length}일 · ${getFilledItineraryCount(answers)}시간 일정`;
+    case "itinerary": {
+      const messageAnswerCount = getItineraryMessageAnswerCount(answers);
+      return messageAnswerCount
+        ? `${messageAnswerCount} / ${itineraryMessageQuestions.length}개 대화 응답`
+        : `${getItineraryDays(answers).length}일 · ${getFilledItineraryCount(answers)}시간 일정`;
+    }
     case "mobility": return mobilityOptions.filter((option) => answers.mobilityModes?.includes(option.id)).map((option) => option.label).join(" · ") || "미응답";
     case "accommodation": return `${accommodationAxes.filter((axis) => answers.accommodation?.[axis.id]).length} / ${accommodationAxes.length}개 기준 응답`;
     case "adventure": return scaleText(answers.adventure, 4);
