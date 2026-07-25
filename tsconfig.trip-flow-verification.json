@@ -19,9 +19,12 @@
     "src/features/trips/selectors/**/*.ts",
     "src/features/trips/utils/**/*.ts",
     "src/features/trip-creation/types.ts",
+    "src/features/trip-creation/logic/**/*.ts",
+    "src/features/trip-creation/mappers/**/*.ts",
+    "src/features/trip-creation/services/createTripRoomService.ts",
+    "src/features/trip-creation/services/regionService.ts",
     "src/features/trip-creation/validation/**/*.ts",
     "src/store/selectors.ts",
     "src/utils/**/*.ts"
   ]
 }
-

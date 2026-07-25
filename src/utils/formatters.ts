@@ -1,6 +1,7 @@
 import type { TripStatus } from "../domain";
 
-export function formatTripDateRange(startDate: string, endDate: string) {
+export function formatTripDateRange(startDate: string | null | undefined, endDate: string | null | undefined) {
+  if (!startDate || !endDate) return "날짜 미정";
   const start = new Date(`${startDate}T00:00:00`);
   const end = new Date(`${endDate}T00:00:00`);
   if (Number.isNaN(start.getTime()) && Number.isNaN(end.getTime())) return "날짜 미정";
@@ -16,7 +17,8 @@ export function formatTripStatus(status: TripStatus) {
   return "여행 완료";
 }
 
-export function isValidISODate(value: string) {
+export function isValidISODate(value: unknown): value is string {
+  if (typeof value !== "string") return false;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const [year, month, day] = value.split("-").map(Number);
   const date = new Date(Date.UTC(year, month - 1, day));
@@ -27,7 +29,8 @@ export function isValidISODate(value: string) {
   );
 }
 
-export function formatDayLabel(date: string, tripStartDate: string) {
+export function formatDayLabel(date: string, tripStartDate: string | null | undefined) {
+  if (!tripStartDate) return "Day 1";
   const start = new Date(`${tripStartDate}T00:00:00`).getTime();
   const target = new Date(`${date}T00:00:00`).getTime();
   if (!Number.isFinite(start) || !Number.isFinite(target)) return "날짜 미정";
@@ -35,7 +38,7 @@ export function formatDayLabel(date: string, tripStartDate: string) {
   return `Day ${Math.max(dayIndex, 1)}`;
 }
 
-export function getTripDateForDayLabel(day: "Day 1" | "Day 2", startDate: string, endDate: string) {
+export function getTripDateForDayLabel(day: "Day 1" | "Day 2", startDate: string | null, endDate: string | null) {
   return day === "Day 1" ? startDate : endDate;
 }
 
@@ -52,5 +55,4 @@ export function formatTimeLabel(time: string) {
   if (hour < 18) return "오후";
   return "저녁";
 }
-
 

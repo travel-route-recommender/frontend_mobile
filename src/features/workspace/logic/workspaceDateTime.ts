@@ -2,6 +2,7 @@ import type { ItineraryItem } from "../../../domain";
 import {
   DEFAULT_PLACE_DURATION_MINUTES,
   MIN_DURATION_MINUTES,
+  SLOT_HEIGHT_PX,
   SLOT_MINUTES,
   WORKSPACE_END_MINUTES,
   WORKSPACE_START_MINUTES,
@@ -11,13 +12,15 @@ import type { ItineraryMoveDirection, WorkspaceDate } from "../types";
 
 const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
-export function isValidDateOnly(value: string) {
+export function isValidDateOnly(value: string | null | undefined) {
+  if (!value) return false;
   if (!DATE_ONLY_PATTERN.test(value)) return false;
   const parsed = new Date(`${value}T00:00:00Z`);
   return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
-export function buildTripDateRange(startDate: string, endDate: string): WorkspaceDate[] {
+export function buildTripDateRange(startDate: string | null | undefined, endDate: string | null | undefined): WorkspaceDate[] {
+  if (!startDate || !endDate) return [];
   if (!isValidDateOnly(startDate) || !isValidDateOnly(endDate) || startDate > endDate) return [];
   const end = Date.parse(`${endDate}T00:00:00Z`);
   const result: WorkspaceDate[] = [];
@@ -36,7 +39,7 @@ export function buildTripDateRange(startDate: string, endDate: string): Workspac
   return result;
 }
 
-export function addDaysToDate(date: string, days: number) {
+export function addDaysToDate(date: string | null | undefined, days: number) {
   if (!isValidDateOnly(date) || !Number.isInteger(days)) return null;
   const next = Date.parse(`${date}T00:00:00Z`) + days * 86_400_000;
   return new Date(next).toISOString().slice(0, 10);
@@ -61,6 +64,51 @@ export function addMinutesToTime(value: string, minutesToAdd: number): string | 
   const start = parseTimeToMinutes(value);
   if (start === null || !Number.isInteger(minutesToAdd)) return null;
   return formatMinutesToTime(start + minutesToAdd);
+}
+
+export function getSnappedStartTimeFromTranslation(
+  startTime: string,
+  durationMinutes: number,
+  translationY: number,
+  slotHeight = SLOT_HEIGHT_PX,
+) {
+  const start = parseTimeToMinutes(startTime);
+  if (
+    start === null
+    || !Number.isFinite(translationY)
+    || !Number.isFinite(slotHeight)
+    || slotHeight <= 0
+    || !Number.isInteger(durationMinutes)
+    || durationMinutes < MIN_DURATION_MINUTES
+  ) return null;
+  const slotDelta = Math.round(translationY / slotHeight);
+  const nextStart = Math.min(
+    Math.max(start + slotDelta * SLOT_MINUTES, WORKSPACE_START_MINUTES),
+    WORKSPACE_END_MINUTES - durationMinutes,
+  );
+  return formatMinutesToTime(nextStart);
+}
+
+export function getSnappedDurationFromTranslation(
+  startTime: string,
+  durationMinutes: number,
+  translationY: number,
+  slotHeight = SLOT_HEIGHT_PX,
+) {
+  const start = parseTimeToMinutes(startTime);
+  if (
+    start === null
+    || !Number.isFinite(translationY)
+    || !Number.isFinite(slotHeight)
+    || slotHeight <= 0
+    || !Number.isInteger(durationMinutes)
+    || durationMinutes < MIN_DURATION_MINUTES
+  ) return null;
+  const slotDelta = Math.round(translationY / slotHeight);
+  return Math.min(
+    Math.max(durationMinutes + slotDelta * SLOT_MINUTES, MIN_DURATION_MINUTES),
+    WORKSPACE_END_MINUTES - start,
+  );
 }
 
 export function calculateDurationMinutes(startTime: string, endTime: string): number | null {

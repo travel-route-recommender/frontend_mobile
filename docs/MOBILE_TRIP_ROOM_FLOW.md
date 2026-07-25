@@ -32,31 +32,42 @@
 
 웹의 실제 5단계를 유지한다.
 
-1. 여행지: `regionsById` 검색 및 Region ID 선택
-2. 날짜: 시작일·종료일 선택
+1. 여행지: `RegionService`의 인기 mock 목록·검색 결과에서 Region ID 하나 선택
+2. 날짜: 월간 달력에서 시작일·종료일 범위 선택 또는 날짜 미정
 3. 여행 조건: 이동 방식, 예산, 일정 밀도
-4. 동행자: 현재 사용자는 방장으로 고정, 나머지 demo User 선택
-5. 최종 확인: 여행방 이름 입력, 모든 항목 검토와 단계별 수정
+4. 동행: 동행 유형 선택, 현재 사용자는 방장으로 고정, 나머지 demo User 선택
+5. 최종 확인: 여행방 이름 입력, 모든 항목 검토, 항목별 edit session, 생성 완료·초대
 
-Android/iOS는 Expo SDK 57 권장 호환 버전의 `@react-native-community/datetimepicker`를 사용한다. Web export에서는 같은 컴포넌트 경계의 `YYYY-MM-DD` 입력을 사용한다. 날짜는 시간대가 섞이지 않는 date-only 문자열로 Store에 저장하며, 종료일은 시작일보다 빠를 수 없다. 지난 날짜는 여행 기록용으로 허용한다. 이름은 40자 이하이며 비우면 `${region.name} 여행`이 된다.
+Android/iOS/Web는 새 패키지 없이 React Native `Pressable` 기반 같은 월간 달력 UI를 사용한다. 첫 선택은 시작일, 두 번째 선택은 종료일이며 같은 날을 두 번 누르면 당일치기다. 종료일까지 고른 뒤 새 날짜를 누르면 새 범위를 시작한다. 날짜는 시간대가 섞이지 않는 date-only 문자열로 저장하며, 지난 날짜는 기존 정책대로 허용한다.
+
+날짜 미정은 `dateUndecided: true`, `startDate: null`, `endDate: null`만 허용한다. 초기 Day mapper는 이 상태를 `draft-day-1 / Day 1 / date: null / items: []`로 만들고, 날짜가 있으면 시작일부터 종료일까지 양 끝을 포함한 Day 목록을 만든다. 현재 workspace 전체 UI는 다시 만들지 않았으며 날짜 미정 방에서는 실제 날짜를 정해야 일정 편집 보드가 열린다는 명시적 안내를 표시한다.
+
+확인 화면에서 여행지·날짜·조건·동행을 수정하면 persisted Draft의 `currentStep`을 되돌리지 않고 local edit copy를 연다. `수정 완료`만 해당 Step의 필드를 Draft에 반영하며 취소, 헤더 뒤로가기, Android hardware back은 copy만 폐기하고 확인 화면으로 돌아간다.
 
 ## CreateTripDraft와 persist
 
-완료된 `TripRoom`과 생성 중 입력을 섞지 않는다. 별도 Zustand Store가 AsyncStorage key `duri-create-trip-draft`, version `1`로 다음만 저장한다.
+완료된 `TripRoom`과 생성 중 입력을 섞지 않는다. 별도 Zustand Store가 AsyncStorage key `duri-create-trip-draft`, version `2`로 다음만 저장한다. version 1의 기존 초안은 날짜와 이름을 보존해 version 2 구조로 정규화한다.
 
 - configVersion, ownerUserId, currentStep
-- regionId, startDate, endDate
+- regionId, startDate, endDate, dateUndecided
 - transport, budgetLevel, intensity
-- selectedMemberUserIds, title
+- companionType, expectedMemberCount, selectedMemberUserIds
+- roomName, isRoomNameCustomized
 - startedAt, updatedAt
 
-root layout은 domain/auth/personal-test-draft/create-trip-draft 네 Store의 hydrate 완료를 기다린다. 버전이 맞지 않는 초안은 완료된 여행이나 성향 결과를 건드리지 않고 해당 초안만 폐기하며 안내한다. 다른 사용자 소유 초안은 이어 쓰지 않는다. 다시 진입하면 이어 쓰기 또는 새로 시작을 선택할 수 있고, 뒤로 나갈 때 저장 또는 삭제를 선택한다. 생성 오류 시 초안을 유지하고 성공한 경우에만 삭제한다.
+root layout은 domain/auth/personal-test-draft/create-trip-draft 네 Store의 hydrate 완료를 기다린다. 지원하지 않는 버전의 초안은 완료된 여행이나 성향 결과를 건드리지 않고 해당 초안만 폐기하며 안내한다. 다른 사용자 소유 초안은 이어 쓰지 않는다. 다시 진입하면 이어 쓰기 또는 새로 시작을 선택할 수 있고, 뒤로 나갈 때 저장 또는 삭제를 선택한다. 생성 오류 시 초안을 유지하고 성공한 경우에만 삭제한다.
+
+지역 선택 시 이름이 자동 상태라면 `${region.name} 여행`을 즉시 저장한다. 사용자가 이름 입력을 한 번이라도 수정하면 `isRoomNameCustomized`가 `true`가 되어 이후 지역 수정이 이름을 덮어쓰지 않는다. 이름은 공백을 허용하지 않고 기존 40자 제한을 유지한다.
 
 ## validation과 createTrip
 
-각 단계는 다음 단계 진입 전에 Region 존재, ISO date-only 형식과 순서, 현재 owner 존재, 선택 User 존재 여부, 제목 길이를 검사한다. 선택 멤버는 ID 기준으로 중복을 제거하고 owner와 존재하지 않는 ID를 제외한다.
+각 단계는 다음 단계 진입 전에 Region 존재, 날짜 미정/범위의 상호 배타성, ISO date-only 형식과 순서, 동행 유형, 현재 owner, 선택 User, 공백이 아닌 이름과 40자 제한을 검사한다. 선택 멤버는 ID 기준으로 중복을 제거하고 owner와 존재하지 않는 ID를 제외한다.
 
-`createTrip`은 한 번의 Zustand `set`에서 고유 ID 생성, owner 자동 포함, 멤버 중복 제거, `tripsById`, 중복 없는 `tripOrder`, 빈 candidate/itinerary 관계, `activeTripId`를 함께 반영한다. 입력 객체는 수정하지 않는다. 제출 잠금으로 연속 터치 중복 생성을 막고 성공하면 `/trips/[tripId]?created=1`로 replace한다.
+`mapDraftToCreateTripRoomRequest`는 Draft를 frontend mock contract로 바꾼다. 기존 이동·예산·밀도는 `travelStyles` token과 구조화 필드를 함께 제공하고, expected member count는 별도 입력이 없으면 실제 선택된 owner+동행자 수에서 파생한다. areaCode·sigunguCode는 Region option에 실제 값이 있을 때만 전달하며 mock에서 허위 코드를 만들지 않는다.
+
+`CreateTripRoomService`와 `useCreateTripRoomMutation`은 idle/pending/success/error와 중복 요청 잠금을 담당한다. mock adapter의 `createTrip`은 한 번의 Zustand `set`에서 고유 ID 생성, owner 자동 포함, 멤버 중복 제거, `tripsById`, 중복 없는 `tripOrder`, 빈 candidate/itinerary 관계, `activeTripId`를 함께 반영한다. 생성 실패 시 Draft를 유지하고, 성공 응답을 받은 뒤에만 Draft를 초기화한다.
+
+성공 화면은 `https://example.invalid/invite/mock-*` 형태임을 명시한 mock 링크, Kakao placeholder, 링크 복사, 기본 공유, 여행방 이동을 제공한다. Kakao SDK가 없어도 기본 `Share` sheet로 fallback한다. `expo-clipboard`를 임의 설치하지 않았기 때문에 Web은 browser clipboard로 실제 복사하고 Android/iOS의 복사 버튼은 기본 공유 sheet를 열어 복사할 수 있도록 안내한다. native 직접 복사는 패키지 승인 후 `InviteShareService.copyLink` adapter만 교체하면 된다.
 
 ## 여행방 홈
 
@@ -82,7 +93,7 @@ root layout은 domain/auth/personal-test-draft/create-trip-draft 네 Store의 hy
 - `api`: Rooms endpoint와 DTO 계약을 추측하지 않고 목록/상세/생성 계약 대기 오류 표시
 - `hybrid`: 서버 roomId와 local roomId 연결 전까지 목록/생성을 api와 동일하게 보류; 로컬 분석과 서버 room을 임의 혼합하지 않음
 
-mock 초대 Modal은 이미 Store에 있는 demo User만 멤버로 추가한다. 실제 사용자 검색, 초대 링크, 권한, 수락 상태, 알림은 구현하지 않았다.
+mock 생성 완료 화면과 초대 Modal은 기존 demo User와 mock token만 사용한다. 실제 사용자 검색, 초대 링크 발급, 만료·권한·수락 상태, 알림은 구현하지 않았다.
 
 ## API 계약 대기와 다음 단계
 

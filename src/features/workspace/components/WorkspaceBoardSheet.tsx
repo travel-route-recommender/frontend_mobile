@@ -39,6 +39,8 @@ export function WorkspaceBoardSheet({
   candidateCount,
   itineraryBoard,
   candidateBoard,
+  candidateOnly = false,
+  unscheduledCandidateCount = 0,
   contentScrollEnabled = true,
   onTabChange,
   onSnapChange,
@@ -49,8 +51,10 @@ export function WorkspaceBoardSheet({
   dateLabel: string;
   itineraryCount: number;
   candidateCount: number;
-  itineraryBoard: ReactNode;
+  itineraryBoard?: ReactNode;
   candidateBoard: ReactNode;
+  candidateOnly?: boolean;
+  unscheduledCandidateCount?: number;
   contentScrollEnabled?: boolean;
   onTabChange: (tab: WorkspaceBoardTab) => void;
   onSnapChange: (snap: WorkspaceBoardSheetSnap) => void;
@@ -134,17 +138,17 @@ export function WorkspaceBoardSheet({
         <View style={styles.handle} />
         <View style={styles.sheetHeading}>
           <View style={styles.sheetHeadingCopy}>
-            <Text style={styles.eyebrow}>WORKSPACE BOARD</Text>
-            <Text style={styles.sheetTitle}>{dayLabel} · {dateLabel}</Text>
+            <Text style={styles.eyebrow}>{candidateOnly ? "CANDIDATE BOARD" : "WORKSPACE BOARD"}</Text>
+            <Text style={styles.sheetTitle}>{candidateOnly ? `미배치 ${unscheduledCandidateCount}곳` : `${dayLabel} · ${dateLabel}`}</Text>
           </View>
           <Text style={styles.snapText}>{snapLabel(snap)}</Text>
         </View>
       </Pressable>
     </View>
-    <View accessibilityRole="tablist" style={styles.tabs}>
+    {!candidateOnly ? <View accessibilityRole="tablist" style={styles.tabs}>
       <BoardTab label="일정 보드" count={itineraryCount} selected={activeTab === "itinerary"} onPress={() => onTabChange("itinerary")} />
       <BoardTab label="후보 장소" count={candidateCount} selected={activeTab === "candidates"} onPress={() => onTabChange("candidates")} />
-    </View>
+    </View> : <Text style={styles.candidateGuide}>후보를 일정에 추가한 뒤, 위 시간표에서 위치와 체류시간을 조절하세요.</Text>}
     <ScrollView
       style={styles.content}
       contentContainerStyle={styles.contentContainer}
@@ -152,9 +156,9 @@ export function WorkspaceBoardSheet({
       nestedScrollEnabled
       scrollEnabled={contentScrollEnabled}
       showsVerticalScrollIndicator={false}
-      testID={`workspace-${activeTab}-board`}
+      testID={`workspace-${candidateOnly ? "candidates" : activeTab}-board`}
     >
-      {activeTab === "itinerary" ? itineraryBoard : candidateBoard}
+      {candidateOnly ? candidateBoard : activeTab === "itinerary" ? itineraryBoard : candidateBoard}
     </ScrollView>
   </Animated.View>;
 }
@@ -182,6 +186,7 @@ const styles = StyleSheet.create({
   sheetTitle: { ...typography.subtitle, color: colors.text },
   snapText: { ...typography.caption, color: colors.textSecondary, borderRadius: radius.pill, backgroundColor: colors.surfaceMuted, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
   tabs: { flexDirection: "row", gap: spacing.xs, marginHorizontal: spacing.lg, padding: spacing.xxs, borderRadius: radius.pill, backgroundColor: colors.surfaceMuted },
+  candidateGuide: { ...typography.caption, color: colors.textSecondary, marginHorizontal: spacing.lg, borderRadius: radius.md, backgroundColor: colors.surfaceMuted, paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
   tab: { flex: 1, minHeight: 46, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs, borderRadius: radius.pill },
   tabSelected: { backgroundColor: colors.primary },
   tabText: { ...typography.bodyStrong, color: colors.textSecondary },

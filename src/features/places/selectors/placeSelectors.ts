@@ -46,7 +46,7 @@ export function selectEligibleTripsForPlaceCandidate(state: Pick<PlaceSelectorSt
     seen.add(tripId);
     const trip = state.tripsById[tripId];
     return trip && trip.status !== "completed" && trip.members.some((member) => member.userId === state.currentUserId) ? [trip] : [];
-  }).sort((left, right) => left.startDate.localeCompare(right.startDate) || left.title.localeCompare(right.title, "ko") || left.id.localeCompare(right.id));
+  }).sort((left, right) => (left.startDate ?? "9999-12-31").localeCompare(right.startDate ?? "9999-12-31") || left.title.localeCompare(right.title, "ko") || left.id.localeCompare(right.id));
 }
 
 export function selectActiveCandidateTrip(state: Pick<PlaceSelectorState, "activeTripId" | "currentUserId" | "tripsById">) {
