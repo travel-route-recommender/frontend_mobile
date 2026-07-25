@@ -1,6 +1,7 @@
 import type { DuriDomainState } from "../../data/mock/demoData";
 import type { StateIntegrityIssue } from "./types";
 import { issue } from "./types";
+import { isValidISODate } from "../../utils/formatters";
 
 export function validateTrips(domain: DuriDomainState): StateIntegrityIssue[] {
   const issues: StateIntegrityIssue[] = [];
@@ -25,6 +26,11 @@ export function validateTrips(domain: DuriDomainState): StateIntegrityIssue[] {
     }
     if (!domain.regionsById[trip.regionId]) {
       issues.push(issue("warning", "trip.region-reference-missing", "trip", "여행방의 지역 정보를 찾을 수 없습니다.", tripKey));
+    }
+    if (trip.dateUndecided) {
+      if (trip.startDate !== null || trip.endDate !== null) issues.push(issue("error", "trip.date-undecided-range-present", "trip", "날짜 미정 여행방에 날짜 범위가 함께 저장되어 있습니다.", tripKey));
+    } else if (!isValidISODate(trip.startDate) || !isValidISODate(trip.endDate) || trip.endDate < trip.startDate) {
+      issues.push(issue("error", "trip.date-range-invalid", "trip", "여행방 날짜 범위가 올바르지 않습니다.", tripKey));
     }
 
     const memberIds = new Set<string>();
@@ -61,4 +67,3 @@ export function validateTrips(domain: DuriDomainState): StateIntegrityIssue[] {
 
   return issues;
 }
-

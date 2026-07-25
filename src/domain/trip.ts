@@ -15,12 +15,16 @@ export type TripRoom = {
   id: EntityId;
   title: string;
   regionId: EntityId;
-  startDate: ISODateString;
-  endDate: ISODateString;
+  startDate: ISODateString | null;
+  endDate: ISODateString | null;
+  dateUndecided?: boolean;
   status: TripStatus;
   transport: TripTransport;
   budgetLevel: TripBudgetLevel;
   intensity: TripIntensity;
+  travelStyles?: string[];
+  companionType?: string | null;
+  expectedMemberCount?: number | null;
   members: TripMember[];
 };
 

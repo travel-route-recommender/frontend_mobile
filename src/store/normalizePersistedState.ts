@@ -123,16 +123,23 @@ function normalizeTrips(value: unknown, fallback: Record<EntityId, TripRoom>) {
     const transport = tripTransports.includes(entry.transport as TripTransport) ? entry.transport as TripTransport : "public";
     const budgetLevel = tripBudgets.includes(entry.budgetLevel as TripBudgetLevel) ? entry.budgetLevel as TripBudgetLevel : "standard";
     const intensity = tripIntensities.includes(entry.intensity as TripIntensity) ? entry.intensity as TripIntensity : "balanced";
+    const dateUndecided = entry.dateUndecided === true;
+    const expectedMemberCount = typeof entry.expectedMemberCount === "number" && Number.isInteger(entry.expectedMemberCount) && entry.expectedMemberCount > 0 ? entry.expectedMemberCount : null;
+    const companionType = typeof entry.companionType === "string" && entry.companionType ? entry.companionType : null;
     const trip: TripRoom = {
       id,
       title: asString(entry.title, "이름 없는 여행방"),
       regionId: asString(entry.regionId),
-      startDate: asString(entry.startDate),
-      endDate: asString(entry.endDate),
+      startDate: dateUndecided ? null : asString(entry.startDate) || null,
+      endDate: dateUndecided ? null : asString(entry.endDate) || null,
+      dateUndecided,
       status,
       transport,
       budgetLevel,
       intensity,
+      travelStyles: unique(asStringArray(entry.travelStyles)),
+      companionType,
+      expectedMemberCount,
       members: normalizeMembers(entry.members),
     };
     return [[id, trip]];

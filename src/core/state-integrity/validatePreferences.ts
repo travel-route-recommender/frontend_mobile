@@ -4,6 +4,7 @@ import type { PersonalPreferenceDraft } from "../../features/preferences/types";
 import type { CreateTripDraft } from "../../features/trip-creation/types";
 import type { AuthIntegrityState, StateIntegrityIssue } from "./types";
 import { issue } from "./types";
+import { isValidISODate } from "../../utils/formatters";
 
 export function validatePreferences(
   domain: DuriDomainState,
@@ -65,6 +66,20 @@ export function validateCreateTripDraft(
   if (auth.sessionKind !== "member" || auth.currentSessionUserId !== draft.ownerUserId) {
     issues.push(issue("warning", "trip-draft.owner-stale", "trip-draft", "현재 회원과 다른 사용자의 여행방 초안이 격리되어 있습니다."));
   }
+  if (draft.regionId && !domain.regionsById[draft.regionId]) {
+    issues.push(issue("warning", "trip-draft.region-reference-missing", "trip-draft", "여행방 초안의 지역 정보를 찾을 수 없습니다.", draft.regionId));
+  }
+  if (draft.dateUndecided) {
+    if (draft.startDate !== null || draft.endDate !== null) issues.push(issue("error", "trip-draft.date-undecided-range-present", "trip-draft", "날짜 미정 초안에 날짜 범위가 함께 저장되어 있습니다."));
+  } else if ((draft.startDate !== null || draft.endDate !== null) && (!isValidISODate(draft.startDate) || !isValidISODate(draft.endDate) || draft.endDate < draft.startDate)) {
+    issues.push(issue("error", "trip-draft.date-range-invalid", "trip-draft", "여행방 초안의 날짜 범위가 올바르지 않습니다."));
+  }
+  if (draft.roomName.length > 40) {
+    issues.push(issue("error", "trip-draft.room-name-too-long", "trip-draft", "여행방 초안의 이름이 40자를 초과합니다."));
+  }
+  if (draft.expectedMemberCount !== null && (!Number.isInteger(draft.expectedMemberCount) || draft.expectedMemberCount < 1)) {
+    issues.push(issue("error", "trip-draft.member-count-invalid", "trip-draft", "여행방 초안의 예상 인원이 올바르지 않습니다."));
+  }
   if (draft.selectedMemberUserIds.includes(draft.ownerUserId)) {
     issues.push(issue("error", "trip-draft.owner-selected", "trip-draft", "여행방 owner가 동행자 목록에도 포함되어 있습니다."));
   }
@@ -78,4 +93,3 @@ export function validateCreateTripDraft(
   }
   return issues;
 }
-

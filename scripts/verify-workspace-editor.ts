@@ -5,6 +5,8 @@ import {
   addDaysToDate,
   buildTripDateRange,
   doTimeRangesOverlap,
+  getSnappedDurationFromTranslation,
+  getSnappedStartTimeFromTranslation,
   moveItemToDate,
   moveItemToIndexWithinDate,
   moveItemWithinDate,
@@ -171,5 +173,11 @@ assert(filterCandidatePlaceViewModels(relationshipCandidates, "", "companion", "
 
 const conflictValidation = validateCreateItineraryItem({ sessionKind: "member", currentUserId: "owner", trip: trip(), candidate: candidate("market"), place: places.market, itinerary: [item("existing", "cafe", "2026-07-18", "10:00", 90)], date: "2026-07-18", startTime: "11:00", endTime: "12:00" });
 assert(!conflictValidation.valid && conflictValidation.conflictItemIds[0] === "existing", "추가 validation은 겹치는 item ID를 반환해야 한다");
+assert(getSnappedStartTimeFromTranslation("10:00", 60, 40) === "10:30", "43. 일정 블록 한 슬롯 아래 이동");
+assert(getSnappedStartTimeFromTranslation("08:00", 60, -400) === "08:00", "44. 일정 블록 시작 경계");
+assert(getSnappedStartTimeFromTranslation("23:00", 60, 400) === "23:00", "45. 일정 블록 종료 경계");
+assert(getSnappedDurationFromTranslation("10:00", 60, 40) === 90, "46. 체류시간 한 슬롯 늘리기");
+assert(getSnappedDurationFromTranslation("10:00", 30, -400) === 30, "47. 최소 체류시간 경계");
+assert(getSnappedDurationFromTranslation("23:00", 60, 400) === 60, "48. 자정 종료 경계");
 
-console.log("Workspace editor verification passed: 42 scenarios + conflict validation");
+console.log("Workspace editor verification passed: 48 scenarios + conflict validation");

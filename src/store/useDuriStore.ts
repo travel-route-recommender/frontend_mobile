@@ -60,11 +60,15 @@ export type AddPlaceToItineraryInput = {
 export type CreateTripInput = {
   title?: string;
   regionId: EntityId;
-  startDate: string;
-  endDate: string;
+  startDate: string | null;
+  endDate: string | null;
+  dateUndecided: boolean;
   transport: TripTransport;
   budgetLevel: TripBudgetLevel;
   intensity: TripIntensity;
+  travelStyles?: string[];
+  companionType?: string | null;
+  expectedMemberCount?: number | null;
   invitedUserIds: EntityId[];
 };
 
@@ -222,12 +226,11 @@ export const useDuriStore = create<DuriState>()(
           const region = state.regionsById[input.regionId];
           const currentUser = state.usersById[state.currentUserId];
           const normalizedTitle = input.title?.trim() ?? "";
-          const hasValidDates =
-            isValidISODate(input.startDate) &&
-            isValidISODate(input.endDate) &&
-            input.endDate >= input.startDate;
+          const hasValidDateState = input.dateUndecided
+            ? input.startDate === null && input.endDate === null
+            : isValidISODate(input.startDate) && isValidISODate(input.endDate) && input.endDate >= input.startDate;
 
-          if (!region || !currentUser || !hasValidDates || normalizedTitle.length > 40) return state;
+          if (!region || !currentUser || !hasValidDateState || !normalizedTitle || normalizedTitle.length > 40) return state;
 
           createdTripId = createUniqueEntityId("trip", Object.keys(state.tripsById));
           const invitedUserIds = [...new Set(input.invitedUserIds)].filter(
@@ -240,10 +243,14 @@ export const useDuriStore = create<DuriState>()(
             regionId: region.id,
             startDate: input.startDate,
             endDate: input.endDate,
+            dateUndecided: input.dateUndecided,
             status: "planning",
             transport: input.transport,
             budgetLevel: input.budgetLevel,
             intensity: input.intensity,
+            travelStyles: [...new Set(input.travelStyles ?? [])],
+            companionType: input.companionType ?? null,
+            expectedMemberCount: input.expectedMemberCount ?? memberUserIds.length,
             members: memberUserIds.map((userId, index) => ({
               userId,
               role: index === 0 ? "owner" : "member",

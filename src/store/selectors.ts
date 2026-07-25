@@ -20,7 +20,8 @@ export interface TripCollectionSelectorState {
 
 const emptyEntityIds: EntityId[] = [];
 
-const getSortableDate = (value: string, fallback: number) => {
+const getSortableDate = (value: string | null, fallback: number) => {
+  if (!value) return fallback;
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) ? timestamp : fallback;
 };

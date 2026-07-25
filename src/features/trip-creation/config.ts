@@ -1,5 +1,5 @@
 import type { TripBudgetLevel, TripIntensity, TripTransport } from "../../domain";
-import type { CreateTripStep } from "./types";
+import type { CreateTripStep, TripCompanionType } from "./types";
 
 export const createTripSteps: readonly { id: CreateTripStep; title: string; description: string }[] = [
   { id: 0, title: "어디로 떠날까요?", description: "함께 계획할 여행지를 선택해 주세요." },
@@ -25,4 +25,12 @@ export const intensityOptions: readonly { value: TripIntensity; label: string; d
   { value: "relaxed", label: "느긋하게", description: "하루 1~2곳 정도" },
   { value: "balanced", label: "균형 있게", description: "여유와 관광을 모두" },
   { value: "packed", label: "알차게", description: "다양한 장소를 촘촘히" },
+];
+
+export const companionTypeOptions: readonly { value: TripCompanionType; label: string; description: string }[] = [
+  { value: "friends", label: "친구·동료", description: "친구나 동료와 함께 떠나요" },
+  { value: "family", label: "가족", description: "가족 구성원과 일정을 맞춰요" },
+  { value: "couple", label: "연인", description: "둘의 취향을 함께 담아요" },
+  { value: "group", label: "모임", description: "여러 사람과 여행을 준비해요" },
+  { value: "undecided", label: "아직 미정", description: "유형은 나중에 정할게요" },
 ];
