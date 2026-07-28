@@ -31,7 +31,6 @@ export function SavedScreen() {
     <View style={styles.hero}><View><Text style={styles.heroEyebrow}>내 여행지</Text><Text style={styles.heroTitle}>저장한 장소</Text><Text style={styles.heroBody}>마음에 든 장소를 다시 보고 여행 후보로 담아보세요.</Text></View><Text style={styles.heroCount}>{resolved.places.length}곳</Text></View>
     {resolved.missingIds.length ? <View accessibilityRole="alert" style={styles.warning}><Text style={styles.warningText}>저장 관계 {resolved.missingIds.length}개의 장소 정보를 불러오지 못했어요. 관계는 자동 삭제하지 않았어요.</Text></View> : null}
     {resolved.places.length ? <><PlaceSearchInput value={keyword} onChangeText={setKeyword} onClear={() => setKeyword("")} placeholder="저장한 장소 검색" /><FilterChips label="카테고리" items={categoryItems} selected={normalizedCategory} onSelect={setCategory} /><View style={styles.resultRow}><Text style={styles.resultText}>조건에 맞는 장소 {filtered.length}곳</Text>{hasFilters ? <Pressable accessibilityRole="button" onPress={() => { setKeyword(""); setCategory("all"); }} style={styles.reset}><Text style={styles.resetText}>조건 초기화</Text></Pressable> : null}</View></> : null}
-    <PlaceFeedbackBanner feedback={actions.feedback} onClose={actions.clearFeedback} onAction={(tripId) => router.push({ pathname: "/trips/[tripId]/workspace", params: { tripId } })} />
   </View>;
 
   return <Screen scroll={false}><FlatList
@@ -45,6 +44,7 @@ export function SavedScreen() {
     ListEmptyComponent={resolved.places.length ? <EmptyState title="조건에 맞는 저장 장소가 없어요" description="검색어나 카테고리를 바꿔보세요." ctaLabel="조건 초기화" onPress={() => { setKeyword(""); setCategory("all"); }} /> : <EmptyState title="저장한 장소가 없어요" description="탐색에서 마음에 드는 장소를 저장해 보세요." ctaLabel="장소 탐색하기" onPress={() => router.push("/(tabs)/explore")} />}
     renderItem={({ item }) => { const card = cardsById[item.id]; return card ? <PlaceCard viewModel={card} onPress={() => router.push({ pathname: "/places/[placeId]", params: { placeId: item.id } })} onToggleSaved={() => actions.toggleSaved(item.id)} onAddCandidate={() => actions.requestCandidate(item.id)} /> : null; }}
   />
+  <PlaceFeedbackBanner feedback={actions.feedback} onClose={actions.clearFeedback} onAction={(tripId) => router.push({ pathname: "/trips/[tripId]/workspace", params: { tripId } })} />
   <AddCandidateTripPickerModal visible={Boolean(actions.selectedPlace)} place={actions.selectedPlace} trips={actions.eligibleTrips} regionsById={actions.source.regionsById} getState={(tripId) => actions.selectedPlace ? actions.getCandidateState(tripId, actions.selectedPlace.id) : "not-added"} onSelect={actions.addToTrip} onCreateTrip={() => { actions.closeCandidatePicker(); router.push("/trips/new"); }} onClose={actions.closeCandidatePicker} />
   {actions.memberGatePrompt}</Screen>;
 }

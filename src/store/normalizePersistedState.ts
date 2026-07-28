@@ -35,8 +35,10 @@ const itineraryTypes: ItineraryItemType[] = ["place", "meal", "rest", "transport
 const isRecord = (value: unknown): value is UnknownRecord => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const asString = (value: unknown, fallback = "") => typeof value === "string" ? value : fallback;
 const asFiniteNumber = (value: unknown, fallback = 0) => typeof value === "number" && Number.isFinite(value) ? value : fallback;
+const asOptionalFiniteNumber = (value: unknown) => typeof value === "number" && Number.isFinite(value) ? value : undefined;
 const asStringArray = (value: unknown) => Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 const unique = <Value,>(values: Value[]) => [...new Set(values)];
+const isDateOnly = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value);
 const sourceRecord = (value: unknown, fallback: UnknownRecord) => value === undefined ? fallback : isRecord(value) ? value : {};
 
 function normalizeUsers(value: unknown, fallback: Record<EntityId, User>) {
@@ -82,6 +84,9 @@ function normalizePlaces(value: unknown, fallback: Record<EntityId, Place>) {
     if (!isRecord(entry)) return [];
     const id = asString(entry.id, key);
     if (!id) return [];
+    const fallbackPlace = fallback[id];
+    const latitude = asOptionalFiniteNumber(entry.latitude) ?? fallbackPlace?.latitude;
+    const longitude = asOptionalFiniteNumber(entry.longitude) ?? fallbackPlace?.longitude;
     const place: Place = {
       id,
       regionId: asString(entry.regionId),
@@ -93,6 +98,10 @@ function normalizePlaces(value: unknown, fallback: Record<EntityId, Place>) {
       imageUrl: asString(entry.imageUrl),
       address: asString(entry.address),
       summary: asString(entry.summary),
+      ...(latitude !== undefined ? { latitude } : {}),
+      ...(longitude !== undefined ? { longitude } : {}),
+      ...(isDateOnly(asString(entry.eventStartDate)) ? { eventStartDate: asString(entry.eventStartDate) } : {}),
+      ...(isDateOnly(asString(entry.eventEndDate)) ? { eventEndDate: asString(entry.eventEndDate) } : {}),
     };
     return [[id, place]];
   }));

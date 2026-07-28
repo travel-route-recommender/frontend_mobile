@@ -1,6 +1,7 @@
 import type { EntityId, Place, TripRoom } from "../domain";
 import { createDemoData } from "../data/mock/demoData";
 import type { DataSourceMode } from "../config/environment";
+import { getBackendPlace, searchBackendPlaces } from "../features/places/services/placeApi";
 import { ApiContractUnavailableError } from "./apiClient";
 
 export interface TravelService {
@@ -17,7 +18,13 @@ class MockTravelService implements TravelService {
   async getTrip(tripId: EntityId) { return createDemoData().tripsById[tripId]; }
 }
 
+class ApiTravelService implements TravelService {
+  async listPlaces() { return searchBackendPlaces({ limit: 50 }); }
+  async getPlace(placeId: EntityId) { return await getBackendPlace(placeId) ?? undefined; }
+  async listTrips(): Promise<TripRoom[]> { throw new ApiContractUnavailableError(); }
+  async getTrip(): Promise<TripRoom | undefined> { throw new ApiContractUnavailableError(); }
+}
+
 export function createTravelService(mode: DataSourceMode): TravelService {
-  if (mode === "mock") return new MockTravelService();
-  throw new ApiContractUnavailableError();
+  return mode === "mock" ? new MockTravelService() : new ApiTravelService();
 }

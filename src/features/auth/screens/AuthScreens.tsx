@@ -1,15 +1,19 @@
 import { useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
-import { PrimaryButton, SecondaryButton } from "../../../components/common";
+import { PrimaryButton } from "../../../components/common";
+import { ApiError } from "../../../services/apiClient";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
-import { AuthDivider, AuthErrorBanner, AuthTextField, KakaoButton, PasswordField, TermsCheckbox } from "../components/AuthControls";
+import { AuthDivider, AuthErrorBanner, AuthTextField, GoogleButton, KakaoButton, PasswordField, TermsCheckbox } from "../components/AuthControls";
 import { AuthLayout } from "../components/AuthLayout";
 import { DuriLogo } from "../components/DuriLogo";
 import { DEMO_INVITE_CODE, DEMO_MEMBER_EMAIL, DEMO_MEMBER_PASSWORD } from "../config";
 import { useAuthFlow } from "../hooks/useAuthFlow";
 import { authService } from "../services/authService";
-import { normalizeEmail, normalizeInviteCode, validateEmail, validateInviteCode, validatePassword, validatePasswordConfirmation, validateRequiredAgreement } from "../validation";
+import { apiPermissionMessage } from "../services/guestAccessPolicy";
+import { useAuthSessionStore } from "../store/useAuthSessionStore";
+import type { InvitePreview, SocialProvider } from "../types";
+import { normalizeEmail, normalizeInviteCode, validateEmail, validateInviteCode, validateNickname, validatePassword, validatePasswordConfirmation, validateRequiredAgreement } from "../validation";
 
 function TextLink({ label, onPress }: { label: string; onPress: () => void }) {
   return <Pressable accessibilityRole="link" onPress={onPress} style={styles.textLinkButton}><Text style={styles.textLink}>{label}</Text></Pressable>;
@@ -19,7 +23,23 @@ function Benefits() {
   return <View style={styles.benefits}><Text style={styles.benefitTitle}>두리와 함께하면</Text><Text style={styles.benefit}>✓ 여행지를 함께 저장하고 후보를 모을 수 있어요</Text><Text style={styles.benefit}>✓ 모두의 취향을 반영해 일정을 조율할 수 있어요</Text><Text style={styles.benefit}>✓ 초대 코드로 여행방에 바로 합류할 수 있어요</Text></View>;
 }
 
+function destinationAfterLogin(profileCompleted: boolean, onboardingIntroSeen: boolean, guest = false) {
+  if (guest) return "/(tabs)/trips" as const;
+  if (!profileCompleted) return "/(onboarding)/profile" as const;
+  if (!onboardingIntroSeen) return "/(onboarding)/intro" as const;
+  return "/(tabs)/home" as const;
+}
+
+function safeReturnTo(value: string | undefined, guest: boolean) {
+  if (!value || !value.startsWith("/") || value.startsWith("//")) return undefined;
+  if (["/login", "/signup-choice", "/signup-email", "/terms", "/invite"].some((path) => value === path || value.startsWith(`${path}?`))) return undefined;
+  if (guest && !(value === "/home" || value === "/trips" || value.startsWith("/trips/") || value === "/mypage" || value.startsWith("/tests/"))) return undefined;
+  return value;
+}
+
 export function LoginScreen() {
+  const params = useLocalSearchParams<{ returnTo?: string | string[] }>();
+  const returnTo = Array.isArray(params.returnTo) ? params.returnTo[0] : params.returnTo;
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [emailError, setEmailError] = useState<string>();
@@ -28,63 +48,68 @@ export function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const emailRef = useRef<TextInput>(null);
   const passwordRef = useRef<TextInput>(null);
-  const { applyAuthSuccess, browseAnonymously } = useAuthFlow();
+  const { applyAuthSuccess } = useAuthFlow();
 
-  const finish = async (kind: "email" | "kakao") => {
-    let normalizedEmail = email;
-    if (kind === "email") {
-      const nextEmailError = validateEmail(email);
-      const nextPasswordError = validatePassword(password);
-      setEmailError(nextEmailError); setPasswordError(nextPasswordError);
-      if (nextEmailError) { emailRef.current?.focus(); return; }
-      if (nextPasswordError) { passwordRef.current?.focus(); return; }
-      normalizedEmail = normalizeEmail(email);
-    }
+  const finishEmail = async () => {
+    const nextEmailError = validateEmail(email);
+    const nextPasswordError = password ? undefined : "비밀번호를 입력해 주세요.";
+    setEmailError(nextEmailError); setPasswordError(nextPasswordError);
+    if (nextEmailError) { emailRef.current?.focus(); return; }
+    if (nextPasswordError) { passwordRef.current?.focus(); return; }
     setLoading(true); setServiceError(null);
     try {
-      const result = kind === "kakao" ? await authService.loginWithKakao() : await authService.login({ email: normalizedEmail, password });
+      const result = await authService.login({ email: normalizeEmail(email), password });
       if (result.status === "error") { setServiceError(result.message); return; }
       applyAuthSuccess(result);
-      router.replace(result.profileCompleted ? "/(tabs)/home" : "/(onboarding)/profile");
+      router.replace((safeReturnTo(returnTo, false) ?? destinationAfterLogin(result.profileCompleted, result.onboardingIntroSeen)) as never);
+    } finally { setLoading(false); }
+  };
+
+  const finishSocial = async (provider: SocialProvider) => {
+    setLoading(true); setServiceError(null);
+    try {
+      const result = await authService.loginWithSocial(provider);
+      if (result.status === "error") { setServiceError(result.message); return; }
+      applyAuthSuccess(result);
+      router.replace((safeReturnTo(returnTo, false) ?? destinationAfterLogin(result.profileCompleted, result.onboardingIntroSeen)) as never);
     } finally { setLoading(false); }
   };
 
   const useDemoAccount = () => { setEmail(DEMO_MEMBER_EMAIL); setPassword(DEMO_MEMBER_PASSWORD); setEmailError(undefined); setPasswordError(undefined); };
-  const browse = () => { browseAnonymously(); router.replace("/(tabs)/home"); };
 
-  return (
-    <AuthLayout testID="login-screen">
-      <DuriLogo />
-      <View><Text style={styles.heroTitle}>여행의 시작을 함께해요</Text><Text style={styles.heroSubtitle}>로그인하고 친구들과 여행을 계획해 보세요.</Text></View>
-      <KakaoButton disabled={loading} onPress={() => finish("kakao")} />
-      <AuthDivider />
-      <AuthTextField ref={emailRef} label="이메일" value={email} onChangeText={(value) => { setEmail(value); setEmailError(undefined); }} error={emailError} keyboardType="email-address" autoCapitalize="none" autoComplete="email" returnKeyType="next" onSubmitEditing={() => passwordRef.current?.focus()} />
-      <PasswordField ref={passwordRef} label="비밀번호" value={password} onChangeText={(value) => { setPassword(value); setPasswordError(undefined); }} error={passwordError} autoComplete="current-password" returnKeyType="done" onSubmitEditing={() => finish("email")} />
-      <AuthErrorBanner message={serviceError} />
-      {__DEV__ ? <Pressable accessibilityRole="button" onPress={useDemoAccount} style={styles.demoBox}><Text style={styles.demoTitle}>Mock 데모 계정 채우기</Text><Text style={styles.demoText}>{DEMO_MEMBER_EMAIL} · {DEMO_MEMBER_PASSWORD}</Text></Pressable> : null}
-      <PrimaryButton label="이메일로 로그인" loading={loading} onPress={() => finish("email")} />
-      <View style={styles.inlineLinks}><TextLink label="회원가입" onPress={() => router.push("/(auth)/signup-choice")} /><Text style={styles.dot}>·</Text><TextLink label="초대 코드로 참여" onPress={() => router.push("/(auth)/invite")} /></View>
-      <SecondaryButton label="둘러보기" onPress={browse} />
-      <View style={styles.inlineLinks}><TextLink label="서비스 이용약관" onPress={() => router.push({ pathname: "/(auth)/terms", params: { type: "service" } })} /><Text style={styles.dot}>·</Text><TextLink label="개인정보 처리방침" onPress={() => router.push({ pathname: "/(auth)/terms", params: { type: "privacy" } })} /></View>
-    </AuthLayout>
-  );
+  return <AuthLayout testID="login-screen">
+    <DuriLogo />
+    <View><Text style={styles.heroTitle}>여행의 시작을 함께해요</Text><Text style={styles.heroSubtitle}>로그인하고 친구들과 여행을 계획해 보세요.</Text></View>
+    <GoogleButton disabled={loading} onPress={() => finishSocial("google")} />
+    <KakaoButton disabled={loading} onPress={() => finishSocial("kakao")} />
+    <AuthDivider />
+    <AuthTextField ref={emailRef} label="이메일" value={email} onChangeText={(value) => { setEmail(value); setEmailError(undefined); }} error={emailError} keyboardType="email-address" autoCapitalize="none" autoComplete="email" returnKeyType="next" onSubmitEditing={() => passwordRef.current?.focus()} />
+    <PasswordField ref={passwordRef} label="비밀번호" value={password} onChangeText={(value) => { setPassword(value); setPasswordError(undefined); }} error={passwordError} autoComplete="current-password" returnKeyType="done" onSubmitEditing={finishEmail} />
+    <AuthErrorBanner message={serviceError} />
+    {__DEV__ ? <Pressable accessibilityRole="button" onPress={useDemoAccount} style={styles.demoBox}><Text style={styles.demoTitle}>Mock 데모 계정 채우기</Text><Text style={styles.demoText}>{DEMO_MEMBER_EMAIL} · {DEMO_MEMBER_PASSWORD}</Text></Pressable> : null}
+    <PrimaryButton label="이메일로 로그인" loading={loading} onPress={finishEmail} />
+    <View style={styles.inlineLinks}><TextLink label="회원가입" onPress={() => router.push("/(auth)/signup-choice")} /><Text style={styles.dot}>·</Text><TextLink label="초대 코드로 참여" onPress={() => router.push("/(auth)/invite")} /></View>
+    <View style={styles.inlineLinks}><TextLink label="서비스 이용약관" onPress={() => router.push({ pathname: "/(auth)/terms", params: { type: "service" } })} /><Text style={styles.dot}>·</Text><TextLink label="개인정보 처리방침" onPress={() => router.push({ pathname: "/(auth)/terms", params: { type: "privacy" } })} /></View>
+  </AuthLayout>;
 }
 
 export function SignupChoiceScreen() {
   const [loading, setLoading] = useState(false);
   const [serviceError, setServiceError] = useState<string | null>(null);
   const { applyAuthSuccess } = useAuthFlow();
-  const kakao = async () => {
+  const social = async (provider: SocialProvider) => {
     setLoading(true); setServiceError(null);
     try {
-      const result = await authService.loginWithKakao();
+      const result = await authService.loginWithSocial(provider);
       if (result.status === "error") { setServiceError(result.message); return; }
-      applyAuthSuccess(result); router.replace(result.profileCompleted ? "/(tabs)/home" : "/(onboarding)/profile");
+      applyAuthSuccess(result);
+      router.replace(destinationAfterLogin(result.profileCompleted, result.onboardingIntroSeen));
     } finally { setLoading(false); }
   };
   return <AuthLayout title="두리 시작하기" subtitle="나에게 편한 방법으로 가입하세요." onBack={() => router.back()}>
     <DuriLogo compact />
-    <KakaoButton disabled={loading} onPress={kakao} />
+    <GoogleButton disabled={loading} onPress={() => social("google")} />
+    <KakaoButton disabled={loading} onPress={() => social("kakao")} />
     <AuthDivider />
     <PrimaryButton label="이메일로 가입하기" onPress={() => router.push("/(auth)/signup-email")} />
     <AuthErrorBanner message={serviceError} />
@@ -94,37 +119,41 @@ export function SignupChoiceScreen() {
 }
 
 export function SignupEmailScreen() {
+  const [nickname, setNickname] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [serviceAgreed, setServiceAgreed] = useState(false);
   const [privacyAgreed, setPrivacyAgreed] = useState(false);
-  const [errors, setErrors] = useState<{ email?: string; password?: string; confirmation?: string; agreements?: string }>({});
+  const [errors, setErrors] = useState<{ nickname?: string; email?: string; password?: string; confirmation?: string; agreements?: string }>({});
   const [serviceError, setServiceError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const emailRef = useRef<TextInput>(null); const passwordRef = useRef<TextInput>(null); const confirmationRef = useRef<TextInput>(null);
+  const nicknameRef = useRef<TextInput>(null); const emailRef = useRef<TextInput>(null); const passwordRef = useRef<TextInput>(null); const confirmationRef = useRef<TextInput>(null);
   const { applyAuthSuccess } = useAuthFlow();
   const allAgreed = serviceAgreed && privacyAgreed;
 
   const submit = async () => {
-    const next = { email: validateEmail(email), password: validatePassword(password), confirmation: validatePasswordConfirmation(password, confirmation), agreements: validateRequiredAgreement(allAgreed, "필수 약관") };
+    const next = { nickname: validateNickname(nickname), email: validateEmail(email), password: validatePassword(password), confirmation: validatePasswordConfirmation(password, confirmation), agreements: validateRequiredAgreement(allAgreed, "필수 약관") };
     setErrors(next);
+    if (next.nickname) { nicknameRef.current?.focus(); return; }
     if (next.email) { emailRef.current?.focus(); return; }
     if (next.password) { passwordRef.current?.focus(); return; }
     if (next.confirmation) { confirmationRef.current?.focus(); return; }
     if (next.agreements) return;
     setLoading(true); setServiceError(null);
     try {
-      const result = await authService.signup({ email: normalizeEmail(email), password });
+      const result = await authService.signup({ nickname: nickname.trim(), email: normalizeEmail(email), password });
       if (result.status === "error") { setServiceError(result.message); return; }
-      applyAuthSuccess(result); router.replace("/(onboarding)/profile");
+      applyAuthSuccess(result);
+      router.replace(destinationAfterLogin(result.profileCompleted, result.onboardingIntroSeen));
     } finally { setLoading(false); }
   };
 
   const toggleAll = () => { const checked = !allAgreed; setServiceAgreed(checked); setPrivacyAgreed(checked); setErrors((value) => ({ ...value, agreements: undefined })); };
-  return <AuthLayout title="이메일로 가입하기" subtitle="가입 후 프로필과 여행 취향을 설정할 수 있어요." onBack={() => router.back()} footer={<PrimaryButton label="가입하고 계속하기" loading={loading} onPress={submit} />}>
+  return <AuthLayout title="이메일로 가입하기" subtitle="안전한 계정을 만들고 여행을 시작하세요." onBack={() => router.back()} footer={<PrimaryButton label="가입하고 계속하기" loading={loading} onPress={submit} />}>
+    <AuthTextField ref={nicknameRef} label="닉네임" value={nickname} onChangeText={(value) => { setNickname(value); setErrors((old) => ({ ...old, nickname: undefined })); }} error={errors.nickname} maxLength={12} autoCapitalize="none" returnKeyType="next" onSubmitEditing={() => emailRef.current?.focus()} />
     <AuthTextField ref={emailRef} label="이메일" value={email} onChangeText={(value) => { setEmail(value); setErrors((old) => ({ ...old, email: undefined })); }} error={errors.email} keyboardType="email-address" autoCapitalize="none" autoComplete="email" returnKeyType="next" onSubmitEditing={() => passwordRef.current?.focus()} />
-    <PasswordField ref={passwordRef} label="비밀번호" value={password} onChangeText={(value) => { setPassword(value); setErrors((old) => ({ ...old, password: undefined })); }} error={errors.password} helperText="6자 이상 입력해 주세요." autoComplete="new-password" returnKeyType="next" onSubmitEditing={() => confirmationRef.current?.focus()} />
+    <PasswordField ref={passwordRef} label="비밀번호" value={password} onChangeText={(value) => { setPassword(value); setErrors((old) => ({ ...old, password: undefined })); }} error={errors.password} helperText="12자 이상이며 이메일과 다른 비밀번호를 사용해 주세요." autoComplete="new-password" returnKeyType="next" onSubmitEditing={() => confirmationRef.current?.focus()} />
     <PasswordField ref={confirmationRef} label="비밀번호 확인" value={confirmation} onChangeText={(value) => { setConfirmation(value); setErrors((old) => ({ ...old, confirmation: undefined })); }} error={errors.confirmation} autoComplete="new-password" returnKeyType="done" onSubmitEditing={submit} />
     <View style={styles.termsBox}>
       <TermsCheckbox checked={allAgreed} label="필수 약관 전체 동의" onToggle={toggleAll} />
@@ -137,29 +166,76 @@ export function SignupEmailScreen() {
   </AuthLayout>;
 }
 
+function inviteError(error: unknown, sessionKind: "anonymous" | "guest" | "member" | null) {
+  if (error instanceof ApiError) {
+    if (error.code === "INVALID_INVITE_CODE" || error.status === 401) return "유효하지 않거나 더 이상 사용할 수 없는 초대 코드예요.";
+    if (error.code === "INVITE_RATE_LIMITED" || error.status === 429) return "초대 코드 확인을 너무 많이 시도했어요. 잠시 후 다시 시도해 주세요.";
+  }
+  return apiPermissionMessage(error, sessionKind, "room-join", "초대 코드를 확인하지 못했어요.");
+}
+
 export function InviteJoinScreen() {
+  const sessionKind = useAuthSessionStore((state) => state.sessionKind);
+  const member = sessionKind === "member";
   const params = useLocalSearchParams<{ code?: string }>();
   const initialCode = Array.isArray(params.code) ? params.code[0] : params.code;
   const [code, setCode] = useState(normalizeInviteCode(initialCode ?? ""));
+  const [nickname, setNickname] = useState("");
+  const [preview, setPreview] = useState<InvitePreview | null>(null);
   const [error, setError] = useState<string>();
+  const [nicknameError, setNicknameError] = useState<string>();
   const [serviceError, setServiceError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const inputRef = useRef<TextInput>(null);
+  const nicknameRef = useRef<TextInput>(null);
   const { applyAuthSuccess } = useAuthFlow();
-  const submit = async () => {
+
+  const checkCode = async () => {
     const nextError = validateInviteCode(code); setError(nextError);
     if (nextError) { inputRef.current?.focus(); return; }
     setLoading(true); setServiceError(null);
     try {
-      const result = await authService.joinByInvite({ code: normalizeInviteCode(code) });
-      if (result.status === "error") { setServiceError(result.message); return; }
-      applyAuthSuccess(result); router.replace("/(onboarding)/profile");
+      setPreview(await authService.previewInvite(code));
+      requestAnimationFrame(() => nicknameRef.current?.focus());
+    } catch (reason) { setServiceError(inviteError(reason, sessionKind)); } finally { setLoading(false); }
+  };
+
+  const join = async () => {
+    if (member) {
+      setLoading(true); setServiceError(null);
+      try {
+        const roomId = await authService.acceptInvite(code);
+        router.replace({ pathname: "/trips/[tripId]", params: { tripId: roomId } });
+      } catch (reason) { setServiceError(inviteError(reason, sessionKind)); } finally { setLoading(false); }
+      return;
+    }
+    const nextError = validateNickname(nickname); setNicknameError(nextError);
+    if (nextError) { nicknameRef.current?.focus(); return; }
+    setLoading(true); setServiceError(null);
+    try {
+      const result = await authService.joinByInvite({ code: normalizeInviteCode(code), nickname: nickname.trim() });
+      if (result.status === "error") {
+        if (result.code === "guest-room-limit") {
+          router.replace({ pathname: "/(auth)/guest-room-limit", params: { ...(result.existingRoomId ? { existingRoomId: result.existingRoomId } : {}) } } as never);
+          return;
+        }
+        setServiceError(result.message);
+        return;
+      }
+      applyAuthSuccess(result);
+      router.replace(destinationAfterLogin(true, true, true));
     } finally { setLoading(false); }
   };
-  return <AuthLayout title="초대받은 여행에 참여하기" subtitle="친구가 공유한 8자리 초대 코드를 입력하세요." onBack={() => router.back()} footer={<PrimaryButton label="여행방에 참여하기" loading={loading} onPress={submit} />}>
-    <View style={styles.inviteHero}><Text style={styles.inviteEmoji}>✈️</Text><Text style={styles.inviteCopy}>프로필을 만든 뒤 초대받은 여행방을 확인할 수 있어요. 게스트는 장소 저장·새 여행 생성·후보 및 일정 수정 같은 회원 기능이 제한돼요.</Text></View>
-    <AuthTextField ref={inputRef} label="초대 코드" value={code} onChangeText={(value) => { setCode(normalizeInviteCode(value)); setError(undefined); }} error={error} autoCapitalize="characters" autoCorrect={false} maxLength={8} returnKeyType="done" onSubmitEditing={submit} />
-    {__DEV__ ? <Pressable accessibilityRole="button" onPress={() => { setCode(DEMO_INVITE_CODE); setError(undefined); }} style={styles.demoBox}><Text style={styles.demoTitle}>Mock 초대 코드 사용</Text><Text style={styles.demoText}>{DEMO_INVITE_CODE}</Text></Pressable> : null}
+
+  return <AuthLayout title={preview ? (member ? "초대받은 여행 확인" : "게스트 닉네임 설정") : "초대 코드 확인"} subtitle={preview ? (member ? "현재 회원 계정으로 여행방에 참여합니다." : "이 여행방에서 사용할 이름을 정해주세요.") : "유효한 초대 코드를 확인한 뒤 여행방에 참여할 수 있어요."} onBack={() => preview ? setPreview(null) : router.back()} footer={<PrimaryButton label={preview ? (member ? "여행방 참여하기" : "게스트로 참여하기") : "초대 코드 확인"} loading={loading} onPress={preview ? join : checkCode} />}>
+    <View style={styles.inviteHero}><Text style={styles.inviteEmoji}>✈️</Text><Text style={styles.inviteCopy}>{member ? "회원 계정의 기존 로그인 세션을 유지한 채 초대받은 여행방에 참여해요." : "게스트는 초대받은 여행방 조회와 허용된 참여 기능만 이용할 수 있어요. 여행방 생성·저장 등 회원 기능은 서버에서도 차단됩니다."}</Text></View>
+    {!preview ? <>
+      <AuthTextField ref={inputRef} label="초대 코드" value={code} onChangeText={(value) => { setCode(normalizeInviteCode(value)); setError(undefined); setServiceError(null); }} error={error} autoCapitalize="characters" autoCorrect={false} maxLength={8} returnKeyType="done" onSubmitEditing={checkCode} />
+      {__DEV__ ? <Pressable accessibilityRole="button" onPress={() => { setCode(DEMO_INVITE_CODE); setError(undefined); }} style={styles.demoBox}><Text style={styles.demoTitle}>Mock 초대 코드 사용</Text><Text style={styles.demoText}>{DEMO_INVITE_CODE}</Text></Pressable> : null}
+    </> : <>
+      <View style={styles.previewBox}><Text style={styles.previewTitle}>{preview.title}</Text><Text style={styles.previewMeta}>{[preview.destination, preview.startDate && preview.endDate ? `${preview.startDate} ~ ${preview.endDate}` : undefined, `${preview.memberCount}명 참여 중`].filter(Boolean).join(" · ")}</Text></View>
+      {!member ? <AuthTextField ref={nicknameRef} label="게스트 닉네임" value={nickname} onChangeText={(value) => { setNickname(value); setNicknameError(undefined); }} error={nicknameError} helperText="이 여행방에서 다른 구성원에게 표시되는 이름이에요." maxLength={12} autoCapitalize="none" returnKeyType="done" onSubmitEditing={join} /> : null}
+    </>}
     <AuthErrorBanner message={serviceError} />
     <View style={styles.inlineLinks}><Text style={styles.muted}>이미 두리 회원인가요?</Text><TextLink label="로그인" onPress={() => router.replace("/(auth)/login")} /></View>
   </AuthLayout>;
@@ -169,28 +245,19 @@ export function TermsScreen() {
   const params = useLocalSearchParams<{ type?: string }>();
   const type = (Array.isArray(params.type) ? params.type[0] : params.type) === "privacy" ? "privacy" : "service";
   const title = type === "privacy" ? "개인정보 처리방침" : "서비스 이용약관";
-  return <AuthLayout title={title} subtitle="프로토타입 확인용 임시 문서입니다." onBack={() => router.back()} footer={<PrimaryButton label="확인" onPress={() => router.back()} />}>
-    <View style={styles.legalBox}><Text style={styles.legalHeading}>1. 목적</Text><Text style={styles.legalBody}>두리는 함께 여행을 계획하는 사용자의 일정, 장소, 취향 정보를 화면에서 관리하기 위한 서비스입니다.</Text><Text style={styles.legalHeading}>2. 현재 구현 범위</Text><Text style={styles.legalBody}>이 앱은 프론트엔드 프로토타입이며 mock 모드의 인증 정보는 실제 계정이나 서버에 전송되지 않습니다.</Text><Text style={styles.legalHeading}>3. 정식 출시 전 교체</Text><Text style={styles.legalBody}>실제 서비스 약관, 개인정보의 수집 항목·보유 기간·파기 절차는 법무 및 개인정보 담당자의 검토를 거친 최종 문서로 교체해야 합니다.</Text></View>
-    <Text style={styles.legalTodo}>TODO: 백엔드 인증 계약과 운영 정책 확정 후 정식 문서 및 버전 동의 이력을 연결하세요.</Text>
+  return <AuthLayout title={title} subtitle="운영 정책 확정 전 개발용 요약 문서입니다." onBack={() => router.back()} footer={<PrimaryButton label="확인" onPress={() => router.back()} />}>
+    <View style={styles.legalBox}><Text style={styles.legalHeading}>1. 목적</Text><Text style={styles.legalBody}>두리는 함께 여행을 계획하는 사용자의 일정, 장소, 취향 정보를 관리합니다.</Text><Text style={styles.legalHeading}>2. 인증 정보</Text><Text style={styles.legalBody}>비밀번호는 HTTPS로 서버에 전송되고 서버에서 단방향 해시로 보관합니다. 모바일 Refresh Token은 운영체제 보안 저장소에 저장합니다.</Text><Text style={styles.legalHeading}>3. 정식 출시 전</Text><Text style={styles.legalBody}>수집 항목·보유 기간·파기 절차와 약관 버전 동의 이력은 법무 및 개인정보 담당자 검토 후 최종 문서로 교체해야 합니다.</Text></View>
   </AuthLayout>;
 }
 
 const styles = StyleSheet.create({
-  heroTitle: { ...typography.display, color: colors.text, marginTop: spacing.lg },
-  heroSubtitle: { ...typography.body, color: colors.textSecondary, marginTop: spacing.xs },
-  textLinkButton: { minHeight: 36, alignItems: "center", justifyContent: "center" },
-  textLink: { ...typography.bodyStrong, color: colors.primary },
-  inlineLinks: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "center", gap: spacing.xs },
-  dot: { color: colors.textMuted }, muted: { ...typography.body, color: colors.textSecondary },
-  demoBox: { borderRadius: radius.md, backgroundColor: colors.surfaceMuted, borderWidth: 1, borderColor: colors.border, padding: spacing.sm },
-  demoTitle: { ...typography.caption, color: colors.primary }, demoText: { ...typography.caption, color: colors.textSecondary, marginTop: spacing.xxs },
-  benefits: { gap: spacing.sm, padding: spacing.lg, borderRadius: radius.lg, backgroundColor: colors.background },
-  benefitTitle: { ...typography.subtitle, color: colors.text }, benefit: { ...typography.body, color: colors.textSecondary },
-  termsBox: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, padding: spacing.md },
-  rule: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border }, error: { ...typography.caption, color: colors.danger },
-  inviteHero: { alignItems: "center", gap: spacing.sm, borderRadius: radius.lg, backgroundColor: colors.background, padding: spacing.xl },
-  inviteEmoji: { fontSize: 44 }, inviteCopy: { ...typography.body, color: colors.textSecondary, textAlign: "center" },
-  legalBox: { gap: spacing.sm, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, padding: spacing.lg, backgroundColor: colors.surfaceMuted },
-  legalHeading: { ...typography.subtitle, color: colors.text, marginTop: spacing.sm }, legalBody: { ...typography.body, color: colors.textSecondary },
-  legalTodo: { ...typography.caption, color: colors.warning, backgroundColor: colors.warningSoft, borderRadius: radius.sm, padding: spacing.sm },
+  heroTitle: { ...typography.display, color: colors.text, marginTop: spacing.lg }, heroSubtitle: { ...typography.body, color: colors.textSecondary, marginTop: spacing.xs },
+  textLinkButton: { minHeight: 36, alignItems: "center", justifyContent: "center" }, textLink: { ...typography.bodyStrong, color: colors.primary },
+  inlineLinks: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "center", gap: spacing.xs }, dot: { color: colors.textMuted }, muted: { ...typography.body, color: colors.textSecondary },
+  demoBox: { borderRadius: radius.md, backgroundColor: colors.surfaceMuted, borderWidth: 1, borderColor: colors.border, padding: spacing.sm }, demoTitle: { ...typography.caption, color: colors.primary }, demoText: { ...typography.caption, color: colors.textSecondary, marginTop: spacing.xxs },
+  benefits: { gap: spacing.sm, padding: spacing.lg, borderRadius: radius.lg, backgroundColor: colors.background }, benefitTitle: { ...typography.subtitle, color: colors.text }, benefit: { ...typography.body, color: colors.textSecondary },
+  termsBox: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, padding: spacing.md }, rule: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border }, error: { ...typography.caption, color: colors.danger },
+  inviteHero: { alignItems: "center", gap: spacing.sm, borderRadius: radius.lg, backgroundColor: colors.background, padding: spacing.xl }, inviteEmoji: { fontSize: 44 }, inviteCopy: { ...typography.body, color: colors.textSecondary, textAlign: "center" },
+  previewBox: { gap: spacing.xs, borderWidth: 1, borderColor: colors.primary, borderRadius: radius.lg, padding: spacing.lg, backgroundColor: colors.primarySoft }, previewTitle: { ...typography.subtitle, color: colors.text }, previewMeta: { ...typography.caption, color: colors.textSecondary },
+  legalBox: { gap: spacing.sm, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, padding: spacing.lg, backgroundColor: colors.surfaceMuted }, legalHeading: { ...typography.subtitle, color: colors.text, marginTop: spacing.sm }, legalBody: { ...typography.body, color: colors.textSecondary },
 });

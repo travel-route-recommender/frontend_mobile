@@ -18,7 +18,7 @@ export function Screen({ children, scroll = true, scrollEnabled = true, padded =
       {children}
     </ScrollView>
   ) : (
-    <View style={contentStyle}>{children}</View>
+    <View style={[styles.flex, contentStyle]}>{children}</View>
   );
 
   return (

@@ -1,4 +1,4 @@
-export const MOCK_PASSWORD_MIN_LENGTH = 6;
+export const MOCK_PASSWORD_MIN_LENGTH = 12;
 export const MOCK_NICKNAME_MIN_LENGTH = 2;
 export const MOCK_NICKNAME_MAX_LENGTH = 12;
 export const MOCK_INVITE_CODE_LENGTH = 8;

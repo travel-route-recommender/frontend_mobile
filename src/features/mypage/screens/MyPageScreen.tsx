@@ -1,28 +1,54 @@
-import { StyleSheet, Text, View } from "react-native";
+import { useState } from "react";
+import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { router } from "expo-router";
 import { Avatar, Card, PrimaryButton, Screen, SecondaryButton, SectionHeader } from "../../../components/common";
+import { AuthErrorBanner, AuthTextField, PasswordField } from "../../auth/components/AuthControls";
+import { clearAuthStores, useAuthFlow } from "../../auth/hooks/useAuthFlow";
+import { authService } from "../../auth/services/authService";
+import { useAuthSessionStore } from "../../auth/store/useAuthSessionStore";
+import { validateNickname } from "../../auth/validation";
 import { useDuriStore } from "../../../store/useDuriStore";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
-import { useMemberGate } from "../../auth/hooks/useMemberGate";
-import { useAuthFlow } from "../../auth/hooks/useAuthFlow";
-import { useAuthSessionStore } from "../../auth/store/useAuthSessionStore";
 
 export function MyPageScreen() {
   const sessionKind = useAuthSessionStore((session) => session.sessionKind);
-  const { requireMember, memberGatePrompt } = useMemberGate();
+  const provider = useAuthSessionStore((session) => session.provider);
   const { logout } = useAuthFlow();
   const state = useDuriStore();
   const user = state.usersById[state.currentUserId];
   const result = state.preferenceResultsByUserId[state.currentUserId];
   const trips = Object.values(state.tripsById).filter((trip) => trip.members.some((member) => member.userId === state.currentUserId));
   const savedCount = sessionKind === "member" ? (state.savedPlaceIdsByUserId[state.currentUserId] ?? []).length : 0;
+  const [editing, setEditing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [nickname, setNickname] = useState(user?.name ?? "");
+  const [profileImageUrl, setProfileImageUrl] = useState(user?.profileImageUrl ?? "");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  if (sessionKind === "anonymous") return <Screen>
-    <View style={styles.header}><Avatar name="여행자" size={64} /><View style={styles.headerCopy}><Text style={styles.title}>둘러보는 중이에요</Text><Text style={styles.subtitle}>공개 장소와 여행 아이디어를 자유롭게 살펴볼 수 있어요.</Text></View></View>
-    <SectionHeader title="나의 여행 성향" />
-    <Card style={styles.preference}><Text style={styles.profileType}>로그인 없이 테스트를 체험해 보세요</Text><Text style={styles.description}>결과 화면까지 볼 수 있지만 체험 결과는 영구 저장되거나 여행방 진단에 사용되지 않아요.</Text><PrimaryButton label="여행 성향 테스트 체험" onPress={() => router.push("/tests/personal")} /><SecondaryButton label="로그인 또는 가입" onPress={() => requireMember(() => undefined, "결과 영구 저장")} /></Card>
-    <SecondaryButton label="초대 코드로 참여하기" onPress={() => router.push("/(auth)/invite")} />{memberGatePrompt}
-  </Screen>;
+  const saveProfile = async () => {
+    const validation = validateNickname(nickname);
+    if (validation) { setError(validation); return; }
+    setBusy(true); setError(null);
+    try {
+      const updated = await authService.updateProfile({ nickname: nickname.trim(), ...(profileImageUrl.trim() ? { profileImageUrl: profileImageUrl.trim() } : {}) });
+      state.upsertUser(updated);
+      setEditing(false);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "프로필을 수정하지 못했어요."); } finally { setBusy(false); }
+  };
+
+  const deleteAccount = async () => {
+    setBusy(true); setError(null);
+    try {
+      await authService.deleteAccount(provider === "email" ? password : undefined);
+      clearAuthStores();
+      setDeleting(false);
+      router.replace("/(auth)/login");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "계정을 탈퇴하지 못했어요.");
+    } finally { setBusy(false); }
+  };
 
   return <Screen>
     <View style={styles.header}><Avatar name={user?.initial ?? user?.name ?? "여행자"} uri={user?.profileImageUrl} size={64} /><View style={styles.headerCopy}><Text style={styles.title}>{user?.name ?? "여행자"}</Text><Text style={styles.subtitle}>{sessionKind === "guest" ? "초대받은 여행에 게스트로 참여 중이에요" : result ? "개인 여행 성향 분석을 완료했어요" : "여행 성향 테스트를 기다리고 있어요"}</Text></View></View>
@@ -33,14 +59,37 @@ export function MyPageScreen() {
       <Text style={styles.description}>{result ? result.traits.join(" · ") : "간단한 테스트로 여행할 때 중요하게 생각하는 점을 알아보세요."}</Text>
       {result ? <View style={styles.tags}>{result.preferredTags.map((tag) => <View key={tag} style={styles.tag}><Text style={styles.tagText}>#{tag}</Text></View>)}</View> : null}
       {result ? <><PrimaryButton label="결과 자세히 보기" onPress={() => router.push("/tests/personal/result")} /><SecondaryButton label="테스트 다시 하기" onPress={() => router.push({ pathname: "/tests/personal/result", params: { retest: "1" } })} /></> : <PrimaryButton label="내 여행 성향 알아보기" onPress={() => router.push("/tests/personal")} />}
-      {sessionKind === "guest" ? <Text style={styles.guestCopy}>게스트 결과는 현재 초대 계정에 저장돼요. 정식 계정 전환 시 자동 이전은 아직 지원하지 않아요.</Text> : null}
+      {sessionKind === "guest" ? <Text style={styles.guestCopy}>게스트 계정은 초대받은 여행방에만 접근하며, 회원 전용 API 권한은 서버에서도 제한돼요.</Text> : null}
     </Card>
     <SectionHeader title="계정과 참여" />
-    {sessionKind === "guest" ? <PrimaryButton label="회원 계정 만들기" onPress={() => requireMember(() => undefined, "회원 기능 이용")} /> : <SecondaryButton label="온보딩 안내 다시 보기" onPress={() => router.push("/(onboarding)/intro")} />}
+    <SecondaryButton label="프로필 수정" onPress={() => { setNickname(user?.name ?? ""); setProfileImageUrl(user?.profileImageUrl ?? ""); setError(null); setEditing(true); }} />
     <SecondaryButton label="초대 코드로 참여하기" onPress={() => router.push("/(auth)/invite")} />
-    <SecondaryButton label="로그아웃" onPress={async () => { await logout(); router.replace("/(auth)/login"); }} />
-    {memberGatePrompt}
+    {sessionKind === "member" ? <SecondaryButton label="온보딩 안내 다시 보기" onPress={() => router.push("/(onboarding)/intro")} /> : null}
+    <SecondaryButton label="로그아웃" onPress={async () => { try { await logout(); } finally { router.replace("/(auth)/login"); } }} />
+    <Pressable accessibilityRole="button" onPress={() => { setPassword(""); setError(null); setDeleting(true); }} style={styles.dangerButton}><Text style={styles.dangerText}>{sessionKind === "guest" ? "게스트 계정 삭제" : "회원 탈퇴"}</Text></Pressable>
+
+    <Modal visible={editing} transparent animationType="fade" onRequestClose={() => setEditing(false)}>
+      <Dialog title="프로필 수정" onClose={() => setEditing(false)}>
+        <AuthTextField label="닉네임" value={nickname} onChangeText={(value) => { setNickname(value); setError(null); }} maxLength={12} />
+        <AuthTextField label="프로필 이미지 URL" value={profileImageUrl} onChangeText={(value) => { setProfileImageUrl(value); setError(null); }} autoCapitalize="none" keyboardType="url" placeholder="https://..." />
+        <AuthErrorBanner message={error} />
+        <PrimaryButton label="수정 완료" loading={busy} onPress={saveProfile} />
+      </Dialog>
+    </Modal>
+
+    <Modal visible={deleting} transparent animationType="fade" onRequestClose={() => setDeleting(false)}>
+      <Dialog title={sessionKind === "guest" ? "게스트 계정 삭제" : "정말 탈퇴할까요?"} onClose={() => setDeleting(false)}>
+        <Text style={styles.dialogDescription}>계정 정보와 모든 로그인 세션이 폐기되며 이 작업은 되돌릴 수 없어요.</Text>
+        {provider === "email" ? <PasswordField label="현재 비밀번호" value={password} onChangeText={(value) => { setPassword(value); setError(null); }} autoComplete="current-password" /> : null}
+        <AuthErrorBanner message={error} />
+        <Pressable accessibilityRole="button" accessibilityState={{ disabled: busy }} disabled={busy} onPress={deleteAccount} style={[styles.confirmDanger, busy && styles.disabled]}><Text style={styles.confirmDangerText}>{busy ? "처리 중..." : "계정 영구 삭제"}</Text></Pressable>
+      </Dialog>
+    </Modal>
   </Screen>;
+}
+
+function Dialog({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  return <View style={styles.overlay}><View style={styles.dialog}><View style={styles.dialogHeader}><Text style={styles.dialogTitle}>{title}</Text><Pressable accessibilityRole="button" accessibilityLabel="닫기" onPress={onClose} hitSlop={8}><Text style={styles.close}>×</Text></Pressable></View>{children}</View></View>;
 }
 
 function Metric({ value, label }: { value: number; label: string }) { return <View style={styles.metric}><Text style={styles.metricValue}>{value}</Text><Text style={styles.metricLabel}>{label}</Text></View>; }
@@ -49,4 +98,7 @@ const styles = StyleSheet.create({
   header: { flexDirection: "row", alignItems: "center", gap: spacing.md, paddingTop: spacing.xl, paddingBottom: spacing.lg }, headerCopy: { flex: 1 }, title: { ...typography.title, color: colors.text }, subtitle: { ...typography.caption, color: colors.textSecondary },
   stats: { flexDirection: "row", backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.xl }, metric: { flex: 1, alignItems: "center", paddingVertical: spacing.md }, metricValue: { ...typography.title, color: colors.primary }, metricLabel: { ...typography.caption, color: colors.textSecondary },
   preference: { gap: spacing.sm, marginVertical: spacing.sm, marginBottom: spacing.xl }, profileType: { ...typography.subtitle, color: colors.text }, description: { ...typography.body, color: colors.textSecondary }, tags: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs }, tag: { backgroundColor: colors.primarySoft, borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 6 }, tagText: { ...typography.caption, color: colors.primary }, guestCopy: { ...typography.caption, color: colors.textSecondary, backgroundColor: colors.surfaceMuted, borderRadius: radius.sm, padding: spacing.sm },
+  dangerButton: { minHeight: 48, alignItems: "center", justifyContent: "center", marginTop: spacing.sm }, dangerText: { ...typography.bodyStrong, color: colors.danger, textDecorationLine: "underline" },
+  overlay: { flex: 1, justifyContent: "center", padding: spacing.lg, backgroundColor: "rgba(20, 34, 67, 0.45)" }, dialog: { gap: spacing.md, borderRadius: radius.xl, padding: spacing.lg, backgroundColor: colors.surface }, dialogHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, dialogTitle: { ...typography.subtitle, color: colors.text }, close: { fontSize: 28, color: colors.textSecondary }, dialogDescription: { ...typography.body, color: colors.textSecondary },
+  confirmDanger: { minHeight: 52, borderRadius: radius.md, alignItems: "center", justifyContent: "center", backgroundColor: colors.danger }, confirmDangerText: { ...typography.button, color: colors.white }, disabled: { opacity: 0.5 },
 });
