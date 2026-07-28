@@ -5,11 +5,12 @@ import { PrimaryButton, SecondaryButton } from "../../../components/common";
 import { ErrorState } from "../../../components/feedback";
 import { useDuriStore } from "../../../store/useDuriStore";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
-import { AuthTextField, AvatarOption, OnboardingProgress } from "../../auth/components/AuthControls";
+import { AuthErrorBanner, AuthTextField, AvatarOption, OnboardingProgress } from "../../auth/components/AuthControls";
 import { AuthLayout } from "../../auth/components/AuthLayout";
 import { DuriLogo } from "../../auth/components/DuriLogo";
 import { AVATAR_PRESETS } from "../../auth/config";
 import { useAuthFlow } from "../../auth/hooks/useAuthFlow";
+import { authService } from "../../auth/services/authService";
 import { useAuthSessionStore } from "../../auth/store/useAuthSessionStore";
 import { validateNickname } from "../../auth/validation";
 
@@ -24,24 +25,33 @@ export function ProfileSetupScreen() {
   const [nickname, setNickname] = useState(user?.name ?? "");
   const [avatar, setAvatar] = useState(user?.initial ?? AVATAR_PRESETS[0]);
   const [error, setError] = useState<string>();
+  const [serviceError, setServiceError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
   const inputRef = useRef<TextInput>(null);
 
   if (!sessionKind || sessionKind === "anonymous") return <AuthLayout><ErrorState message="프로필을 만들려면 먼저 로그인하거나 초대 코드로 참여해 주세요." onRetry={() => router.replace("/(auth)/login")} /></AuthLayout>;
   if (!user) return <AuthLayout><ErrorState message="세션 사용자 정보를 찾을 수 없어요. 안전하게 로그아웃한 뒤 다시 시작해 주세요." onRetry={async () => { await logout(); router.replace("/(auth)/login"); }} /></AuthLayout>;
 
-  const submit = () => {
+  const submit = async () => {
     const nextError = validateNickname(nickname); setError(nextError);
     if (nextError) { inputRef.current?.focus(); return; }
-    if (!updateProfile({ name: nickname.trim(), avatar })) { setError("프로필을 저장하지 못했어요. 다시 시도해 주세요."); return; }
-    setProfileCompleted(true); router.replace(introSeen ? "/(tabs)/home" : "/(onboarding)/intro");
+    setLoading(true); setServiceError(null);
+    try {
+      await authService.updateProfile({ nickname: nickname.trim() });
+      if (!updateProfile({ name: nickname.trim(), avatar })) { setError("프로필을 저장하지 못했어요. 다시 시도해 주세요."); return; }
+      setProfileCompleted(true); router.replace(introSeen ? "/(tabs)/home" : "/(onboarding)/intro");
+    } catch (reason) {
+      setServiceError(reason instanceof Error ? reason.message : "프로필을 저장하지 못했어요.");
+    } finally { setLoading(false); }
   };
 
-  return <AuthLayout title="나를 소개해 주세요" subtitle={sessionKind === "guest" ? "초대 여행방에서 친구들이 알아볼 프로필이에요." : "두리에서 사용할 프로필을 설정해요."} onBack={() => router.back()} footer={<PrimaryButton label="프로필 저장" onPress={submit} />}>
+  return <AuthLayout title="나를 소개해 주세요" subtitle={sessionKind === "guest" ? "초대 여행방에서 친구들이 알아볼 프로필이에요." : "두리에서 사용할 프로필을 설정해요."} onBack={() => router.back()} footer={<PrimaryButton label="프로필 저장" loading={loading} onPress={submit} />}>
     <OnboardingProgress current={1} total={2} />
     <View style={styles.preview}><View style={styles.previewAvatar}><Text style={styles.previewEmoji}>{avatar}</Text></View><Text style={styles.previewName}>{nickname.trim() || "여행자"}</Text></View>
     <Text style={styles.label}>아바타 선택</Text>
     <View accessibilityRole="radiogroup" style={styles.avatarGrid}>{AVATAR_PRESETS.map((emoji) => <AvatarOption key={emoji} emoji={emoji} selected={avatar === emoji} onPress={() => setAvatar(emoji)} />)}</View>
     <AuthTextField ref={inputRef} label="닉네임" value={nickname} onChangeText={(value) => { setNickname(value); setError(undefined); }} error={error} helperText="2~12자로 입력해 주세요." maxLength={12} autoCapitalize="none" returnKeyType="done" onSubmitEditing={submit} />
+    <AuthErrorBanner message={serviceError} />
   </AuthLayout>;
 }
 
@@ -56,12 +66,24 @@ export function OnboardingIntroScreen() {
   const userId = useAuthSessionStore((state) => state.currentSessionUserId);
   const user = useDuriStore((state) => userId ? state.usersById[userId] : undefined);
   const name = useMemo(() => user?.name ?? "여행자", [user?.name]);
-  const skip = () => { setIntroSeen(true); router.replace("/(tabs)/home"); };
-  const startTest = () => { setIntroSeen(true); router.replace("/tests/personal"); };
+  const [serviceError, setServiceError] = useState<string | null>(null);
+  const finish = async (destination: "/(tabs)/home" | "/tests/personal") => {
+    setServiceError(null);
+    try {
+      await authService.completeOnboarding();
+      setIntroSeen(true);
+      router.replace(destination);
+    } catch (reason) {
+      setServiceError(reason instanceof Error ? reason.message : "온보딩 상태를 저장하지 못했어요.");
+    }
+  };
+  const skip = () => finish("/(tabs)/home");
+  const startTest = () => finish("/tests/personal");
   return <AuthLayout title={`${name}님, 두리와 여행을 시작해요`} subtitle="두리가 함께 여행하는 방법을 간단히 알려드릴게요." onBack={() => router.back()} footer={<View style={styles.footerGap}><PrimaryButton label="여행 성향 테스트 시작" onPress={startTest} /><SecondaryButton label="다음에 하기" onPress={skip} /></View>}>
     <DuriLogo compact />
     <OnboardingProgress current={2} total={2} />
     {introCards.map((card) => <View key={card.title} style={styles.introCard}><Text style={styles.introEmoji}>{card.emoji}</Text><View style={styles.introText}><Text style={styles.introTitle}>{card.title}</Text><Text style={styles.introBody}>{card.text}</Text></View></View>)}
+    <AuthErrorBanner message={serviceError} />
     <Pressable accessibilityRole="link" onPress={() => router.push({ pathname: "/(auth)/terms", params: { type: "service" } })}><Text style={styles.termsLink}>이용약관 확인하기</Text></Pressable>
   </AuthLayout>;
 }

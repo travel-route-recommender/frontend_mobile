@@ -13,7 +13,7 @@ export function GuestPromptModal({ visible, sessionKind, actionLabel, onClose, o
         <Text style={styles.emoji}>{guest ? "🧳" : "🔐"}</Text>
         <Text style={styles.title}>{guest ? "회원 계정이 필요해요" : "로그인하고 함께 계획해요"}</Text>
         <Text style={styles.description}>{guest ? `초대 여행은 둘러볼 수 있지만 ${actionLabel ?? "이 기능"}은 회원 가입 후 사용할 수 있어요.` : `${actionLabel ?? "이 기능"}은 로그인한 회원만 사용할 수 있어요. 지금 가입하면 저장한 여행 정보를 이어서 관리할 수 있어요.`}</Text>
-        <View style={styles.actions}><PrimaryButton label="회원가입" onPress={onSignup} /><SecondaryButton label="로그인" onPress={onLogin} /><Pressable accessibilityRole="button" onPress={onClose} style={styles.closeButton}><Text style={styles.closeText}>나중에</Text></Pressable></View>
+        <View style={styles.actions}><PrimaryButton label={guest ? "게스트 계정 업그레이드" : "회원가입"} onPress={onSignup} /><SecondaryButton label="로그인" onPress={onLogin} /><Pressable accessibilityRole="button" onPress={onClose} style={styles.closeButton}><Text style={styles.closeText}>나중에</Text></Pressable></View>
       </View>
     </View>
   </Modal>;

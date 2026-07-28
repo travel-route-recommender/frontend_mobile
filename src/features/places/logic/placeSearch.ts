@@ -1,12 +1,65 @@
 import type { EntityId, Place, Region } from "../../../domain";
 import type { PlaceSearchParams, PlaceSortOption } from "../types";
 
+const TOUR_REGION_IDS = new Set([
+  "seoul",
+  "incheon",
+  "daejeon",
+  "daegu",
+  "gwangju",
+  "busan",
+  "ulsan",
+  "sejong",
+  "gyeonggi",
+  "gangwon",
+  "chungbuk",
+  "chungnam",
+  "gyeongju",
+  "gyeongbuk",
+  "gyeongnam",
+  "jeonbuk",
+  "jeonnam",
+  "jeju",
+]);
+
 export function normalizeSearchKeyword(value: string) {
   return value.trim().replace(/\s+/g, " ").toLocaleLowerCase("ko-KR");
 }
 
 export function getPlaceCategoryLabel(category: string) {
   return category.trim() || "기타";
+}
+
+function normalizePlaceIdentityPart(value: string) {
+  return normalizeSearchKeyword(value)
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/[·ㆍ,]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getPlaceDisplayFingerprint(place: Place) {
+  const name = normalizePlaceIdentityPart(place.name);
+  const address = normalizePlaceIdentityPart(place.address);
+  if (!name || !address || address === normalizePlaceIdentityPart("주소 정보 없음")) return "";
+  return `${name}::${address}`;
+}
+
+export function dedupePlacesForDisplay(places: readonly Place[]) {
+  const seenIds = new Set<EntityId>();
+  const seenFingerprints = new Set<string>();
+  const result: Place[] = [];
+
+  places.forEach((place) => {
+    if (seenIds.has(place.id)) return;
+    const fingerprint = getPlaceDisplayFingerprint(place);
+    if (fingerprint && seenFingerprints.has(fingerprint)) return;
+    seenIds.add(place.id);
+    if (fingerprint) seenFingerprints.add(fingerprint);
+    result.push(place);
+  });
+
+  return result;
 }
 
 export function matchesPlaceKeyword(place: Place, keyword: string, region?: Region) {
@@ -19,22 +72,111 @@ export function matchesPlaceKeyword(place: Place, keyword: string, region?: Regi
   return searchable.includes(normalized);
 }
 
-export function normalizeRegionFilter(regionId: string, regionsById: Readonly<Record<EntityId, Region>>): EntityId | "all" {
-  return regionId === "all" || !regionsById[regionId] ? "all" : regionId;
+export function normalizeRegionFilter(regionId: string, _regionsById: Readonly<Record<EntityId, Region>>): EntityId | "all" {
+  return regionId === "all" || _regionsById[regionId] || TOUR_REGION_IDS.has(regionId) ? regionId : "all";
 }
 
-export function filterPlaces(places: readonly Place[], params: Pick<PlaceSearchParams, "keyword" | "regionId" | "category">, regionsById: Readonly<Record<EntityId, Region>>) {
+function matchesLocation(place: Place, regionId: EntityId | "all", district: string | "all" | undefined, regionsById: Readonly<Record<EntityId, Region>>) {
+  const normalizedRegion = normalizeRegionFilter(regionId, regionsById);
+  if (normalizedRegion !== "all" && place.regionId !== normalizedRegion) return false;
+  const normalizedDistrict = district && district !== "all" ? normalizeSearchKeyword(district) : "";
+  return !normalizedDistrict || normalizeSearchKeyword(`${place.address} ${place.name}`).includes(normalizedDistrict);
+}
+
+function dateToNumber(value?: string) {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
+  return Number(value.replace(/-/g, ""));
+}
+
+function matchesEventDateRange(place: Place, startDate?: string, endDate?: string) {
+  const filterStart = dateToNumber(startDate);
+  const filterEnd = dateToNumber(endDate) ?? filterStart;
+  if (filterStart === undefined && filterEnd === undefined) return true;
+  const eventStart = dateToNumber(place.eventStartDate) ?? dateToNumber(place.eventEndDate);
+  const eventEnd = dateToNumber(place.eventEndDate) ?? eventStart;
+  if (eventStart === undefined || eventEnd === undefined) return false;
+  return eventStart <= (filterEnd ?? Number.POSITIVE_INFINITY) && eventEnd >= (filterStart ?? Number.NEGATIVE_INFINITY);
+}
+
+export function filterPlaces(places: readonly Place[], params: Pick<PlaceSearchParams, "keyword" | "regionId" | "district" | "locations" | "category" | "categories" | "eventStartDate" | "eventEndDate">, regionsById: Readonly<Record<EntityId, Region>>) {
   const regionId = normalizeRegionFilter(params.regionId, regionsById);
+  const district = params.district && params.district !== "all" ? normalizeSearchKeyword(params.district) : "";
+  const locations = params.locations?.filter((location) => location.regionId !== "all") ?? [];
+  const categoryFilters = params.categories?.length ? params.categories : params.category !== "all" ? [params.category] : [];
   return places.filter((place) => {
-    if (regionId !== "all" && place.regionId !== regionId) return false;
-    if (params.category !== "all" && getPlaceCategoryLabel(place.category) !== params.category) return false;
+    if (locations.length) {
+      if (!locations.some((location) => matchesLocation(place, location.regionId, location.district, regionsById))) return false;
+    } else {
+      if (regionId !== "all" && place.regionId !== regionId) return false;
+      if (district && !normalizeSearchKeyword(`${place.address} ${place.name}`).includes(district)) return false;
+    }
+    if (categoryFilters.length && !categoryFilters.includes(getPlaceCategoryLabel(place.category))) return false;
+    if (!matchesEventDateRange(place, params.eventStartDate, params.eventEndDate)) return false;
     return matchesPlaceKeyword(place, params.keyword, regionsById[place.regionId]);
   });
 }
 
-export function sortPlaces(places: readonly Place[], sort: PlaceSortOption, savedPlaceIds: ReadonlySet<EntityId>) {
+function parseDistanceMeters(label?: string) {
+  if (!label) return Number.POSITIVE_INFINITY;
+  const compact = label.replace(/\s+/g, "").toLocaleLowerCase("ko-KR");
+  const match = compact.match(/^(\d+(?:\.\d+)?)(km|m)$/);
+  if (!match) return Number.POSITIVE_INFINITY;
+  const value = Number(match[1]);
+  if (!Number.isFinite(value)) return Number.POSITIVE_INFINITY;
+  return match[2] === "km" ? value * 1000 : value;
+}
+
+function getPlaceCoordinate(place?: Place) {
+  if (!place || typeof place.latitude !== "number" || typeof place.longitude !== "number") return undefined;
+  if (!Number.isFinite(place.latitude) || !Number.isFinite(place.longitude)) return undefined;
+  return { latitude: place.latitude, longitude: place.longitude };
+}
+
+function distanceBetweenMeters(left: { latitude: number; longitude: number }, right: { latitude: number; longitude: number }) {
+  const earthRadiusMeters = 6371000;
+  const toRadians = (value: number) => (value * Math.PI) / 180;
+  const dLat = toRadians(right.latitude - left.latitude);
+  const dLon = toRadians(right.longitude - left.longitude);
+  const lat1 = toRadians(left.latitude);
+  const lat2 = toRadians(right.latitude);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  return 2 * earthRadiusMeters * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function getSortableDistanceMeters(place: Place, baseCoordinate?: { latitude: number; longitude: number }) {
+  const coordinate = getPlaceCoordinate(place);
+  if (baseCoordinate && coordinate) return distanceBetweenMeters(baseCoordinate, coordinate);
+  return parseDistanceMeters(place.distanceLabel);
+}
+
+export function getPlaceDistanceMeters(place: Place, basePlace?: Place) {
+  const baseCoordinate = getPlaceCoordinate(basePlace);
+  if (!baseCoordinate) return undefined;
+  const distanceMeters = getSortableDistanceMeters(place, baseCoordinate);
+  return Number.isFinite(distanceMeters) ? distanceMeters : undefined;
+}
+
+export function getPlaceDistanceProximityLabel(place: Place, basePlace?: Place) {
+  const distanceMeters = getPlaceDistanceMeters(place, basePlace);
+  if (distanceMeters === undefined) return undefined;
+  return distanceMeters <= 1000
+    ? "1km 이내"
+    : distanceMeters <= 3000
+      ? "3km 이내"
+      : distanceMeters <= 10000
+        ? "10km 이내"
+        : distanceMeters <= 30000
+          ? "30km 이내"
+          : "30km 이상";
+}
+
+export function sortPlaces(places: readonly Place[], sort: PlaceSortOption, savedPlaceIds: ReadonlySet<EntityId>, distanceBasePlace?: Place) {
+  const baseCoordinate = getPlaceCoordinate(distanceBasePlace);
   const indexed = places.map((place, index) => ({ place, index }));
   indexed.sort((left, right) => {
+    if (sort === "popular") return left.index - right.index;
+    if (sort === "rating") return (right.place.rating ?? 0) - (left.place.rating ?? 0) || left.index - right.index;
+    if (sort === "distance") return getSortableDistanceMeters(left.place, baseCoordinate) - getSortableDistanceMeters(right.place, baseCoordinate) || left.index - right.index;
     if (sort === "name") return left.place.name.localeCompare(right.place.name, "ko") || left.place.id.localeCompare(right.place.id);
     if (sort === "saved-first") {
       const savedOrder = Number(savedPlaceIds.has(right.place.id)) - Number(savedPlaceIds.has(left.place.id));
@@ -46,7 +188,8 @@ export function sortPlaces(places: readonly Place[], sort: PlaceSortOption, save
 }
 
 export function searchPlaces(places: readonly Place[], params: PlaceSearchParams, regionsById: Readonly<Record<EntityId, Region>>, savedPlaceIds: ReadonlySet<EntityId>) {
-  return sortPlaces(filterPlaces(places, params, regionsById), params.sort, savedPlaceIds);
+  const distanceBasePlace = params.distanceBasePlaceId ? places.find((place) => place.id === params.distanceBasePlaceId) : undefined;
+  return sortPlaces(filterPlaces(places, params, regionsById), params.sort, savedPlaceIds, distanceBasePlace);
 }
 
 export function findSimilarPlaces({ place, places, limit = 3 }: { place: Place; places: readonly Place[]; limit?: number }) {

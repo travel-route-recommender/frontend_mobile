@@ -1,6 +1,6 @@
 import type { ItineraryItem, Place, Region, TripCandidate, TripRoom, User } from "../src/domain";
 import { canAddPlaceCandidate, canSavePlace } from "../src/features/places/logic/placeCapabilities";
-import { filterPlaces, findSimilarPlaces, normalizeSearchKeyword, parsePlaceCoordinate, searchPlaces } from "../src/features/places/logic/placeSearch";
+import { dedupePlacesForDisplay, filterPlaces, findSimilarPlaces, getPlaceDistanceProximityLabel, normalizeSearchKeyword, parsePlaceCoordinate, searchPlaces } from "../src/features/places/logic/placeSearch";
 import { buildPlaceCardViewModel, selectCandidateStateForPlace, selectResolvedSavedPlaces } from "../src/features/places/selectors/placeSelectors";
 import { toggleUniqueId } from "../src/utils/entityRelations";
 
@@ -28,6 +28,7 @@ assert(filterPlaces(places, { keyword: "", regionId: "jeju", category: "all" }, 
 assert(filterPlaces(places, { keyword: "", regionId: "all", category: "카페" }, regions).length === 1, "6. 실제 category 필터가 동작해야 한다");
 assert(filterPlaces(places, { keyword: "없는 장소", regionId: "all", category: "all" }, regions).length === 0, "7. 검색 결과 없음이 빈 배열이어야 한다");
 assert(filterPlaces(places, { keyword: "", regionId: "invalid", category: "all" }, regions).length === 3, "8. 잘못된 regionId는 전체로 fallback해야 한다");
+assert(dedupePlacesForDisplay([places[0], { ...places[0], id: "cafe-copy" }, places[1], places[0]]).map((place) => place.id).join() === "cafe,market", "페이지 병합 시 장소 중복을 제거해야 한다");
 
 assert(toggleUniqueId([], "cafe").join() === "cafe", "9. 저장 ID를 추가해야 한다");
 assert(toggleUniqueId(["cafe"], "cafe").length === 0, "10. 저장 ID를 해제해야 한다");
@@ -47,6 +48,7 @@ assert(!canSavePlace("anonymous", undefined, places[0]).allowed && !canAddPlaceC
 assert(!canSavePlace("guest", users.owner, places[0]).allowed && canAddPlaceCandidate({ sessionKind: "guest", currentUserId: "owner", trip: trip("trip-a"), place: places[0], candidates: [], itinerary: [] }).allowed, "20. guest는 개인 저장 없이 참여 여행방 후보 추가가 가능해야 한다");
 
 assert(parsePlaceCoordinate({ latitude: "35.1", longitude: "129.1" })?.latitude === 35.1 && parsePlaceCoordinate({ latitude: 0, longitude: 0 }) === undefined && parsePlaceCoordinate({ latitude: 91, longitude: 0 }) === undefined, "21. 좌표 범위와 0,0을 검증해야 한다");
+assert(getPlaceDistanceProximityLabel({ ...places[1], latitude: 35.012, longitude: 129 }, { ...places[0], latitude: 35, longitude: 129 }) === "3km 이내", "거리순 카드에는 구간형 거리만 표시해야 한다");
 const similar = findSimilarPlaces({ place: places[0], places, limit: 3 });
 assert(!similar.some((place) => place.id === "cafe") && similar[0]?.id === "market", "22. 유사 장소는 현재 장소를 제외하고 같은 지역을 우선해야 한다");
 assert(buildPlaceCardViewModel(baseState, "invalid") === null, "23. 잘못된 placeId ViewModel은 null이어야 한다");
@@ -55,4 +57,4 @@ assert(searchPlaces(places, { keyword: "", regionId: "all", category: "all", sor
 assert(searchPlaces(places, { keyword: "", regionId: "all", category: "all", sort: "saved-first" }, regions, new Set(["market"]))[0]?.id === "market", "저장 우선 정렬이 동작해야 한다");
 assert(selectCandidateStateForPlace({ candidatesByTripId: { "trip-a": [candidate] }, itineraryByTripId: { "trip-a": [itinerary] } }, "trip-a", "cafe") === "scheduled", "일정 관계가 candidate보다 우선해야 한다");
 
-console.log("Place flow verification passed: 23 scenarios + sorting and scheduled assertions");
+console.log("Place flow verification passed: 25 scenarios + sorting and scheduled assertions");

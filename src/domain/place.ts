@@ -16,8 +16,12 @@ export type Place = {
   name: string;
   category: string;
   tags: string[];
-  rating: number;
+  rating?: number;
   distanceLabel: string;
+  latitude?: number;
+  longitude?: number;
+  eventStartDate?: string;
+  eventEndDate?: string;
   imageUrl: string;
   address: string;
   summary: string;

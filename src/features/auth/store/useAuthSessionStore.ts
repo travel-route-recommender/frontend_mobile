@@ -1,13 +1,14 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { nativeTokenStorage } from "../../../services/tokenStorage";
-import type { AuthStatus, SessionKind } from "../types";
+import type { AuthProvider, AuthStatus, SessionKind } from "../types";
 
-export const AUTH_SESSION_STORAGE_VERSION = 1;
+export const AUTH_SESSION_STORAGE_VERSION = 2;
 
 type SessionInput = {
   userId: string;
+  sessionKind: "member" | "guest";
+  provider: AuthProvider;
   profileCompleted: boolean;
   onboardingIntroSeen: boolean;
   preferenceTestCompleted: boolean;
@@ -17,25 +18,26 @@ export interface AuthSessionState {
   sessionKind: SessionKind | null;
   authStatus: AuthStatus;
   currentSessionUserId: string | null;
+  provider: AuthProvider | null;
   profileCompleted: boolean;
   onboardingIntroSeen: boolean;
   preferenceTestCompleted: boolean;
   isHydrated: boolean;
   errorMessage: string | null;
-  startAnonymousSession(): void;
-  startMockMemberSession(input: SessionInput): void;
-  startMockGuestSession(input: SessionInput): void;
+  startSession(input: SessionInput): void;
   restoreSession(): void;
+  markStoredSessionReady(): void;
+  setAuthLoading(): void;
   setProfileCompleted(completed: boolean): void;
   setOnboardingIntroSeen(seen: boolean): void;
   setPreferenceTestCompleted(completed: boolean): void;
   setAuthError(message: string): void;
   clearAuthError(): void;
   setHydrated(hydrated: boolean): void;
-  logout(): Promise<void>;
+  clearSession(): void;
 }
 
-type PersistedSession = Pick<AuthSessionState, "sessionKind" | "authStatus" | "currentSessionUserId" | "profileCompleted" | "onboardingIntroSeen" | "preferenceTestCompleted">;
+type PersistedSession = Pick<AuthSessionState, "sessionKind" | "authStatus" | "currentSessionUserId" | "provider" | "profileCompleted" | "onboardingIntroSeen" | "preferenceTestCompleted">;
 type UnknownRecord = Record<string, unknown>;
 const isRecord = (value: unknown): value is UnknownRecord => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
@@ -43,6 +45,7 @@ const initialSession = {
   sessionKind: null,
   authStatus: "unauthenticated",
   currentSessionUserId: null,
+  provider: null,
   profileCompleted: false,
   onboardingIntroSeen: false,
   preferenceTestCompleted: false,
@@ -50,16 +53,21 @@ const initialSession = {
 
 export function normalizePersistedAuthSession(value: unknown): PersistedSession {
   if (!isRecord(value)) return initialSession;
-  const sessionKind = value.sessionKind === "anonymous" || value.sessionKind === "guest" || value.sessionKind === "member" ? value.sessionKind : null;
+  // v1의 anonymous 둘러보기 세션은 실제 인증 세션이 아니므로 마이그레이션하지 않는다.
+  const sessionKind = value.sessionKind === "guest" || value.sessionKind === "member" ? value.sessionKind : null;
   const userId = typeof value.currentSessionUserId === "string" && value.currentSessionUserId ? value.currentSessionUserId : null;
-  if (!sessionKind || ((sessionKind === "guest" || sessionKind === "member") && !userId)) return initialSession;
+  if (!sessionKind || !userId) return initialSession;
+  const provider = value.provider === "email" || value.provider === "google" || value.provider === "kakao" || value.provider === "guest"
+    ? value.provider
+    : sessionKind === "guest" ? "guest" : "email";
   return {
     sessionKind,
-    authStatus: "authenticated",
-    currentSessionUserId: sessionKind === "anonymous" ? null : userId,
-    profileCompleted: sessionKind === "anonymous" ? false : Boolean(value.profileCompleted),
-    onboardingIntroSeen: sessionKind === "anonymous" ? false : Boolean(value.onboardingIntroSeen),
-    preferenceTestCompleted: sessionKind === "anonymous" ? false : Boolean(value.preferenceTestCompleted),
+    authStatus: "idle",
+    currentSessionUserId: userId,
+    provider,
+    profileCompleted: Boolean(value.profileCompleted),
+    onboardingIntroSeen: Boolean(value.onboardingIntroSeen),
+    preferenceTestCompleted: Boolean(value.preferenceTestCompleted),
   };
 }
 
@@ -69,20 +77,17 @@ export const useAuthSessionStore = create<AuthSessionState>()(
       ...initialSession,
       isHydrated: false,
       errorMessage: null,
-      startAnonymousSession: () => set({ ...initialSession, sessionKind: "anonymous", authStatus: "authenticated", isHydrated: true }),
-      startMockMemberSession: (input) => set({ sessionKind: "member", authStatus: "authenticated", currentSessionUserId: input.userId, profileCompleted: input.profileCompleted, onboardingIntroSeen: input.onboardingIntroSeen, preferenceTestCompleted: input.preferenceTestCompleted, errorMessage: null }),
-      startMockGuestSession: (input) => set({ sessionKind: "guest", authStatus: "authenticated", currentSessionUserId: input.userId, profileCompleted: input.profileCompleted, onboardingIntroSeen: input.onboardingIntroSeen, preferenceTestCompleted: input.preferenceTestCompleted, errorMessage: null }),
-      restoreSession: () => set((state) => ({ isHydrated: true, authStatus: state.sessionKind ? "authenticated" : "unauthenticated" })),
+      startSession: (input) => set({ sessionKind: input.sessionKind, provider: input.provider, authStatus: "authenticated", currentSessionUserId: input.userId, profileCompleted: input.profileCompleted, onboardingIntroSeen: input.onboardingIntroSeen, preferenceTestCompleted: input.preferenceTestCompleted, errorMessage: null, isHydrated: true }),
+      restoreSession: () => set((state) => ({ isHydrated: true, authStatus: state.sessionKind ? "idle" : "unauthenticated" })),
+      markStoredSessionReady: () => set((state) => ({ authStatus: state.sessionKind ? "authenticated" : "unauthenticated", errorMessage: null })),
+      setAuthLoading: () => set({ authStatus: "loading", errorMessage: null }),
       setProfileCompleted: (profileCompleted) => set({ profileCompleted }),
       setOnboardingIntroSeen: (onboardingIntroSeen) => set({ onboardingIntroSeen }),
       setPreferenceTestCompleted: (preferenceTestCompleted) => set({ preferenceTestCompleted }),
       setAuthError: (errorMessage) => set({ authStatus: "error", errorMessage }),
       clearAuthError: () => set({ errorMessage: null, authStatus: get().sessionKind ? "authenticated" : "unauthenticated" }),
       setHydrated: (isHydrated) => set({ isHydrated }),
-      logout: async () => {
-        set({ authStatus: "loading" });
-        try { await nativeTokenStorage.clearTokens(); } finally { set({ ...initialSession, isHydrated: true, errorMessage: null }); }
-      },
+      clearSession: () => set({ ...initialSession, isHydrated: true, errorMessage: null }),
     }),
     {
       name: "duri-auth-session",
@@ -106,6 +111,7 @@ export const useAuthSessionStore = create<AuthSessionState>()(
         sessionKind: state.sessionKind,
         authStatus: state.authStatus,
         currentSessionUserId: state.currentSessionUserId,
+        provider: state.provider,
         profileCompleted: state.profileCompleted,
         onboardingIntroSeen: state.onboardingIntroSeen,
         preferenceTestCompleted: state.preferenceTestCompleted,
