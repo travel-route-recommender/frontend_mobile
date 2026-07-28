@@ -8,7 +8,7 @@ import {
   WORKSPACE_START_MINUTES,
 } from "../../../data/workspaceSchedule";
 import { findNextAvailableSlot, sortItineraryItemsByDateAndTime } from "../../../utils/schedule";
-import type { ItineraryMoveDirection, WorkspaceDate } from "../types";
+import type { ItineraryMoveDirection, TripDayMoveDirection, WorkspaceDate } from "../types";
 
 const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -43,6 +43,166 @@ export function addDaysToDate(date: string | null | undefined, days: number) {
   if (!isValidDateOnly(date) || !Number.isInteger(days)) return null;
   const next = Date.parse(`${date}T00:00:00Z`) + days * 86_400_000;
   return new Date(next).toISOString().slice(0, 10);
+}
+
+type TripDayScheduleSuccess = {
+  status: "success";
+  startDate: string;
+  endDate: string;
+  items: ItineraryItem[];
+  selectedDate: string;
+  removedItineraryCount: number;
+};
+
+export type TripDayScheduleResult = TripDayScheduleSuccess | {
+  status: "invalid-date" | "invalid-itinerary" | "boundary";
+  items: ItineraryItem[];
+};
+
+function dateValues(startDate: string | null | undefined, endDate: string | null | undefined) {
+  return buildTripDateRange(startDate, endDate).map((date) => date.date);
+}
+
+function itineraryUsesOnlyDates(items: readonly ItineraryItem[], dates: readonly string[]) {
+  const allowedDates = new Set(dates);
+  return items.every((item) => allowedDates.has(item.date));
+}
+
+export function removeTripDayFromSchedule(
+  items: readonly ItineraryItem[],
+  startDate: string | null | undefined,
+  endDate: string | null | undefined,
+  removedDate: string,
+): TripDayScheduleResult {
+  const currentDates = dateValues(startDate, endDate);
+  const removedIndex = currentDates.indexOf(removedDate);
+  if (removedIndex < 0) return { status: "invalid-date", items: [...items] };
+  if (currentDates.length <= 1) return { status: "boundary", items: [...items] };
+  if (!itineraryUsesOnlyDates(items, currentDates)) return { status: "invalid-itinerary", items: [...items] };
+
+  const remainingSourceDates = currentDates.filter((date) => date !== removedDate);
+  const nextStartDate = removedIndex === 0 ? remainingSourceDates[0] : currentDates[0];
+  const nextEndDate = removedIndex === 0
+    ? currentDates[currentDates.length - 1]
+    : addDaysToDate(currentDates[currentDates.length - 1], -1);
+  if (!nextStartDate || !nextEndDate) return { status: "invalid-date", items: [...items] };
+
+  const nextDates = dateValues(nextStartDate, nextEndDate);
+  if (nextDates.length !== remainingSourceDates.length) return { status: "invalid-date", items: [...items] };
+  const dateMap = new Map(remainingSourceDates.map((date, index) => [date, nextDates[index]]));
+  const keptItems = items
+    .filter((item) => item.date !== removedDate)
+    .map((item) => ({ ...item, date: dateMap.get(item.date) ?? item.date }));
+
+  return {
+    status: "success",
+    startDate: nextStartDate,
+    endDate: nextEndDate,
+    items: normalizeItineraryOrder(keptItems),
+    selectedDate: nextDates[Math.min(removedIndex, nextDates.length - 1)],
+    removedItineraryCount: items.length - keptItems.length,
+  };
+}
+
+export function moveTripDaySchedule(
+  items: readonly ItineraryItem[],
+  startDate: string | null | undefined,
+  endDate: string | null | undefined,
+  sourceDate: string,
+  direction: TripDayMoveDirection,
+): TripDayScheduleResult {
+  const dates = dateValues(startDate, endDate);
+  const sourceIndex = dates.indexOf(sourceDate);
+  if (sourceIndex < 0) return { status: "invalid-date", items: [...items] };
+  if (!itineraryUsesOnlyDates(items, dates)) return { status: "invalid-itinerary", items: [...items] };
+  const targetIndex = direction === "previous" ? sourceIndex - 1 : sourceIndex + 1;
+  const targetDate = dates[targetIndex];
+  if (!targetDate) return { status: "boundary", items: [...items] };
+
+  const swapped = items.map((item) => {
+    if (item.date === sourceDate) return { ...item, date: targetDate };
+    if (item.date === targetDate) return { ...item, date: sourceDate };
+    return item;
+  });
+  return {
+    status: "success",
+    startDate: dates[0],
+    endDate: dates[dates.length - 1],
+    items: normalizeItineraryOrder(swapped),
+    selectedDate: targetDate,
+    removedItineraryCount: 0,
+  };
+}
+
+export function moveTripDayScheduleToIndex(
+  items: readonly ItineraryItem[],
+  startDate: string | null | undefined,
+  endDate: string | null | undefined,
+  sourceDate: string,
+  targetIndex: number,
+): TripDayScheduleResult {
+  const dates = dateValues(startDate, endDate);
+  const sourceIndex = dates.indexOf(sourceDate);
+  if (sourceIndex < 0) return { status: "invalid-date", items: [...items] };
+  if (!itineraryUsesOnlyDates(items, dates)) return { status: "invalid-itinerary", items: [...items] };
+  if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= dates.length) {
+    return { status: "boundary", items: [...items] };
+  }
+  if (sourceIndex === targetIndex) {
+    return {
+      status: "success",
+      startDate: dates[0],
+      endDate: dates[dates.length - 1],
+      items: normalizeItineraryOrder(items),
+      selectedDate: sourceDate,
+      removedItineraryCount: 0,
+    };
+  }
+
+  const planOrder = [...dates];
+  const [movedPlanDate] = planOrder.splice(sourceIndex, 1);
+  planOrder.splice(targetIndex, 0, movedPlanDate);
+  const dateMap = new Map(planOrder.map((planDate, slotIndex) => [planDate, dates[slotIndex]]));
+  const moved = items.map((item) => ({ ...item, date: dateMap.get(item.date) ?? item.date }));
+  return {
+    status: "success",
+    startDate: dates[0],
+    endDate: dates[dates.length - 1],
+    items: normalizeItineraryOrder(moved),
+    selectedDate: dates[targetIndex],
+    removedItineraryCount: 0,
+  };
+}
+
+export function remapScheduleToTripDateRange(
+  items: readonly ItineraryItem[],
+  currentStartDate: string | null | undefined,
+  currentEndDate: string | null | undefined,
+  nextStartDate: string | null | undefined,
+  nextEndDate: string | null | undefined,
+  selectedDate?: string,
+): TripDayScheduleResult {
+  const currentDates = dateValues(currentStartDate, currentEndDate);
+  const nextDates = dateValues(nextStartDate, nextEndDate);
+  if (!currentDates.length || !nextDates.length || !nextStartDate || !nextEndDate) {
+    return { status: "invalid-date", items: [...items] };
+  }
+  if (!itineraryUsesOnlyDates(items, currentDates)) return { status: "invalid-itinerary", items: [...items] };
+
+  const nextItems = items.flatMap((item) => {
+    const dayIndex = currentDates.indexOf(item.date);
+    const date = nextDates[dayIndex];
+    return date ? [{ ...item, date }] : [];
+  });
+  const selectedDayIndex = Math.max(currentDates.indexOf(selectedDate ?? currentDates[0]), 0);
+  return {
+    status: "success",
+    startDate: nextStartDate,
+    endDate: nextEndDate,
+    items: normalizeItineraryOrder(nextItems),
+    selectedDate: nextDates[Math.min(selectedDayIndex, nextDates.length - 1)],
+    removedItineraryCount: items.length - nextItems.length,
+  };
 }
 
 export function parseTimeToMinutes(value: string): number | null {
@@ -130,10 +290,10 @@ export function validateTimeRange(startTime: string, endTime: string): TimeRange
     return { valid: false, message: "일정 시간은 08:00부터 24:00 사이에서 설정해 주세요." };
   }
   if (start % SLOT_MINUTES !== 0 || end % SLOT_MINUTES !== 0) {
-    return { valid: false, message: "시간은 30분 단위로 설정해 주세요." };
+    return { valid: false, message: `시간은 ${SLOT_MINUTES}분 단위로 설정해 주세요.` };
   }
   const durationMinutes = end - start;
-  if (durationMinutes < MIN_DURATION_MINUTES) return { valid: false, message: "종료 시간은 시작 시간보다 30분 이상 뒤여야 해요." };
+  if (durationMinutes < MIN_DURATION_MINUTES) return { valid: false, message: `종료 시간은 시작 시간보다 ${MIN_DURATION_MINUTES}분 이상 뒤여야 해요.` };
   return { valid: true, durationMinutes };
 }
 

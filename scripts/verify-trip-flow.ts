@@ -1,4 +1,11 @@
 import type { Region, TripRoom, User } from "../src/domain";
+import {
+  buildTripInviteUrl,
+  createMockTripInviteCode,
+  createTripInviteRecord,
+  resolveMockTripInvite,
+} from "../src/features/invitations/logic/tripInviteLinks";
+import { buildWebInviteShareData } from "../src/features/invitations/logic/inviteShareMessage";
 import { calculateTripPreparationProgress } from "../src/features/trips/logic/calculateTripPreparationProgress";
 import { selectTripRoomCardViewModel } from "../src/features/trips/selectors";
 import { getTripDayCount } from "../src/features/trips/utils/tripDateUtils";
@@ -6,6 +13,7 @@ import { buildInitialTripDays, mapDraftToCreateTripRoomRequest } from "../src/fe
 import { createTripDraftEditCopy, getRegionSelectionPatch, getTripEditCommitPatch } from "../src/features/trip-creation/logic/tripDraftEditing";
 import { buildCalendarMonth, moveCalendarMonth, selectTripDateRange } from "../src/features/trip-creation/logic/tripDateRange";
 import { createTripRoomService, validateCreateTripRoomRequest } from "../src/features/trip-creation/services/createTripRoomService";
+import { normalizeCreateTripDraft } from "../src/features/trip-creation/store/useCreateTripDraftStore";
 import { createRegionService, mapRegionToOption } from "../src/features/trip-creation/services/regionService";
 import { normalizeInvitedUserIds, validateCreateTripDraft } from "../src/features/trip-creation/validation/validateCreateTripDraft";
 import type { CreateTripDraft } from "../src/features/trip-creation/types";
@@ -38,8 +46,8 @@ function createDraft(overrides: Partial<CreateTripDraft> = {}): CreateTripDraft 
     endDate: "2026-08-02",
     dateUndecided: false,
     transport: "public",
-    budgetLevel: "standard",
-    intensity: "balanced",
+    accommodationLocation: "",
+    endCondition: null,
     companionType: "friends",
     expectedMemberCount: null,
     selectedMemberUserIds: [],
@@ -62,7 +70,21 @@ async function main() {
   assert(validateCreateTripDraft(createDraft({ dateUndecided: true, startDate: null, endDate: null }), validationContext) === undefined, "날짜 미정 Draft는 null/null 조합만 허용해야 한다");
   assert(validateCreateTripDraft(createDraft({ dateUndecided: true, startDate: "2026-08-01", endDate: null }), validationContext)?.includes("함께 저장"), "날짜 미정과 실제 범위를 함께 저장하면 안 된다");
   assert(validateCreateTripDraft(createDraft({ roomName: "   " }), validationContext)?.includes("이름"), "공백 여행방 이름은 거부해야 한다");
+  assert(validateCreateTripDraft(createDraft({ transport: null }), validationContext)?.includes("이동 방식"), "새 여행방은 실제 이동 방식을 명시적으로 선택해야 한다");
+  const endCondition = { type: "train" as const, location: "부산역", deadline: "18:30", travelMinutes: "45", serviceBufferMinutes: "30", note: "승강장 이동" };
+  assert(validateCreateTripDraft(createDraft({ endCondition }), validationContext) === undefined, "완성된 종료 조건은 생성 validation을 통과해야 한다");
+  assert(validateCreateTripDraft(createDraft({ endCondition: { ...endCondition, deadline: "18:20" } }), validationContext)?.includes("15분"), "종료 시각은 15분 단위여야 한다");
+  assert(validateCreateTripDraft(createDraft({ endCondition: { ...endCondition, travelMinutes: "" } }), validationContext)?.includes("이동시간"), "예상 이동시간은 빈 값일 수 없다");
+  assert(validateCreateTripDraft(createDraft({ dateUndecided: true, startDate: null, endDate: null, endCondition }), validationContext)?.includes("종료 조건"), "날짜 미정 여행에는 종료 조건을 함께 저장하면 안 된다");
   assert(normalizeInvitedUserIds(["friend", "friend", "owner", "missing"], "owner", users).join(",") === "friend", "동행자는 중복·방장·없는 사용자를 제거해야 한다");
+
+  const migratedLegacyDraft = normalizeCreateTripDraft({ ...createDraft(), configVersion: 2, transport: "walking", budgetLevel: "premium", intensity: "packed" }).draft;
+  assert(migratedLegacyDraft?.configVersion === CREATE_TRIP_DRAFT_VERSION && migratedLegacyDraft.transport === "public", "v2 walking 초안은 v3 대중교통·도보 사실값으로 이관해야 한다");
+  assert(migratedLegacyDraft && !("budgetLevel" in migratedLegacyDraft) && !("intensity" in migratedLegacyDraft), "v3 생성 초안에는 개인 예산·밀도 성향을 이관하지 않아야 한다");
+  const normalizedUndecidedDraft = normalizeCreateTripDraft({ ...createDraft({ endCondition }), dateUndecided: true, startDate: null, endDate: null }).draft;
+  assert(normalizedUndecidedDraft?.endCondition === null, "persisted v3 초안도 날짜 미정이면 종료 조건을 제거해야 한다");
+  const normalizedInvalidTransport = normalizeCreateTripDraft({ ...createDraft(), transport: "airplane" }).draft;
+  assert(normalizedInvalidTransport?.transport === null, "v3 초안의 알 수 없는 이동 방식을 기본값으로 추측하면 안 된다");
 
   const firstSelection = selectTripDateRange(null, null, "2026-07-22");
   assert(firstSelection.startDate === "2026-07-22" && firstSelection.endDate === null, "달력 첫 선택은 시작일이어야 한다");
@@ -81,20 +103,28 @@ async function main() {
   const customNamePatch = getRegionSelectionPatch(customDraft, "busan", "부산");
   assert(customNamePatch.roomName === undefined, "사용자 이름은 지역 변경으로 덮어쓰면 안 된다");
 
-  const baseDraft = createDraft();
+  const baseDraft = createDraft({ accommodationLocation: "부산역 호텔", endCondition });
   const editCopy = createTripDraftEditCopy(baseDraft);
   editCopy.startDate = "2026-09-01";
   editCopy.endDate = "2026-09-01";
   assert(baseDraft.startDate === "2026-08-01", "edit local copy 변경은 원본 Draft를 바꾸지 않아야 한다");
+  if (editCopy.endCondition) editCopy.endCondition.location = "부산종합버스터미널";
+  assert(baseDraft.endCondition?.location === "부산역", "edit copy의 종료 조건 변경은 원본 nested 값을 바꾸지 않아야 한다");
   const dateCommit = getTripEditCommitPatch(1, editCopy);
   const committedDraft = { ...baseDraft, ...dateCommit };
   assert(committedDraft.startDate === "2026-09-01" && committedDraft.regionId === baseDraft.regionId && committedDraft.roomName === baseDraft.roomName, "날짜 수정 완료는 날짜만 반영하고 다른 값을 유지해야 한다");
 
   const regionOption = mapRegionToOption(regions.busan);
-  const request = mapDraftToCreateTripRoomRequest(createDraft({ selectedMemberUserIds: ["friend"] }), regionOption, ["friend"]);
+  const request = mapDraftToCreateTripRoomRequest(createDraft({ selectedMemberUserIds: ["friend"], accommodationLocation: "부산역 호텔", endCondition }), regionOption, ["friend"]);
   assert(request.name === "부산 여행" && request.regionId === "busan" && request.expectedMemberCount === 2, "Draft mapper는 이름·지역·실제 선택 인원을 request로 옮겨야 한다");
-  assert(request.travelStyles.join(",") === "transport:public,budget:standard,intensity:balanced", "기존 세 조건은 mock request travelStyles로 명시적으로 매핑해야 한다");
+  assert(request.transport === "public" && request.accommodationLocation?.name === "부산역 호텔", "Draft mapper는 실제 이동 방식과 선택 숙소를 request로 옮겨야 한다");
+  assert(request.endCondition?.location.name === "부산역" && request.endCondition.travelMinutes === 45 && request.endCondition.serviceBufferMinutes === 30, "Draft mapper는 종료 조건의 숫자형 사실 정보를 손실 없이 변환해야 한다");
+  assert(!("budgetLevel" in request) && !("intensity" in request), "여행방 생성 request에는 개인 성향 필드를 포함하면 안 된다");
   assert(validateCreateTripRoomRequest(request) === undefined, "완성된 mock request는 service validation을 통과해야 한다");
+  assert(validateCreateTripRoomRequest({ ...request, dateUndecided: true, startDate: null, endDate: null })?.includes("종료 조건"), "service도 날짜 미정과 종료 조건의 동시 저장을 막아야 한다");
+  let invalidMapperRejected = false;
+  try { mapDraftToCreateTripRoomRequest(createDraft({ endCondition: { ...endCondition, travelMinutes: "" } }), regionOption, []); } catch { invalidMapperRejected = true; }
+  assert(invalidMapperRejected, "mapper를 직접 호출해도 빈 예상 이동시간을 숫자 0으로 위장하면 안 된다");
 
   let createCallCount = 0;
   const service = createTripRoomService("mock", () => { createCallCount += 1; return "trip-created"; });
@@ -117,7 +147,26 @@ async function main() {
   const card = selectTripRoomCardViewModel(selectorSource, "sooner", "2026-07-31");
   assert(card?.memberCount === 1 && card.timingLabel === "D-1" && card.destinationName === "부산", "카드 ViewModel은 관계와 D-day를 파생해야 한다");
 
-  console.log("Trip flow verification passed: 29 creation, date, edit, mapper, service, region, sorting, and ViewModel checks");
+  const firstInvite = createTripInviteRecord("sooner", 1);
+  const rotatedInvite = createTripInviteRecord("sooner", 2);
+  assert(firstInvite.code.length === 8 && firstInvite.code === createMockTripInviteCode("sooner", 1), "초대 코드는 여행방과 revision으로부터 결정적으로 생성되어야 한다");
+  assert(rotatedInvite.code !== firstInvite.code && rotatedInvite.revision === 2, "새 링크 발급은 revision과 코드를 함께 바꿔야 한다");
+  assert(buildTripInviteUrl(firstInvite) === `tripmatch://invite/${firstInvite.code}?tripId=sooner&revision=1`, "초대 링크는 코드·여행방·revision을 모두 전달해야 한다");
+  const webShareData = buildWebInviteShareData({ inviteUrl: buildTripInviteUrl(firstInvite), tripTitle: "부산 여행", code: firstInvite.code });
+  assert(!("url" in webShareData) && webShareData.text.includes(buildTripInviteUrl(firstInvite)), "Web Share는 custom scheme을 url 필드가 아닌 text로 전달해야 한다");
+
+  const activeLinks = { sooner: firstInvite };
+  const explicitInvite = resolveMockTripInvite({ code: firstInvite.code, tripId: "sooner", revision: "1" }, tripsById, activeLinks);
+  assert(explicitInvite.status === "success" && explicitInvite.trip.id === "sooner", "활성 공유 링크는 지정한 여행방으로 해석되어야 한다");
+  const manualInvite = resolveMockTripInvite({ code: firstInvite.code }, tripsById, activeLinks);
+  assert(manualInvite.status === "success" && manualInvite.trip.id === "sooner", "활성 초대 코드는 수동 입력으로도 같은 여행방을 찾아야 한다");
+  assert(resolveMockTripInvite({ code: firstInvite.code, tripId: "sooner", revision: 1 }, tripsById, { sooner: rotatedInvite }).status === "stale", "교체 전 링크는 최신 링크가 존재하면 거부해야 한다");
+  assert(resolveMockTripInvite({ code: rotatedInvite.code, tripId: "sooner", revision: 2 }, tripsById, { sooner: { ...rotatedInvite, status: "disabled" } }).status === "disabled", "사용 중지한 링크는 참여를 거부해야 한다");
+  const completedInvite = createTripInviteRecord("latestDone", 1);
+  assert(resolveMockTripInvite({ code: completedInvite.code, tripId: "latestDone", revision: 1 }, tripsById, { latestDone: completedInvite }).status === "closed", "완료 여행방 초대는 활성 코드여도 거부해야 한다");
+  assert(resolveMockTripInvite({ code: "AAAAAAAA", tripId: "sooner", revision: 1 }, tripsById, {}).status === "invalid", "위조된 code와 여행방 조합은 거부해야 한다");
+
+  console.log("Trip flow verification passed: creation, date, edit, mapper, service, region, sorting, ViewModel, and invite lifecycle checks");
 }
 
 void main().catch((error: unknown) => { throw error; });

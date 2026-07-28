@@ -394,9 +394,20 @@ class MockAuthService implements AuthService {
     return { roomId: DEMO_INVITED_TRIP_ID, title: "부산 맛집 여행", destination: "부산", memberCount: 3 };
   }
   async joinByInvite(input: InviteJoinInput): Promise<AuthResult> {
-    if (normalizeInviteCode(input.code) !== DEMO_INVITE_CODE) return { status: "error", code: "invalid-invite", message: "사용할 수 없는 데모 초대 코드예요." };
-    const user: User = { id: DEMO_GUEST_USER_ID, name: input.nickname.trim(), initial: initial(input.nickname) };
-    return { status: "success", sessionKind: "guest", provider: "guest", user, profileCompleted: true, onboardingIntroSeen: true, preferenceTestCompleted: false, invitedTripId: DEMO_INVITED_TRIP_ID };
+    const code = normalizeInviteCode(input.code);
+    const tripId = input.tripId ?? (code === DEMO_INVITE_CODE ? DEMO_INVITED_TRIP_ID : undefined);
+    if (!/^[A-Z0-9]{8}$/.test(code) || !tripId) {
+      return { status: "error", code: "invalid-invite", message: "사용할 수 없는 초대 코드예요." };
+    }
+    const isDemoGuest = code === DEMO_INVITE_CODE && tripId === DEMO_INVITED_TRIP_ID;
+    const stableGuestSuffix = createStableMockUserId(`${tripId}.${code}@invite.duri`).replace("mock-member-", "");
+    const name = input.nickname.trim() || (isDemoGuest ? "게스트 여행자" : "초대 게스트");
+    const user: User = {
+      id: isDemoGuest ? DEMO_GUEST_USER_ID : `guest-invite-${stableGuestSuffix}`,
+      name,
+      initial: initial(name),
+    };
+    return { status: "success", sessionKind: "guest", provider: "guest", user, profileCompleted: true, onboardingIntroSeen: true, preferenceTestCompleted: false, invitedTripId: tripId };
   }
   async acceptInvite() { return DEMO_INVITED_TRIP_ID; }
   async loginWithSocial(provider: SocialProvider) { return { ...this.demoMember(), provider } as AuthSuccess; }

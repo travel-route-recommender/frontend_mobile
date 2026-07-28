@@ -35,7 +35,7 @@ Expo SDK 57의 Expo Router를 사용한다. `app/`은 route 선언과 parameter 
 
 ## Store와 persist
 
-웹의 normalized 구조를 유지한다. 상태에는 사용자, 지역, 장소, 여행방, 후보, 일정, 성향 결과, legacy 분석 cache 자리와 사용자별 저장 ID가 있다. `zustand/middleware`의 `createJSONStorage`와 AsyncStorage를 사용하며 storage key는 `duri-mobile-store`다. persist와 domain schema는 공통 `CURRENT_SCHEMA_VERSION = 4`를 사용한다. migration은 알려지지 않은 저장값을 검증하고 normalized relation을 복구한다.
+웹의 normalized 구조를 유지한다. 상태에는 사용자, 지역, 장소, 여행방, 후보, 일정, 성향 결과, legacy 분석 cache 자리와 사용자별 저장 ID가 있다. `zustand/middleware`의 `createJSONStorage`와 AsyncStorage를 사용하며 storage key는 `duri-mobile-store`다. persist와 domain schema는 공통 `CURRENT_SCHEMA_VERSION = 5`를 사용한다. schema 5는 여행방의 선택 숙소·마지막 날 종료 조건을 정규화하고 legacy `walking` 이동 방식을 `public`으로 이관한다. migration은 알려지지 않은 저장값을 검증하고 normalized relation을 복구한다.
 
 `skipHydration`으로 자동 초기화를 끄고 root layout에서 명시적으로 rehydrate한다. hydrate가 끝나기 전에는 빈 상태나 route redirect를 렌더하지 않는다. 복구 실패 시 재시도 가능한 ErrorState를 표시한다.
 

@@ -29,8 +29,18 @@ export function validateTrips(domain: DuriDomainState): StateIntegrityIssue[] {
     }
     if (trip.dateUndecided) {
       if (trip.startDate !== null || trip.endDate !== null) issues.push(issue("error", "trip.date-undecided-range-present", "trip", "날짜 미정 여행방에 날짜 범위가 함께 저장되어 있습니다.", tripKey));
+      if (trip.endCondition) issues.push(issue("error", "trip.date-undecided-end-condition-present", "trip", "날짜 미정 여행방에 종료 조건이 저장되어 있습니다.", tripKey));
     } else if (!isValidISODate(trip.startDate) || !isValidISODate(trip.endDate) || trip.endDate < trip.startDate) {
       issues.push(issue("error", "trip.date-range-invalid", "trip", "여행방 날짜 범위가 올바르지 않습니다.", tripKey));
+    }
+    if (trip.accommodationLocation && !trip.accommodationLocation.name.trim()) {
+      issues.push(issue("error", "trip.accommodation-location-invalid", "trip", "숙소 위치 이름이 비어 있습니다.", tripKey));
+    }
+    if (trip.endCondition) {
+      if (!trip.endCondition.location.name.trim()) issues.push(issue("error", "trip.end-condition-location-invalid", "trip", "여행 종료 지점이 비어 있습니다.", tripKey));
+      if (!/^([01]\d|2[0-3]):(?:00|15|30|45)$/.test(trip.endCondition.deadline)) issues.push(issue("error", "trip.end-condition-deadline-invalid", "trip", "여행 종료 시각이 올바른 15분 단위가 아닙니다.", tripKey));
+      if (!Number.isInteger(trip.endCondition.travelMinutes) || trip.endCondition.travelMinutes < 0 || trip.endCondition.travelMinutes > 1440) issues.push(issue("error", "trip.end-condition-travel-invalid", "trip", "여행 종료 지점까지 예상 이동시간이 올바르지 않습니다.", tripKey));
+      if (!Number.isInteger(trip.endCondition.serviceBufferMinutes) || trip.endCondition.serviceBufferMinutes < 0 || trip.endCondition.serviceBufferMinutes > 720) issues.push(issue("error", "trip.end-condition-buffer-invalid", "trip", "여행 종료 준비시간이 올바르지 않습니다.", tripKey));
     }
 
     const memberIds = new Set<string>();

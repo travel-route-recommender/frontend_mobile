@@ -9,6 +9,7 @@ import type { DuriSuggestion, ScheduleChangeState } from "../../../duri/duri-sug
 import { findNextAvailableSlot, getTripDates, sortItineraryItemsByDateAndTime, timeStringToMinutes } from "../../../utils/schedule";
 import { DURI_SUGGESTION_VERSION } from "../constants";
 import type { DuriAnalysisSession, DuriReportIssue, DuriSuggestionEnvelope } from "../types";
+import { analyzeTripEndCondition, buildTripEndConditionAdjustment } from "../../workspace/logic/tripEndCondition";
 
 function itemState(item: ItineraryItem): ScheduleChangeState {
   return {
@@ -91,9 +92,78 @@ function buildDayBalanceSuggestion(session: DuriAnalysisSession, issue: DuriRepo
   });
 }
 
+function buildEndConditionSuggestion(session: DuriAnalysisSession, issue: DuriReportIssue) {
+  const condition = session.snapshot.trip.endCondition;
+  if (!condition || !session.snapshot.trip.endDate) return undefined;
+  const adjustment = buildTripEndConditionAdjustment(session.snapshot.trip, session.snapshot.itinerary);
+  if (adjustment.status === "adjusted") {
+    const changes = adjustment.movedItemIds.flatMap((itemId) => {
+      const before = session.snapshot.itinerary.find((item) => item.id === itemId);
+      const after = adjustment.itinerary.find((item) => item.id === itemId);
+      return before && after ? [{
+        itemId,
+        placeId: before.placeId,
+        action: "move" as const,
+        before: itemState(before),
+        after: itemState(after),
+      }] : [];
+    });
+    return finalizeSuggestion(session, {
+      tripId: session.tripId,
+      sourceIssueIds: [issue.id],
+      type: "move-item",
+      priority: "high",
+      title: "종료 조건에 맞게 마지막 날 일정을 앞당길까요?",
+      summary: "마지막 날 전체 일정을 같은 15분 단위만큼 앞당겨 순서·체류시간·기존 이동 및 대기 간격을 유지해요.",
+      reason: condition.location.name + "에 " + condition.deadline + "까지 도착하도록 입력한 이동 "
+        + condition.travelMinutes + "분과 준비 " + condition.serviceBufferMinutes + "분을 확보해요.",
+      affectedItemIds: adjustment.movedItemIds,
+      affectedPlaceIds: adjustment.movedItemIds.flatMap((itemId) => {
+        const placeId = session.snapshot.itinerary.find((item) => item.id === itemId)?.placeId;
+        return placeId ? [placeId] : [];
+      }),
+      changes,
+    });
+  }
+
+  const lastDayItems = sortItineraryItemsByDateAndTime(
+    session.snapshot.itinerary.filter((item) => item.date === session.snapshot.trip.endDate),
+  ).filter((item) => item.itemType === "place" && Boolean(item.placeId));
+  const remaining = [...session.snapshot.itinerary];
+  const removed: ItineraryItem[] = [];
+  while (lastDayItems.length) {
+    const target = lastDayItems.pop();
+    if (!target) break;
+    removed.push(target);
+    const index = remaining.findIndex((item) => item.id === target.id);
+    if (index >= 0) remaining.splice(index, 1);
+    const assessment = analyzeTripEndCondition(session.snapshot.trip, remaining);
+    if (assessment.status !== "feasible") continue;
+    return finalizeSuggestion(session, {
+      tripId: session.tripId,
+      sourceIssueIds: [issue.id],
+      type: "remove-overload-item",
+      priority: "high",
+      title: "종료 조건을 위해 마지막 일정을 미배치로 돌릴까요?",
+      summary: "앞당길 공간이 부족해 가장 늦은 일정부터 제외하는 안이에요. 후보 장소는 삭제하지 않아요.",
+      reason: condition.location.name + " 도착·반납 시간을 지키려면 현재 체류시간으로는 마지막 날에 모두 배치할 수 없어요.",
+      affectedItemIds: removed.map((item) => item.id),
+      affectedPlaceIds: removed.flatMap((item) => item.placeId ? [item.placeId] : []),
+      changes: removed.map((item) => ({
+        itemId: item.id,
+        placeId: item.placeId,
+        action: "remove" as const,
+        before: itemState(item),
+      })),
+    });
+  }
+  return undefined;
+}
+
 export function generateDuriSuggestions(session: DuriAnalysisSession, createdAt: string): DuriSuggestionEnvelope[] {
   const webSuggestions = generateWebDuriSuggestions({ ...session.snapshot, analysis: session.result });
   const supplemental = session.issues.flatMap((issue) => {
+    if (issue.category === "end-condition" && issue.severity === "high") return buildEndConditionSuggestion(session, issue) ?? [];
     if (issue.category === "time-conflict") return buildConflictSuggestion(session, issue) ?? [];
     if (issue.category === "day-balance") return buildDayBalanceSuggestion(session, issue) ?? [];
     return [];

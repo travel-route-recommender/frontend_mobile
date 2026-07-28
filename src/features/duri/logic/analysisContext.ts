@@ -3,6 +3,7 @@ import type { AnalysisIssue } from "../../../duri/duri-analysis";
 import { findTimeConflictsForDate } from "../../workspace/logic/workspaceDateTime";
 import { getTripDates, isValidScheduleRange, sortItineraryItemsByDateAndTime, timeStringToMinutes } from "../../../utils/schedule";
 import { DURI_MOBILE_CONTEXT_CONFIG } from "../constants";
+import { analyzeTripEndCondition } from "../../workspace/logic/tripEndCondition";
 import type {
   DuriAnalysisCoverage,
   DuriAnalysisSnapshot,
@@ -45,6 +46,92 @@ export function analyzeTimeConflicts(snapshot: DuriAnalysisSnapshot): DuriReport
       };
     }),
   );
+}
+
+export function analyzeEndCondition(snapshot: DuriAnalysisSnapshot): DuriReportIssue[] {
+  const condition = snapshot.trip.endCondition;
+  if (!condition) return [];
+  const assessment = analyzeTripEndCondition(snapshot.trip, snapshot.itinerary);
+  const affectedPlaceIds = assessment.affectedItemIds.flatMap((itemId) => {
+    const placeId = snapshot.itinerary.find((item) => item.id === itemId)?.placeId;
+    return placeId ? [placeId] : [];
+  });
+  const evidence = [
+    { label: "종료 지점", value: condition.location.name },
+    { label: "도착·반납 마감", value: condition.deadline },
+    { label: "입력한 예상 이동시간", value: condition.travelMinutes + "분" },
+    { label: "승차 준비·반납 확보시간", value: condition.serviceBufferMinutes + "분" },
+  ];
+  if (assessment.cutoffMinutes !== undefined && assessment.cutoffMinutes >= 0) {
+    evidence.push({ label: "마지막 일정 종료 한계", value: minutesToLabel(assessment.cutoffMinutes) });
+  }
+  if (assessment.latestEndMinutes !== undefined) {
+    evidence.push({ label: "현재 마지막 일정 종료", value: minutesToLabel(assessment.latestEndMinutes) });
+  }
+
+  if (assessment.status === "feasible") {
+    return [{
+      id: "end-condition-feasible-" + snapshot.trip.endDate,
+      category: "end-condition",
+      severity: "info",
+      title: "현재 일정은 여행 종료 조건을 지킬 수 있어요",
+      summary: "사용자가 입력한 이동시간과 준비시간을 기준으로 마지막 일정 이후 여유를 확인했어요.",
+      date: snapshot.trip.endDate ?? undefined,
+      affectedItemIds: [],
+      affectedPlaceIds: [],
+      affectedMemberIds: [],
+      evidence,
+      suggestionSupported: false,
+      source: "mobile-context",
+    }];
+  }
+  if (assessment.status === "insufficient-data") {
+    return [{
+      id: "end-condition-insufficient-" + snapshot.trip.endDate,
+      category: "end-condition",
+      severity: "low",
+      title: "마지막 날 일정이 추가되면 종료 조건을 다시 확인해요",
+      summary: "종료 조건은 저장했지만 마지막 날 일정이 없어 현재는 이동 가능성을 확정하지 않았어요.",
+      date: snapshot.trip.endDate ?? undefined,
+      affectedItemIds: [],
+      affectedPlaceIds: [],
+      affectedMemberIds: [],
+      evidence,
+      suggestionSupported: false,
+      source: "mobile-context",
+    }];
+  }
+  if (assessment.status === "invalid") {
+    return [{
+      id: "end-condition-invalid-" + snapshot.trip.id,
+      category: "end-condition",
+      severity: "high",
+      title: "여행 종료 조건을 확인해 주세요",
+      summary: assessment.message,
+      date: snapshot.trip.endDate ?? undefined,
+      affectedItemIds: assessment.affectedItemIds,
+      affectedPlaceIds,
+      affectedMemberIds: [],
+      evidence,
+      suggestionSupported: false,
+      source: "mobile-context",
+    }];
+  }
+  if (assessment.status !== "infeasible") return [];
+  return [{
+    id: "end-condition-infeasible-" + snapshot.trip.endDate + "-" + assessment.affectedItemIds.join("-"),
+    category: "end-condition",
+    severity: "high",
+    title: "마지막 일정 뒤 종료 지점에 제시간에 도착하기 어려워요",
+    summary: assessment.message + " 실제 경로 API가 아니라 사용자가 입력한 예상 이동시간을 기준으로 계산했어요.",
+    date: snapshot.trip.endDate ?? undefined,
+    affectedItemIds: assessment.affectedItemIds,
+    affectedPlaceIds,
+    affectedMemberIds: [],
+    evidence,
+    suggestionSupported: true,
+    source: "mobile-context",
+  }];
 }
 
 function minutesToLabel(minutes: number) {

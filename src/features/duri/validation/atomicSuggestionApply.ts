@@ -11,6 +11,7 @@ import type {
   DuriInputSource,
   DuriSuggestionApplyReceipt,
 } from "../types";
+import { analyzeTripEndCondition } from "../../workspace/logic/tripEndCondition";
 
 type ValidationResult = { valid: true } | { valid: false; reason: DuriApplyFailureReason; message: string };
 
@@ -35,6 +36,10 @@ export function validateFinalItinerary(
     }
     if (item.itemType === "place" && !item.placeId) return { valid: false, reason: "invalid-change", message: "장소 일정에 placeId가 없어요." };
     if (findOverlappingItem(itinerary, item, item.id)) return { valid: false, reason: "invalid-time", message: "적용 후 시간이 다른 일정과 겹쳐요." };
+  }
+  const endCondition = analyzeTripEndCondition(trip, itinerary);
+  if (endCondition.status === "infeasible" || endCondition.status === "invalid") {
+    return { valid: false, reason: "invalid-time", message: endCondition.message };
   }
   return { valid: true };
 }

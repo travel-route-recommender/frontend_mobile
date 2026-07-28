@@ -34,6 +34,11 @@ export function createDuriAnalysisSnapshot(input: DuriAnalysisInput): DuriAnalys
   }));
   const trip = {
     ...input.trip,
+    accommodationLocation: input.trip.accommodationLocation ? { ...input.trip.accommodationLocation } : null,
+    endCondition: input.trip.endCondition ? {
+      ...input.trip.endCondition,
+      location: { ...input.trip.endCondition.location },
+    } : null,
     members: [...input.trip.members]
       .map((member) => ({ ...member }))
       .sort((left, right) => left.userId.localeCompare(right.userId)),
@@ -89,6 +94,21 @@ export function canonicalizeDuriInput(snapshot: DuriAnalysisSnapshot) {
       transport: snapshot.trip.transport,
       budgetLevel: snapshot.trip.budgetLevel,
       intensity: snapshot.trip.intensity,
+      accommodationLocation: snapshot.trip.accommodationLocation ? {
+        name: snapshot.trip.accommodationLocation.name,
+        address: snapshot.trip.accommodationLocation.address ?? null,
+      } : null,
+      endCondition: snapshot.trip.endCondition ? {
+        type: snapshot.trip.endCondition.type,
+        location: {
+          name: snapshot.trip.endCondition.location.name,
+          address: snapshot.trip.endCondition.location.address ?? null,
+        },
+        deadline: snapshot.trip.endCondition.deadline,
+        travelMinutes: snapshot.trip.endCondition.travelMinutes,
+        serviceBufferMinutes: snapshot.trip.endCondition.serviceBufferMinutes,
+        note: snapshot.trip.endCondition.note ?? null,
+      } : null,
       members: snapshot.trip.members.map((member) => ({ userId: member.userId, role: member.role })),
     },
     itinerary: snapshot.itinerary.map((item, order) => ({

@@ -34,7 +34,7 @@
 
 ## Layout과 hydration 경계
 
-- `app/_layout.tsx`는 domain, auth, personal draft, trip draft 네 Store가 모두 hydrate될 때까지 Stack을 만들지 않는다. 따라서 hydration 중 auth↔tabs redirect가 실행되지 않는다.
+- `app/_layout.tsx`는 domain, auth, personal draft, trip draft, invite, trip-document 여섯 persisted 영역이 모두 hydrate될 때까지 Stack을 만들지 않는다. 진행·오류 flag는 각 persist 대상과 분리되어 hydration 시작 시 기존 저장값을 덮어쓰지 않는다. 따라서 hydration 중 auth↔tabs redirect가 실행되지 않는다.
 - `app/(tabs)/_layout.tsx`는 session, session user, profile, intro를 재확인한다. anonymous는 공개 탭을 사용할 수 있지만 domain member를 만들지 않는다.
 - route param은 동적 route 화면에서 `string | string[] | undefined`를 첫 값으로 정규화한다. 잘못된 ID는 Error/EmptyState로 끝나며 demo entity로 대체하지 않는다.
 - Android hardware back을 별도로 가로채는 개인 성향 테스트는 draft 보존/검토 복귀 정책을 사용한다. 다른 화면과 modal은 Router 또는 React Native modal의 `onRequestClose`를 사용한다.
@@ -45,4 +45,3 @@
 - 영속 session source: `useAuthSessionStore`; token은 `SecureStore`.
 - 영속 UI draft: personal preference draft, create trip draft.
 - 비영속 UI/파생: explore filter, Duri session/suggestion/receipt, 화면 modal/feedback, 모든 ViewModel과 count/rate/stale 값.
-

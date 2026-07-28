@@ -6,7 +6,7 @@ import { PrimaryButton, Screen } from "../../../components/common";
 import { EmptyState, ErrorState } from "../../../components/feedback";
 import { environment } from "../../../config/environment";
 import { selectCompletedTripsForCurrentUser, selectPlanningTripsForCurrentUser } from "../../../store/selectors";
-import { useDuriStore } from "../../../store/useDuriStore";
+import { useDuriHydrationState, useDuriStore } from "../../../store/useDuriStore";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import { useMemberGate } from "../../auth/hooks/useMemberGate";
 import { useAuthSessionStore } from "../../auth/store/useAuthSessionStore";
@@ -23,7 +23,7 @@ export function TripListScreen() {
   const sessionKind = useAuthSessionStore((session) => session.sessionKind);
   const { requireMember, memberGatePrompt } = useMemberGate();
   const [filter, setFilter] = useState<TripListFilter>("ongoing");
-  const hydrationError = useDuriStore((state) => state.hydrationError);
+  const hydrationError = useDuriHydrationState((state) => state.hydrationError);
   const setActiveTrip = useDuriStore((state) => state.setActiveTrip);
   const source = useDuriStore(useShallow((state) => ({
     currentUserId: state.currentUserId,
@@ -47,10 +47,10 @@ export function TripListScreen() {
   const tripIds = filter === "ongoing" ? ongoing : filter === "completed" ? completed : [...ongoing, ...completed];
   const createTrip = () => requireMember(() => router.push("/trips/new"), "여행방 만들기");
 
-  if (environment.dataSource !== "mock") return <Screen><ErrorState message={environment.dataSource === "api" ? "여행방 API 계약 연결 전입니다. mock 여행방으로 자동 전환하지 않았어요." : "서버 여행방의 사용자 식별자 연결이 확인되기 전에는 로컬 여행방을 혼합하지 않아요."} /></Screen>;
-  if (hydrationError) return <Screen><ErrorState message={hydrationError} /></Screen>;
+  if (environment.dataSource !== "mock") return <Screen includeBottomSafeArea={false}><ErrorState message={environment.dataSource === "api" ? "여행방 API 계약 연결 전입니다. mock 여행방으로 자동 전환하지 않았어요." : "서버 여행방의 사용자 식별자 연결이 확인되기 전에는 로컬 여행방을 혼합하지 않아요."} /></Screen>;
+  if (hydrationError) return <Screen includeBottomSafeArea={false}><ErrorState message={hydrationError} /></Screen>;
 
-  return <Screen scroll={false}><FlatList
+  return <Screen scroll={false} includeBottomSafeArea={false}><FlatList
     data={tripIds}
     keyExtractor={(tripId) => tripId}
     showsVerticalScrollIndicator={false}

@@ -9,7 +9,10 @@ import type {
   Region,
   TripBudgetLevel,
   TripCandidate,
+  TripEndCondition,
+  TripEndConditionType,
   TripIntensity,
+  TripLocation,
   TripMember,
   TripRoom,
   TripStatus,
@@ -21,13 +24,14 @@ import { normalizeLegacyPreferenceResult } from "../duri/preferences";
 import { createDemoData, type DuriDomainState } from "../data/mock/demoData";
 import { getTripDates, isValidScheduleRange, sortItineraryItemsByDateAndTime } from "../utils/schedule";
 
-export const CURRENT_SCHEMA_VERSION = 4;
+export const CURRENT_SCHEMA_VERSION = 5;
 
 type UnknownRecord = Record<string, unknown>;
 
 const preferenceDimensions: PreferenceDimension[] = ["pace", "budget", "mobility", "activity", "mealStyle", "planningStyle"];
 const tripStatuses: TripStatus[] = ["planning", "drafting", "confirmed", "completed"];
-const tripTransports: TripTransport[] = ["public", "car", "walking"];
+const tripTransports: TripTransport[] = ["public", "car"];
+const tripEndConditionTypes: TripEndConditionType[] = ["train", "intercity-bus", "rental-car-return", "other"];
 const tripBudgets: TripBudgetLevel[] = ["budget", "standard", "premium"];
 const tripIntensities: TripIntensity[] = ["relaxed", "balanced", "packed"];
 const itineraryTypes: ItineraryItemType[] = ["place", "meal", "rest", "transport"];
@@ -122,6 +126,34 @@ function normalizeMembers(value: unknown) {
   });
 }
 
+function normalizeTripLocation(value: unknown): TripLocation | null {
+  if (!isRecord(value)) return null;
+  const name = asString(value.name).trim().slice(0, 100);
+  if (!name) return null;
+  const address = asString(value.address).trim().slice(0, 200);
+  return { name, ...(address ? { address } : {}) };
+}
+
+function normalizeTripEndCondition(value: unknown): TripEndCondition | null {
+  if (!isRecord(value) || !tripEndConditionTypes.includes(value.type as TripEndConditionType)) return null;
+  const location = normalizeTripLocation(value.location);
+  const deadline = asString(value.deadline);
+  const travelMinutes = value.travelMinutes;
+  const serviceBufferMinutes = value.serviceBufferMinutes;
+  if (!location || !/^([01]\d|2[0-3]):(?:00|15|30|45)$/.test(deadline)) return null;
+  if (typeof travelMinutes !== "number" || !Number.isInteger(travelMinutes) || travelMinutes < 0 || travelMinutes > 1440) return null;
+  if (typeof serviceBufferMinutes !== "number" || !Number.isInteger(serviceBufferMinutes) || serviceBufferMinutes < 0 || serviceBufferMinutes > 720) return null;
+  const note = asString(value.note).trim().slice(0, 300);
+  return {
+    type: value.type as TripEndConditionType,
+    location,
+    deadline,
+    travelMinutes,
+    serviceBufferMinutes,
+    ...(note ? { note } : {}),
+  };
+}
+
 function normalizeTrips(value: unknown, fallback: Record<EntityId, TripRoom>) {
   const source = sourceRecord(value, fallback);
   return Object.fromEntries(Object.entries(source).flatMap(([key, entry]) => {
@@ -129,10 +161,16 @@ function normalizeTrips(value: unknown, fallback: Record<EntityId, TripRoom>) {
     const id = asString(entry.id, key);
     if (!id) return [];
     const status = tripStatuses.includes(entry.status as TripStatus) ? entry.status as TripStatus : "planning";
-    const transport = tripTransports.includes(entry.transport as TripTransport) ? entry.transport as TripTransport : "public";
-    const budgetLevel = tripBudgets.includes(entry.budgetLevel as TripBudgetLevel) ? entry.budgetLevel as TripBudgetLevel : "standard";
-    const intensity = tripIntensities.includes(entry.intensity as TripIntensity) ? entry.intensity as TripIntensity : "balanced";
+    const transport = entry.transport === "walking"
+      ? "public"
+      : tripTransports.includes(entry.transport as TripTransport)
+        ? entry.transport as TripTransport
+        : "public";
+    const budgetLevel = tripBudgets.includes(entry.budgetLevel as TripBudgetLevel) ? entry.budgetLevel as TripBudgetLevel : undefined;
+    const intensity = tripIntensities.includes(entry.intensity as TripIntensity) ? entry.intensity as TripIntensity : undefined;
     const dateUndecided = entry.dateUndecided === true;
+    const accommodationLocation = normalizeTripLocation(entry.accommodationLocation);
+    const endCondition = dateUndecided ? null : normalizeTripEndCondition(entry.endCondition);
     const expectedMemberCount = typeof entry.expectedMemberCount === "number" && Number.isInteger(entry.expectedMemberCount) && entry.expectedMemberCount > 0 ? entry.expectedMemberCount : null;
     const companionType = typeof entry.companionType === "string" && entry.companionType ? entry.companionType : null;
     const trip: TripRoom = {
@@ -144,9 +182,11 @@ function normalizeTrips(value: unknown, fallback: Record<EntityId, TripRoom>) {
       dateUndecided,
       status,
       transport,
-      budgetLevel,
-      intensity,
+      ...(budgetLevel ? { budgetLevel } : {}),
+      ...(intensity ? { intensity } : {}),
       travelStyles: unique(asStringArray(entry.travelStyles)),
+      accommodationLocation,
+      endCondition,
       companionType,
       expectedMemberCount,
       members: normalizeMembers(entry.members),

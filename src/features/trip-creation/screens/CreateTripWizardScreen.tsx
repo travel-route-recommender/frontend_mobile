@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { BackHandler, Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
-import type { EntityId, User } from "../../../domain";
+import type { EntityId, TripEndConditionType, User } from "../../../domain";
 import { AppHeader, Avatar, Card, Chip, PrimaryButton, RemoteImage, Screen, SecondaryButton, TextField } from "../../../components/common";
 import { ErrorState, LoadingState } from "../../../components/feedback";
 import { environment } from "../../../config/environment";
@@ -10,7 +10,7 @@ import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import { formatTripDateRange } from "../../../utils/formatters";
 import { useMemberGate } from "../../auth/hooks/useMemberGate";
 import { formatTripDurationLabel } from "../../trips/utils/tripDateUtils";
-import { companionTypeOptions, budgetOptions, createTripSteps, intensityOptions, transportOptions } from "../config";
+import { companionTypeOptions, createTripSteps, endConditionOptions, transportOptions } from "../config";
 import { TripCreationSuccess } from "../components/TripCreationSuccess";
 import { TripDateStep } from "../components/TripDateStep";
 import { TripDestinationStep } from "../components/TripDestinationStep";
@@ -23,11 +23,21 @@ import { createTripRoomService } from "../services/createTripRoomService";
 import { createRegionService, mapRegionToOption } from "../services/regionService";
 import type { RegionOption } from "../services/regionService";
 import { useCreateTripDraftStore } from "../store/useCreateTripDraftStore";
-import type { CreateTripDraft, CreateTripStep, TripCompanionType } from "../types";
+import type { CreateTripDraft, CreateTripEndConditionDraft, CreateTripStep, TripCompanionType } from "../types";
 import { CREATE_TRIP_STEP_COUNT } from "../types";
 import { normalizeInvitedUserIds, validateCreateTripDraft, validateCreateTripStep } from "../validation/validateCreateTripDraft";
 
 type EditSession = { step: EditableTripStep; draft: CreateTripDraft };
+type EndConditionSelection = TripEndConditionType | "none";
+
+const endConditionSelectionOptions: readonly { value: EndConditionSelection; label: string; description: string }[] = [
+  { value: "none", label: "정해진 종료 조건 없음", description: "마지막 날에 반드시 돌아가야 하는 장소나 시각이 없어요" },
+  ...endConditionOptions,
+];
+
+function createEmptyEndCondition(type: TripEndConditionType): CreateTripEndConditionDraft {
+  return { type, location: "", deadline: "", travelMinutes: "", serviceBufferMinutes: "", note: "" };
+}
 
 const editTitles: Record<EditableTripStep, string> = {
   0: "여행지 수정",
@@ -72,9 +82,8 @@ export function CreateTripWizardScreen() {
     endDate: request.endDate,
     dateUndecided: request.dateUndecided,
     transport: request.transport,
-    budgetLevel: request.budgetLevel,
-    intensity: request.intensity,
-    travelStyles: request.travelStyles,
+    accommodationLocation: request.accommodationLocation,
+    endCondition: request.endCondition,
     companionType: request.companionType,
     expectedMemberCount: request.expectedMemberCount,
     invitedUserIds: request.invitedUserIds,
@@ -160,7 +169,7 @@ export function CreateTripWizardScreen() {
 
   const changeDateUndecided = (value: boolean) => {
     setSubmitError("");
-    if (editSession) updateEditDraft({ dateUndecided: value, ...(value ? { startDate: null, endDate: null } : {}) });
+    if (editSession) updateEditDraft({ dateUndecided: value, ...(value ? { startDate: null, endDate: null, endCondition: null } : {}) });
     else setDateUndecided(value);
   };
 
@@ -245,10 +254,37 @@ function WizardProgress({ step }: { step: CreateTripStep }) {
 }
 
 function ConditionsStep({ draft, onChange }: { draft: CreateTripDraft; onChange(patch: Partial<CreateTripDraft>): void }) {
+  const selectEndCondition = (selection: EndConditionSelection) => {
+    if (selection === "none") {
+      onChange({ endCondition: null });
+      return;
+    }
+    onChange({
+      endCondition: draft.endCondition?.type === selection
+        ? draft.endCondition
+        : createEmptyEndCondition(selection),
+    });
+  };
+  const updateEndCondition = (patch: Partial<CreateTripEndConditionDraft>) => {
+    if (!draft.endCondition) return;
+    onChange({ endCondition: { ...draft.endCondition, ...patch } });
+  };
   return <View style={styles.stack}>
+    <Card style={styles.factNotice}><Text style={styles.bodyStrong}>여기서는 여행방의 사실 정보만 기록해요.</Text><Text style={styles.caption}>예산과 일정 속도 같은 개인 성향은 방을 만든 뒤 각 동행자가 따로 응답합니다.</Text></Card>
     <OptionGroup title="이동 방식" options={transportOptions} selected={draft.transport} onSelect={(transport) => onChange({ transport })} />
-    <OptionGroup title="예산" options={budgetOptions} selected={draft.budgetLevel} onSelect={(budgetLevel) => onChange({ budgetLevel })} />
-    <OptionGroup title="일정 밀도" options={intensityOptions} selected={draft.intensity} onSelect={(intensity) => onChange({ intensity })} />
+    <TextField label="숙소 위치 (선택)" value={draft.accommodationLocation} onChangeText={(accommodationLocation) => onChange({ accommodationLocation })} placeholder="예: 부산역 근처 호텔" maxLength={100} helperText="예약했거나 머물 예정인 숙소가 있을 때만 입력해 주세요." />
+    {draft.dateUndecided
+      ? <Card style={styles.factNotice}><Text style={styles.bodyStrong}>여행 종료 조건은 날짜를 정한 뒤 입력할 수 있어요.</Text><Text style={styles.caption}>종료 조건은 마지막 여행 날짜의 일정 가능 시간을 계산할 때 사용됩니다.</Text></Card>
+      : <View style={styles.stack}>
+          <OptionGroup title="마지막 날 종료 조건" options={endConditionSelectionOptions} selected={draft.endCondition?.type ?? "none"} onSelect={selectEndCondition} />
+          {draft.endCondition ? <Card style={styles.endConditionFields}>
+            <TextField label="종료 지점" value={draft.endCondition.location} onChangeText={(location) => updateEndCondition({ location })} placeholder="예: 부산역, 렌터카 반납 지점" maxLength={100} />
+            <TextField label="도착 또는 반납 마감 시각" value={draft.endCondition.deadline} onChangeText={(deadline) => updateEndCondition({ deadline })} placeholder="예: 17:30" maxLength={5} helperText="마지막 여행 날짜 기준, 15분 단위 HH:mm" />
+            <TextField label="마지막 일정에서 종료 지점까지 예상 이동시간 (분)" value={draft.endCondition.travelMinutes} onChangeText={(travelMinutes) => updateEndCondition({ travelMinutes: travelMinutes.replace(/\D/g, "") })} placeholder="예: 45" keyboardType="number-pad" maxLength={4} helperText="실제 경로를 확인한 예상값을 입력해 주세요. 현재 앱은 이동시간 API를 사용하지 않습니다." />
+            <TextField label="승차 준비 또는 반납에 필요한 시간 (분)" value={draft.endCondition.serviceBufferMinutes} onChangeText={(serviceBufferMinutes) => updateEndCondition({ serviceBufferMinutes: serviceBufferMinutes.replace(/\D/g, "") })} placeholder="예: 30" keyboardType="number-pad" maxLength={3} />
+            <TextField label="종료 조건 메모 (선택)" value={draft.endCondition.note} onChangeText={(note) => updateEndCondition({ note })} placeholder="예: 렌터카 연료 충전 후 반납" maxLength={300} multiline />
+          </Card> : null}
+        </View>}
   </View>;
 }
 
@@ -268,8 +304,7 @@ function CompanionStep({ owner, users, companionType, selectedIds, onTypeChange,
 
 function ReviewStep({ draft, region, usersById, onRoomNameChange, onEdit }: { draft: CreateTripDraft; region?: RegionOption; usersById: Record<EntityId, User>; onRoomNameChange(value: string): void; onEdit(step: EditableTripStep): void }) {
   const transport = transportOptions.find((option) => option.value === draft.transport)?.label;
-  const budget = budgetOptions.find((option) => option.value === draft.budgetLevel)?.label;
-  const intensity = intensityOptions.find((option) => option.value === draft.intensity)?.label;
+  const endConditionType = endConditionOptions.find((option) => option.value === draft.endCondition?.type)?.label;
   const companionType = companionTypeOptions.find((option) => option.value === draft.companionType)?.label ?? "미선택";
   const memberNames = [usersById[draft.ownerUserId], ...draft.selectedMemberUserIds.map((id) => usersById[id])].filter((user): user is User => Boolean(user)).map((user) => user.name).join(", ");
   const dateLabel = draft.dateUndecided ? "날짜 미정 · Day 1부터 시작" : `${formatTripDateRange(draft.startDate, draft.endDate)} · ${formatTripDurationLabel(draft.startDate, draft.endDate)}`;
@@ -279,7 +314,11 @@ function ReviewStep({ draft, region, usersById, onRoomNameChange, onEdit }: { dr
       {region ? <RemoteImage uri={region.imageUrl} accessibilityLabel={`${region.name} 대표`} aspectRatio={2.2} /> : null}
       <ReviewRow label="여행지" value={region ? `${region.parentName ? `${region.parentName} · ` : ""}${region.name}` : "미선택"} action={() => onEdit(0)} />
       <ReviewRow label="날짜" value={dateLabel} action={() => onEdit(1)} />
-      <ReviewRow label="여행 스타일" value={`${transport} · ${budget} · ${intensity}`} action={() => onEdit(2)} />
+      <ReviewRow label="이동 방식" value={transport ?? "미선택"} action={() => onEdit(2)} />
+      <ReviewRow label="숙소" value={draft.accommodationLocation.trim() || "입력하지 않음"} action={() => onEdit(2)} />
+      <ReviewRow label="마지막 날 종료 조건" value={draft.endCondition
+        ? `${endConditionType ?? "종료 조건"} · ${draft.endCondition.location} · ${draft.endCondition.deadline}까지 · 이동 ${draft.endCondition.travelMinutes}분 + 준비 ${draft.endCondition.serviceBufferMinutes}분`
+        : draft.dateUndecided ? "날짜 결정 후 입력 가능" : "없음"} action={() => onEdit(2)} />
       <ReviewRow label="동행 유형" value={`${companionType} · ${memberNames || "나"} · ${draft.selectedMemberUserIds.length + 1}명`} action={() => onEdit(3)} />
     </Card>
   </View>;
@@ -319,6 +358,8 @@ const styles = StyleSheet.create({
   checkbox: { width: 28, height: 28, borderRadius: 8, borderWidth: 2, borderColor: colors.borderStrong, textAlign: "center", textAlignVertical: "center", color: colors.white, fontWeight: "800" },
   checkboxSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
   review: { gap: spacing.md },
+  factNotice: { gap: spacing.xs, backgroundColor: colors.primarySoft },
+  endConditionFields: { gap: spacing.md },
   reviewRow: { flexDirection: "row", alignItems: "center", gap: spacing.md },
   edit: { ...typography.caption, color: colors.primary },
   actions: { flexDirection: "row", gap: spacing.sm, alignItems: "center", marginTop: spacing.xl },

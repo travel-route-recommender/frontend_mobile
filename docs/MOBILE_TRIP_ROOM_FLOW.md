@@ -34,7 +34,7 @@
 
 1. 여행지: `RegionService`의 인기 mock 목록·검색 결과에서 Region ID 하나 선택
 2. 날짜: 월간 달력에서 시작일·종료일 범위 선택 또는 날짜 미정
-3. 여행 조건: 이동 방식, 예산, 일정 밀도
+3. 여행 사실: 이동 방식, 선택 숙소 위치, 선택 종료 지점·시각·예상 이동 및 준비시간
 4. 동행: 동행 유형 선택, 현재 사용자는 방장으로 고정, 나머지 demo User 선택
 5. 최종 확인: 여행방 이름 입력, 모든 항목 검토, 항목별 edit session, 생성 완료·초대
 
@@ -46,42 +46,43 @@ Android/iOS/Web는 새 패키지 없이 React Native `Pressable` 기반 같은 �
 
 ## CreateTripDraft와 persist
 
-완료된 `TripRoom`과 생성 중 입력을 섞지 않는다. 별도 Zustand Store가 AsyncStorage key `duri-create-trip-draft`, version `2`로 다음만 저장한다. version 1의 기존 초안은 날짜와 이름을 보존해 version 2 구조로 정규화한다.
+완료된 `TripRoom`과 생성 중 입력을 섞지 않는다. 별도 Zustand Store가 AsyncStorage key `duri-create-trip-draft`, version `3`으로 다음만 저장한다. version 1·2의 기존 초안은 날짜와 이름을 보존하고 legacy `walking`을 `public`으로 합쳐 version 3 구조로 정규화한다. 이전 방 생성 화면의 개인 예산·일정 밀도 값은 이관하지 않는다.
 
 - configVersion, ownerUserId, currentStep
 - regionId, startDate, endDate, dateUndecided
-- transport, budgetLevel, intensity
+- transport, accommodationLocation, endCondition
 - companionType, expectedMemberCount, selectedMemberUserIds
 - roomName, isRoomNameCustomized
 - startedAt, updatedAt
 
-root layout은 domain/auth/personal-test-draft/create-trip-draft 네 Store의 hydrate 완료를 기다린다. 지원하지 않는 버전의 초안은 완료된 여행이나 성향 결과를 건드리지 않고 해당 초안만 폐기하며 안내한다. 다른 사용자 소유 초안은 이어 쓰지 않는다. 다시 진입하면 이어 쓰기 또는 새로 시작을 선택할 수 있고, 뒤로 나갈 때 저장 또는 삭제를 선택한다. 생성 오류 시 초안을 유지하고 성공한 경우에만 삭제한다.
+root layout은 domain/auth/personal-test-draft/create-trip-draft/invite/trip-document 여섯 persisted 영역의 hydrate 완료를 기다린다. 각 영역의 진행·오류 flag는 별도 non-persist Store에 두어 storage를 읽기 전에 빈 도메인 상태를 다시 저장하지 않는다. 지원하지 않는 버전의 초안은 완료된 여행이나 성향 결과를 건드리지 않고 해당 초안만 폐기하며 안내한다. 다른 사용자 소유 초안은 이어 쓰지 않는다. 다시 진입하면 이어 쓰기 또는 새로 시작을 선택할 수 있고, 뒤로 나갈 때 저장 또는 삭제를 선택한다. 생성 오류 시 초안을 유지하고 성공한 경우에만 삭제한다.
 
 지역 선택 시 이름이 자동 상태라면 `${region.name} 여행`을 즉시 저장한다. 사용자가 이름 입력을 한 번이라도 수정하면 `isRoomNameCustomized`가 `true`가 되어 이후 지역 수정이 이름을 덮어쓰지 않는다. 이름은 공백을 허용하지 않고 기존 40자 제한을 유지한다.
 
 ## validation과 createTrip
 
-각 단계는 다음 단계 진입 전에 Region 존재, 날짜 미정/범위의 상호 배타성, ISO date-only 형식과 순서, 동행 유형, 현재 owner, 선택 User, 공백이 아닌 이름과 40자 제한을 검사한다. 선택 멤버는 ID 기준으로 중복을 제거하고 owner와 존재하지 않는 ID를 제외한다.
+각 단계는 다음 단계 진입 전에 Region 존재, 날짜 미정/범위의 상호 배타성, ISO date-only 형식과 순서, 이동 방식, 숙소 길이, 종료 지점·15분 단위 마감 시각·예상 이동시간·승차/반납 준비시간, 동행 유형, 현재 owner, 선택 User, 공백이 아닌 이름과 40자 제한을 검사한다. 날짜 미정으로 바꾸면 종료 조건을 즉시 제거하며 mapper와 Store 경계에서도 함께 저장되는 것을 거부한다. 선택 멤버는 ID 기준으로 중복을 제거하고 owner와 존재하지 않는 ID를 제외한다.
 
-`mapDraftToCreateTripRoomRequest`는 Draft를 frontend mock contract로 바꾼다. 기존 이동·예산·밀도는 `travelStyles` token과 구조화 필드를 함께 제공하고, expected member count는 별도 입력이 없으면 실제 선택된 owner+동행자 수에서 파생한다. areaCode·sigunguCode는 Region option에 실제 값이 있을 때만 전달하며 mock에서 허위 코드를 만들지 않는다.
+`mapDraftToCreateTripRoomRequest`는 Draft를 frontend mock contract로 바꾼다. 새 방에는 `car` 또는 대중교통·도보를 뜻하는 `public`, 선택 숙소, 선택 종료 조건만 사실 정보로 전달한다. 개인 예산·일정 밀도는 각 참여자의 별도 성향 조사 결과를 사용하며 생성 request에 포함하지 않는다. 종료 조건의 이동시간은 실제 이동시간 API가 없으므로 사용자가 확인한 예상 분을 저장한다. expected member count는 별도 입력이 없으면 실제 선택된 owner+동행자 수에서 파생한다. areaCode·sigunguCode는 Region option에 실제 값이 있을 때만 전달하며 mock에서 허위 코드를 만들지 않는다.
 
 `CreateTripRoomService`와 `useCreateTripRoomMutation`은 idle/pending/success/error와 중복 요청 잠금을 담당한다. mock adapter의 `createTrip`은 한 번의 Zustand `set`에서 고유 ID 생성, owner 자동 포함, 멤버 중복 제거, `tripsById`, 중복 없는 `tripOrder`, 빈 candidate/itinerary 관계, `activeTripId`를 함께 반영한다. 생성 실패 시 Draft를 유지하고, 성공 응답을 받은 뒤에만 Draft를 초기화한다.
 
-성공 화면은 `https://example.invalid/invite/mock-*` 형태임을 명시한 mock 링크, Kakao placeholder, 링크 복사, 기본 공유, 여행방 이동을 제공한다. Kakao SDK가 없어도 기본 `Share` sheet로 fallback한다. `expo-clipboard`를 임의 설치하지 않았기 때문에 Web은 browser clipboard로 실제 복사하고 Android/iOS의 복사 버튼은 기본 공유 sheet를 열어 복사할 수 있도록 안내한다. native 직접 복사는 패키지 승인 후 `InviteShareService.copyLink` adapter만 교체하면 된다.
+성공 화면은 `tripmatch://invite/{code}?tripId={id}&revision={n}` 형식의 native mock 링크, 앱을 특정하지 않는 OS 공유 창, `expo-clipboard` 직접 복사와 여행방 이동을 제공한다. Web Share에는 custom scheme을 `url` 필드로 전달하지 않고 초대 코드·링크를 `text`에만 넣어 브라우저의 `Invalid URL` 오류를 막는다. 별도 카카오톡 버튼은 OS 공유와 중복되므로 제공하지 않는다. 여행방 홈의 초대 Modal에서는 같은 링크를 새로 발급하거나 사용 중지할 수 있다. 다른 기기 간 방 조회는 `MOBILE_INVITE_LINK_FLOW.md`의 경계를 따른다.
 
 ## 여행방 홈
 
 `TripHomeScreen`의 섹션 순서는 다음과 같다.
 
 1. 지역 이미지, 제목, 지역, 날짜, 기간, status, D-day, owner, 아바타 Hero
-2. 워크스페이스, 장소 탐색, mock 동행자 추가 빠른 실행
+2. 워크스페이스, 장소 탐색, 초대 링크 관리 빠른 실행
 3. 5단계 여행 준비 진행률
 4. 기존 멤버별 응답 현황 UI
 5. 기존 그룹 성향 진단 UI
-6. 최근 후보 최대 3개, 추가 멤버와 일정 배치 여부
-7. 날짜·시간순 일정 최대 3개와 배치 날짜 수
-8. 로컬 두리 분석 가능 여부와 워크스페이스 CTA
-9. 완료 여행의 읽기 중심 안내
+6. 로컬 예약·티켓 문서함
+7. 최근 후보 최대 3개, 추가 멤버와 일정 배치 여부
+8. 날짜·시간순 일정 최대 3개와 배치 날짜 수
+9. 로컬 두리 분석 가능 여부와 워크스페이스 CTA
+10. 완료 여행의 읽기 중심 안내
 
 준비 진행률은 웹과 동일하게 방 생성, 성향 응답, 후보 수집, 일정 구성, 최종 확인 5단계다. 완료는 1점, 진행 중은 0.5점, 대기는 0점으로 합산한 뒤 5로 나눈다. 응답 현황은 `selectRoomPreferenceResponseSummary`, 그룹 진단은 `diagnoseGroupPreferences`를 그대로 사용하며 Store에 응답률·진단·준비율을 저장하지 않는다.
 
@@ -93,10 +94,16 @@ root layout은 domain/auth/personal-test-draft/create-trip-draft 네 Store의 hy
 - `api`: Rooms endpoint와 DTO 계약을 추측하지 않고 목록/상세/생성 계약 대기 오류 표시
 - `hybrid`: 서버 roomId와 local roomId 연결 전까지 목록/생성을 api와 동일하게 보류; 로컬 분석과 서버 room을 임의 혼합하지 않음
 
-mock 생성 완료 화면과 초대 Modal은 기존 demo User와 mock token만 사용한다. 실제 사용자 검색, 초대 링크 발급, 만료·권한·수락 상태, 알림은 구현하지 않았다.
+mock 생성 완료 화면과 초대 Modal은 여행방별 로컬 code/revision을 발급하고, 교체·중지 상태를 `duri-trip-invites`에 저장한다. 링크 진입은 최신 로컬 상태를 재검증한 뒤 기존 사용자 또는 mock guest를 중복 없이 멤버로 추가한다. 실제 만료·서버 권한·다른 기기 동기화·알림은 구현하지 않았다.
+
+## 예약·티켓 문서함
+
+여행방 홈은 숙소 예약, 입장권, 기차·버스표, 렌터카 확인서와 기타 PDF·이미지를 15MB까지 추가하는 기기 전용 문서함을 제공한다. native는 Expo document directory 아래 앱 전용 경로로 복사하며, Web Blob은 현재 브라우저 탭에서만 유지되고 새로고침 시 제거된다. 일정 편집 Modal에서 문서를 선택해 일정 ID와 연결할 수 있고 일정 삭제 시 링크만 정리하며 원본 문서는 여행방 문서함에 유지한다. 두리가 장소를 교체하거나 일정을 제외하면 기존 티켓 연결을 해제하고 파일은 보존한다.
+
+현재 파일과 metadata는 Backend로 전송하지 않으며 다른 동행자·다른 기기와 동기화되지 않는다. 서버 연동 요구사항은 `FRONTEND_ONLY_BACKEND_REQUIREMENTS.md`를 따른다.
 
 ## API 계약 대기와 다음 단계
 
 Rooms API에는 내 방 목록/상세/생성/수정 DTO, status 전이, member role·권한, pagination·정렬, 날짜 정책, 서버 roomId, 오류 규격이 필요하다. Invite API에는 사용자 검색 범위, 링크/code 생성, 만료, 수락, 중복 가입, guest→member 병합 정책이 필요하다.
 
-다음 Workspace 단계에서는 기존 route와 편집 관계를 유지하면서 두리 분석 리포트, suggestion before/after preview, fingerprint stale 검증과 원자적 apply를 연결한다. native gesture reorder는 서버 order/시간 정책과 접근성 대체 동작이 확정된 뒤 선택적으로 추가한다. 모든 mutation은 현재 tripId와 서버 계약 출처를 명시하고 mock/api 데이터를 섞지 않아야 한다.
+현재 Workspace는 두리 분석 리포트, suggestion before/after preview, fingerprint stale 검증과 원자적 apply, DAY 및 일정의 native gesture 이동을 로컬 Store 경계에 연결한다. 다음 단계는 확정된 서버 order·Schedule batch·Directions 계약에 같은 검증을 연결하는 것이다. 모든 mutation은 현재 tripId와 서버 계약 출처를 명시하고 mock/api 데이터를 섞지 않아야 한다.

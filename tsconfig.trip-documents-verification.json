@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "customConditions": [],
+    "target": "ES2022",
+    "rootDir": ".",
+    "outDir": ".trip-documents-verification",
+    "declaration": false,
+    "sourceMap": false
+  },
+  "include": [
+    "scripts/verify-trip-documents.ts",
+    "src/features/trip-documents/types.ts",
+    "src/features/trip-documents/logic/**/*.ts"
+  ]
+}

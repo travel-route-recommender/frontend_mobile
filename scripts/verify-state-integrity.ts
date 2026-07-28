@@ -65,6 +65,43 @@ assert(new Set(normalized.candidatesByTripId[tripId].map((entry) => entry.placeI
 assert(new Set(normalized.savedPlaceIdsByUserId[normalized.currentUserId]).size === normalized.savedPlaceIdsByUserId[normalized.currentUserId].length, "saved place IDs must deduplicate independently");
 assert(normalized.itineraryByTripId[tripId].every((item) => item.preferredByUserIds.every((userId) => normalized.tripsById[tripId].members.some((member) => member.userId === userId))), "itinerary preference references must stay within trip members");
 
+const invalidFacts = copyDomain(base);
+invalidFacts.tripsById[tripId].endCondition = {
+  type: "train",
+  location: { name: "" },
+  deadline: "18:10",
+  travelMinutes: -1,
+  serviceBufferMinutes: 721,
+};
+const invalidFactsReport = validateAppState({
+  domain: invalidFacts,
+  auth: { sessionKind: "member", currentSessionUserId: invalidFacts.currentUserId, preferenceTestCompleted: true },
+});
+for (const expectedCode of [
+  "trip.end-condition-location-invalid",
+  "trip.end-condition-deadline-invalid",
+  "trip.end-condition-travel-invalid",
+  "trip.end-condition-buffer-invalid",
+]) {
+  assert(invalidFactsReport.errors.some((entry) => entry.code === expectedCode), `validator must report ${expectedCode}`);
+}
+
+const legacyFacts = copyDomain(base);
+(legacyFacts.tripsById[tripId] as unknown as Record<string, unknown>).transport = "walking";
+(legacyFacts.tripsById[tripId] as unknown as Record<string, unknown>).endCondition = { type: "train", location: { name: "부산역" }, deadline: "18:10", travelMinutes: 40, serviceBufferMinutes: 20 };
+const migratedFacts = normalizePersistedState(legacyFacts);
+assert(migratedFacts.tripsById[tripId].transport === "public", "legacy walking transport must migrate to public transit and walking");
+assert(migratedFacts.tripsById[tripId].endCondition === null, "invalid persisted end condition must be discarded instead of guessed");
+
+const undecidedFacts = copyDomain(base);
+undecidedFacts.tripsById[tripId] = { ...undecidedFacts.tripsById[tripId], startDate: null, endDate: null, dateUndecided: true };
+const undecidedReport = validateAppState({
+  domain: undecidedFacts,
+  auth: { sessionKind: "member", currentSessionUserId: undecidedFacts.currentUserId, preferenceTestCompleted: true },
+});
+assert(undecidedReport.errors.some((entry) => entry.code === "trip.date-undecided-end-condition-present"), "날짜 미정 여행은 종료 조건을 보유하면 안 된다");
+assert(normalizePersistedState(undecidedFacts).tripsById[tripId].endCondition === null, "normalization must remove an end condition from an undecided-date trip");
+
 const mismatchedSession = validateAppState({
   domain: base,
   auth: { sessionKind: "guest", currentSessionUserId: "missing-user", preferenceTestCompleted: false },
@@ -85,5 +122,4 @@ const stale = validateAppState({
 assert(stale.valid, "stale analysis is expected state, not structural corruption");
 assert(stale.warnings.some((entry) => entry.code === "duri.analysis-stale"), "itinerary change must make the existing analysis stale");
 
-console.log("State integrity verification passed: invariants, migration, session isolation, and Duri stale detection");
-
+console.log("State integrity verification passed: invariants, fact migration, session isolation, and Duri stale detection");

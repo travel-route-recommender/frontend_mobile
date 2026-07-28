@@ -3,14 +3,17 @@ import { Redirect, Stack, usePathname } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
 import { StyleSheet, View } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { Screen } from "../src/components/common";
 import { ErrorState, LoadingState } from "../src/components/feedback";
 import { useAuthSessionHydration } from "../src/features/auth/hooks/useAuthSessionHydration";
 import { useAuthSessionBootstrap } from "../src/features/auth/hooks/useAuthSessionBootstrap";
 import { useAuthSessionStore } from "../src/features/auth/store/useAuthSessionStore";
+import { useTripInviteHydration } from "../src/features/invitations/hooks/useTripInviteHydration";
 import { usePreferenceDraftHydration } from "../src/features/preferences/hooks/usePreferenceDraftHydration";
 import { useCreateTripDraftHydration } from "../src/features/trip-creation/hooks/useCreateTripDraftHydration";
+import { useTripDocumentHydration } from "../src/features/trip-documents";
 import { normalizePreferenceResult } from "../src/duri/group-preferences";
 import { queryClient } from "../src/query/queryClient";
 import { useStoreHydration } from "../src/store/useStoreHydration";
@@ -18,7 +21,7 @@ import { useDuriStore } from "../src/store/useDuriStore";
 import { colors } from "../src/theme/tokens";
 
 export default function RootLayout() {
-  return <SafeAreaProvider><QueryClientProvider client={queryClient}><HydratedNavigator /></QueryClientProvider></SafeAreaProvider>;
+  return <GestureHandlerRootView style={styles.root}><SafeAreaProvider><QueryClientProvider client={queryClient}><HydratedNavigator /></QueryClientProvider></SafeAreaProvider></GestureHandlerRootView>;
 }
 
 function HydratedNavigator() {
@@ -26,11 +29,34 @@ function HydratedNavigator() {
   const authHydration = useAuthSessionHydration();
   const preferenceDraftHydration = usePreferenceDraftHydration();
   const createTripDraftHydration = useCreateTripDraftHydration();
-  const localHydrated = domainHydration.isHydrated && authHydration.isHydrated && preferenceDraftHydration.isHydrated && createTripDraftHydration.isHydrated;
+  const tripInviteHydration = useTripInviteHydration();
+  const tripDocumentHydration = useTripDocumentHydration();
+  const localHydrated = domainHydration.isHydrated
+    && authHydration.isHydrated
+    && preferenceDraftHydration.isHydrated
+    && createTripDraftHydration.isHydrated
+    && tripInviteHydration.isHydrated
+    && tripDocumentHydration.isHydrated;
   const sessionBootstrap = useAuthSessionBootstrap(localHydrated);
-  const error = domainHydration.error ?? authHydration.error ?? preferenceDraftHydration.error ?? createTripDraftHydration.error ?? sessionBootstrap.error;
-  if (error) return <Screen><ErrorState message={error.message} onRetry={() => { void Promise.all([domainHydration.retry(), authHydration.retry(), preferenceDraftHydration.retry(), createTripDraftHydration.retry()]); sessionBootstrap.retry(); }} /></Screen>;
-  if (!localHydrated || !sessionBootstrap.isReady) return <View style={styles.loading}><LoadingState label="안전한 로그인 상태를 확인하고 있어요" /></View>;
+  const error = domainHydration.error
+    ?? authHydration.error
+    ?? preferenceDraftHydration.error
+    ?? createTripDraftHydration.error
+    ?? tripInviteHydration.error
+    ?? tripDocumentHydration.error
+    ?? sessionBootstrap.error;
+  if (error) return <Screen><ErrorState message={error.message} onRetry={() => {
+    void Promise.all([
+      domainHydration.retry(),
+      authHydration.retry(),
+      preferenceDraftHydration.retry(),
+      createTripDraftHydration.retry(),
+      tripInviteHydration.retry(),
+      tripDocumentHydration.retry(),
+    ]);
+    sessionBootstrap.retry();
+  }} /></Screen>;
+  if (!localHydrated || !sessionBootstrap.isReady) return <View style={styles.loading}><LoadingState label="안전한 로그인 상태와 여행 정보를 확인하고 있어요" /></View>;
   return <SessionAwareNavigator />;
 }
 
@@ -72,4 +98,4 @@ function SessionAwareNavigator() {
     </Stack.Protected>
   </Stack></>;
 }
-const styles = StyleSheet.create({ loading: { flex: 1, backgroundColor: colors.background } });
+const styles = StyleSheet.create({ root: { flex: 1 }, loading: { flex: 1, backgroundColor: colors.background } });

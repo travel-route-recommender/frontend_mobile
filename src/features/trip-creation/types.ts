@@ -1,11 +1,20 @@
-import type { EntityId, TripBudgetLevel, TripIntensity, TripTransport } from "../../domain";
+import type { EntityId, TripEndConditionType, TripTransport } from "../../domain";
 
-export const CREATE_TRIP_DRAFT_VERSION = 2;
+export const CREATE_TRIP_DRAFT_VERSION = 3;
 export const CREATE_TRIP_STEP_COUNT = 5;
 
 export type CreateTripStep = 0 | 1 | 2 | 3 | 4;
 export type TripCreationScreenMode = "create" | "edit";
 export type TripCompanionType = "friends" | "family" | "couple" | "group" | "undecided";
+
+export interface CreateTripEndConditionDraft {
+  type: TripEndConditionType;
+  location: string;
+  deadline: string;
+  travelMinutes: string;
+  serviceBufferMinutes: string;
+  note: string;
+}
 
 export interface CreateTripDraft {
   configVersion: typeof CREATE_TRIP_DRAFT_VERSION;
@@ -15,9 +24,9 @@ export interface CreateTripDraft {
   startDate: string | null;
   endDate: string | null;
   dateUndecided: boolean;
-  transport: TripTransport;
-  budgetLevel: TripBudgetLevel;
-  intensity: TripIntensity;
+  transport: TripTransport | null;
+  accommodationLocation: string;
+  endCondition: CreateTripEndConditionDraft | null;
   companionType: TripCompanionType | null;
   expectedMemberCount: number | null;
   selectedMemberUserIds: EntityId[];

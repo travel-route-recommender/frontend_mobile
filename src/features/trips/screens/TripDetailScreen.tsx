@@ -6,12 +6,11 @@ import { AppHeader, Card, Screen, SectionHeader, SecondaryButton } from "../../.
 import { ErrorState } from "../../../components/feedback";
 import { environment } from "../../../config/environment";
 import { diagnoseGroupPreferences } from "../../../duri/group-preferences";
-import { useDuriStore } from "../../../store/useDuriStore";
+import { useDuriHydrationState, useDuriStore } from "../../../store/useDuriStore";
 import { colors, spacing, typography } from "../../../theme/tokens";
 import {
   CandidateSummaryCard,
   DuriAnalysisCard,
-  InviteMemberModal,
   ItinerarySummaryCard,
   PreferenceSectionIntro,
   TripHomeHero,
@@ -22,6 +21,9 @@ import { GroupPreferenceDiagnosisCard, PreferenceResponseSummaryCard } from "../
 import { selectRoomPreferenceResponseSummary, selectTripRoomCardViewModel } from "../selectors";
 import type { TripPreparationStepId } from "../types";
 import { useExploreSearchStore } from "../../explore/store/useExploreSearchStore";
+import { buildTripExploreHref } from "../../explore/logic/exploreNavigation";
+import { TripInviteManagerModal } from "../../invitations/components/TripInviteManagerModal";
+import { TripDocumentSection } from "../../trip-documents";
 
 export function TripHomeScreen() {
   const router = useRouter();
@@ -29,9 +31,8 @@ export function TripHomeScreen() {
   const tripId = Array.isArray(params.tripId) ? params.tripId[0] : params.tripId;
   const created = (Array.isArray(params.created) ? params.created[0] : params.created) === "1";
   const [inviteOpen, setInviteOpen] = useState(false);
-  const hydrationError = useDuriStore((state) => state.hydrationError);
+  const hydrationError = useDuriHydrationState((state) => state.hydrationError);
   const setActiveTrip = useDuriStore((state) => state.setActiveTrip);
-  const addTripMember = useDuriStore((state) => state.addTripMember);
   const startTripExplore = useExploreSearchStore((state) => state.startTripExplore);
   const source = useDuriStore(useShallow((state) => ({
     currentUserId: state.currentUserId,
@@ -67,7 +68,7 @@ export function TripHomeScreen() {
   const currentMember = summary.members.find((member) => member.userId === source.currentUserId);
   const completed = trip.status === "completed";
   const openWorkspace = () => router.push({ pathname: "/trips/[tripId]/workspace", params: { tripId } });
-  const explore = () => { setActiveTrip(tripId); startTripExplore(trip.regionId); router.push("/(tabs)/explore"); };
+  const explore = () => { setActiveTrip(tripId); startTripExplore(trip.regionId); router.push(buildTripExploreHref({ tripId, origin: "room" })); };
   const startMyTest = () => router.push("/tests/personal");
   const handlePreparationAction = (stepId: TripPreparationStepId) => {
     if (stepId === "preferences") { if (currentMember?.state !== "completed") startMyTest(); return; }
@@ -93,12 +94,19 @@ export function TripHomeScreen() {
     <SectionBlock><SectionHeader title="우리 여행 성향" /></SectionBlock>
     <GroupPreferenceDiagnosisCard diagnosis={diagnosis} memberNamesById={memberNamesById} canStartMyTest={Boolean(currentMember && currentMember.state !== "completed")} onStartMyTest={startMyTest} />
 
+    <SectionBlock><TripDocumentSection
+      tripId={tripId}
+      currentUserId={source.currentUserId}
+      itineraryItemIds={itinerary.map((item) => item.id)}
+      readOnly={completed}
+      isOwner={trip.members.some((member) => member.userId === source.currentUserId && member.role === "owner")}
+    /></SectionBlock>
     <SectionBlock><CandidateSummaryCard trip={trip} candidates={candidates} placesById={source.placesById} usersById={source.usersById} itinerary={itinerary} onExplore={explore} onWorkspace={openWorkspace} /></SectionBlock>
     <SectionBlock><ItinerarySummaryCard trip={trip} itinerary={itinerary} placesById={source.placesById} onWorkspace={openWorkspace} /></SectionBlock>
     <SectionBlock><DuriAnalysisCard itineraryCount={itinerary.length} onWorkspace={openWorkspace} /></SectionBlock>
 
     {completed ? <SectionBlock><Card style={styles.readOnly}><Text style={styles.readOnlyTitle}>완료된 여행이에요</Text><Text style={styles.readOnlyText}>후보와 일정은 기록 중심으로 볼 수 있으며, 상태를 자동으로 진행 중으로 바꾸지 않아요.</Text></Card></SectionBlock> : null}
-    <InviteMemberModal visible={inviteOpen} trip={trip} usersById={source.usersById} onInvite={(userId) => { addTripMember(tripId, userId); setInviteOpen(false); }} onClose={() => setInviteOpen(false)} />
+    <TripInviteManagerModal visible={inviteOpen} trip={trip} onClose={() => setInviteOpen(false)} />
   </Screen>;
 }
 

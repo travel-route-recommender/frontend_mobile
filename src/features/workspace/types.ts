@@ -6,6 +6,7 @@ export type CandidateScheduleState =
   | "scheduled-on-selected-date"
   | "scheduled-on-other-date";
 export type ItineraryMoveDirection = "up" | "down";
+export type TripDayMoveDirection = "previous" | "next";
 
 export interface WorkspaceDate {
   date: string;

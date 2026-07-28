@@ -10,7 +10,6 @@ import {
   type GestureResponderHandlers,
 } from "react-native";
 import {
-  MIN_DURATION_MINUTES,
   SLOT_HEIGHT_PX,
   SLOT_MINUTES,
   WORKSPACE_END_MINUTES,
@@ -25,6 +24,11 @@ import {
   getSnappedStartTimeFromTranslation,
   parseTimeToMinutes,
 } from "../logic/workspaceDateTime";
+import type { TripEndConditionTimelineEntry } from "../logic/tripEndCondition";
+import {
+  getScheduleBlockDisplayMode,
+  shouldShowScheduleResizeHandle,
+} from "../logic/workspaceScheduleLayout";
 import type { ItineraryItemViewModel, WorkspaceDate } from "../types";
 
 const TIME_AXIS_WIDTH = 58;
@@ -34,6 +38,7 @@ const MOVE_LONG_PRESS_MS = 240;
 export function WorkspaceScheduleGrid({
   date,
   items,
+  endCondition,
   canEdit,
   interactionItemId,
   onAdd,
@@ -44,6 +49,7 @@ export function WorkspaceScheduleGrid({
 }: {
   date: WorkspaceDate;
   items: readonly ItineraryItemViewModel[];
+  endCondition?: TripEndConditionTimelineEntry;
   canEdit: boolean;
   interactionItemId?: string;
   onAdd: () => void;
@@ -53,9 +59,14 @@ export function WorkspaceScheduleGrid({
   onInteractionStateChange: (itemId?: string) => void;
 }) {
   const scrollRef = useRef<ScrollView | null>(null);
+  const itemsRef = useRef(items);
 
   useEffect(() => {
-    const firstStart = items.reduce<number | null>((earliest, item) => {
+    itemsRef.current = items;
+  }, [items]);
+
+  useEffect(() => {
+    const firstStart = itemsRef.current.reduce<number | null>((earliest, item) => {
       const minutes = parseTimeToMinutes(item.startTime);
       if (minutes === null) return earliest;
       return earliest === null ? minutes : Math.min(earliest, minutes);
@@ -64,14 +75,14 @@ export function WorkspaceScheduleGrid({
       ? 0
       : Math.max(((firstStart - WORKSPACE_START_MINUTES) / SLOT_MINUTES) * SLOT_HEIGHT_PX - 72, 0);
     scrollRef.current?.scrollTo({ y: top, animated: false });
-  }, [date.date, items]);
+  }, [date.date]);
 
   return <View style={styles.card} testID="workspace-schedule-grid">
     <View style={styles.header}>
       <View style={styles.headerCopy}>
         <Text style={styles.eyebrow}>{date.dayLabel} · {date.monthDayLabel} {date.weekdayLabel}</Text>
         <Text style={styles.title}>일정표</Text>
-        <Text style={styles.guide}>08:00–24:00 · 30분 단위</Text>
+        <Text style={styles.guide}>08:00–24:00 · {SLOT_MINUTES}분 단위</Text>
       </View>
       {canEdit ? <Pressable
         accessibilityRole="button"
@@ -80,7 +91,12 @@ export function WorkspaceScheduleGrid({
         style={({ pressed }) => [styles.addButton, pressed && styles.pressed]}
       ><Text style={styles.addButtonText}>+ 일정 추가</Text></Pressable> : null}
     </View>
-    <Text style={styles.interactionGuide}>오른쪽 핸들로 시간을 옮기고, 블록 아래 핸들로 체류시간을 조절하세요.</Text>
+    <Text style={styles.interactionGuide}>시간표를 좌우로 밀어 DAY를 바꾸고, 오른쪽·아래 핸들로 일정 시간과 체류시간을 조절하세요.</Text>
+    {endCondition ? <View style={styles.endConditionSummary}>
+      <Text style={styles.endConditionSummaryTitle}>마지막 날 복귀 조건</Text>
+      <Text style={styles.endConditionSummaryText}>{formatEndConditionStart(endCondition)} → {endCondition.locationName} {endCondition.deadline}까지</Text>
+      <Text style={styles.endConditionSummaryMeta}>예상 이동 {endCondition.travelMinutes}분 + 승차·반납 준비 {endCondition.serviceBufferMinutes}분</Text>
+    </View> : null}
     <ScrollView
       ref={scrollRef}
       style={styles.viewport}
@@ -101,6 +117,7 @@ export function WorkspaceScheduleGrid({
               style={[styles.slotLine, major ? styles.majorLine : styles.minorLine, { top: index * SLOT_HEIGHT_PX }]}
             />;
           })}
+          {endCondition ? <EndConditionTimelineMarker entry={endCondition} /> : null}
           {!items.length ? <View style={styles.empty}>
             <Text style={styles.emptyTitle}>아직 일정이 없어요</Text>
             <Text style={styles.emptyText}>아래 후보 장소 보드에서 장소를 일정에 추가해보세요.</Text>
@@ -124,9 +141,44 @@ function TimeAxis() {
   return <View style={styles.timeAxis}>
     {Array.from({ length: 17 }, (_, index) => {
       const minutes = WORKSPACE_START_MINUTES + index * 60;
-      const top = Math.min(Math.max(index * SLOT_HEIGHT_PX * 2 - 8, 0), WORKSPACE_GRID_HEIGHT_PX - 18);
+      const top = Math.min(
+        Math.max(((minutes - WORKSPACE_START_MINUTES) / SLOT_MINUTES) * SLOT_HEIGHT_PX - 8, 0),
+        WORKSPACE_GRID_HEIGHT_PX - 18,
+      );
       return <Text key={minutes} style={[styles.timeLabel, { top }]}>{formatMinutesToTime(minutes)}</Text>;
     })}
+  </View>;
+}
+
+function formatEndConditionStart(entry: TripEndConditionTimelineEntry) {
+  if (entry.cutoffMinutes < WORKSPACE_START_MINUTES) return "08:00 이전 출발 필요";
+  return `${formatMinutesToTime(entry.cutoffMinutes) ?? "--:--"} 복귀 출발`;
+}
+
+function EndConditionTimelineMarker({ entry }: { entry: TripEndConditionTimelineEntry }) {
+  const visibleStart = Math.min(Math.max(entry.cutoffMinutes, WORKSPACE_START_MINUTES), WORKSPACE_END_MINUTES);
+  const visibleDeadline = Math.min(Math.max(entry.deadlineMinutes, WORKSPACE_START_MINUTES), WORKSPACE_END_MINUTES);
+  const startTop = ((visibleStart - WORKSPACE_START_MINUTES) / SLOT_MINUTES) * SLOT_HEIGHT_PX;
+  const deadlineTop = Math.min(
+    ((visibleDeadline - WORKSPACE_START_MINUTES) / SLOT_MINUTES) * SLOT_HEIGHT_PX,
+    WORKSPACE_GRID_HEIGHT_PX - 1,
+  );
+  const windowHeight = Math.max(deadlineTop - startTop, 2);
+  const labelTop = Math.min(startTop + spacing.xxs, WORKSPACE_GRID_HEIGHT_PX - 58);
+  const accessibilityLabel = `${entry.locationName} 복귀 조건, ${formatEndConditionStart(entry)}, ${entry.deadline}까지, 이동 ${entry.travelMinutes}분, 준비 ${entry.serviceBufferMinutes}분`;
+
+  return <View
+    accessible
+    accessibilityLabel={accessibilityLabel}
+    pointerEvents="none"
+    style={StyleSheet.absoluteFill}
+  >
+    <View style={[styles.endConditionWindow, { top: startTop, height: windowHeight }]} />
+    <View style={[styles.endConditionDeadlineLine, { top: deadlineTop }]} />
+    <View style={[styles.endConditionMarker, { top: labelTop }]}>
+      <Text numberOfLines={1} style={styles.endConditionMarkerTitle}>복귀 · {entry.locationName}</Text>
+      <Text numberOfLines={1} style={styles.endConditionMarkerTime}>{formatEndConditionStart(entry)} · {entry.deadline} 마감</Text>
+    </View>
   </View>;
 }
 
@@ -275,9 +327,17 @@ function ScheduleGridItem({
 
   const startMinutes = parseTimeToMinutes(item.startTime) ?? WORKSPACE_START_MINUTES;
   const top = ((startMinutes - WORKSPACE_START_MINUTES) / SLOT_MINUTES) * SLOT_HEIGHT_PX + 2;
-  const height = Math.max((previewDuration / SLOT_MINUTES) * SLOT_HEIGHT_PX - 4, 36);
+  const height = Math.max((previewDuration / SLOT_MINUTES) * SLOT_HEIGHT_PX - 4, SLOT_HEIGHT_PX - 4);
   const previewEndTime = formatMinutesToTime((parseTimeToMinutes(previewStartTime) ?? startMinutes) + previewDuration) ?? item.endTime;
-  const compact = previewDuration <= MIN_DURATION_MINUTES;
+  // Keep gesture handles tied to the committed duration so the active responder
+  // never unmounts, while the visible copy follows the live resize preview.
+  const interactionDisplayMode = getScheduleBlockDisplayMode(item.durationMinutes);
+  const visualDisplayMode = getScheduleBlockDisplayMode(resizing ? previewDuration : item.durationMinutes);
+  const showResizeHandle = shouldShowScheduleResizeHandle(canEdit, item.durationMinutes);
+  const micro = interactionDisplayMode === "micro";
+  const compact = interactionDisplayMode !== "full";
+  const visualMicro = visualDisplayMode === "micro";
+  const visualCompact = visualDisplayMode !== "full";
 
   const moveBySlot = (direction: -1 | 1) => {
     const next = getSnappedStartTimeFromTranslation(item.startTime, item.durationMinutes, direction * SLOT_HEIGHT_PX);
@@ -289,7 +349,7 @@ function ScheduleGridItem({
   };
 
   return <Animated.View
-    accessibilityLabel={`${item.placeName}, ${previewStartTime}부터 ${previewEndTime}`}
+    accessibilityLabel={`${item.placeName}, ${previewStartTime}부터 ${previewEndTime}, ${previewDuration}분`}
     style={[
       styles.item,
       item.hasTimeConflict && styles.itemConflict,
@@ -301,12 +361,18 @@ function ScheduleGridItem({
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={`${item.placeName} 일정 편집`}
+      accessibilityHint={micro ? "두 번 탭하여 시간과 체류시간을 편집하세요" : undefined}
+      hitSlop={compact ? { top: 12, bottom: 12 } : undefined}
       onPress={onEdit}
-      style={({ pressed }) => [styles.itemOpen, pressed && styles.itemPressed]}
+      style={({ pressed }) => [styles.itemOpen, visualCompact && styles.itemOpenCompact, visualMicro && styles.itemOpenMicro, pressed && styles.itemPressed]}
     >
-      <Text numberOfLines={1} style={styles.itemName}>{item.placeName}</Text>
-      <Text numberOfLines={1} style={styles.itemTime}>{previewStartTime}{compact ? "" : `–${previewEndTime}`}</Text>
-      {!compact ? <Text numberOfLines={1} style={styles.itemMeta}>{item.categoryLabel} · {previewDuration}분</Text> : null}
+      <Text
+        maxFontSizeMultiplier={visualMicro ? 1 : visualCompact ? 1.15 : undefined}
+        numberOfLines={1}
+        style={[styles.itemName, visualCompact && styles.itemNameCompact, visualMicro && styles.itemNameMicro]}
+      >{visualCompact ? `${previewStartTime}–${previewEndTime} · ${item.placeName}` : item.placeName}</Text>
+      {!visualCompact ? <Text numberOfLines={1} style={styles.itemTime}>{previewStartTime}–{previewEndTime}</Text> : null}
+      {!visualCompact ? <Text numberOfLines={1} style={styles.itemMeta}>{item.categoryLabel} · {previewDuration}분</Text> : null}
     </Pressable>
     {canEdit ? <View
       {...moveHandlers}
@@ -315,23 +381,28 @@ function ScheduleGridItem({
       accessibilityLabel={`${item.placeName} 시작 시간 이동`}
       accessibilityHint="길게 누른 뒤 위아래로 끌거나 접근성 조절 동작을 사용하세요"
       accessibilityValue={{ text: previewStartTime }}
-      accessibilityActions={[{ name: "increment", label: "30분 뒤로 이동" }, { name: "decrement", label: "30분 앞으로 이동" }]}
+      hitSlop={compact ? { top: 14, bottom: 14, left: 8 } : undefined}
+      accessibilityActions={[{ name: "increment", label: `${SLOT_MINUTES}분 뒤로 이동` }, { name: "decrement", label: `${SLOT_MINUTES}분 앞으로 이동` }]}
       onAccessibilityAction={(event) => moveBySlot(event.nativeEvent.actionName === "increment" ? 1 : -1)}
-      style={[styles.moveHandle, moving && styles.handleActive]}
+      style={[styles.moveHandle, compact && styles.moveHandleCompact, micro && styles.moveHandleMicro, moving && styles.handleActive]}
       testID={`workspace-grid-move-${item.id}`}
-    ><Text style={[styles.moveHandleText, moving && styles.handleTextActive]}>{moving ? previewStartTime : "⋮⋮"}</Text></View> : null}
-    {canEdit ? <View
+    ><Text style={[styles.moveHandleText, compact && styles.moveHandleTextCompact, moving && styles.handleTextActive]}>{moving ? previewStartTime : "⋮⋮"}</Text></View> : null}
+    {showResizeHandle ? <View
       {...resizeHandlers}
       accessible
       accessibilityRole="adjustable"
       accessibilityLabel={`${item.placeName} 체류시간 조절`}
-      accessibilityHint="위아래로 끌거나 접근성 조절 동작을 사용하세요"
+      accessibilityHint={micro ? "아래 가장자리 손잡이를 아래로 끌어 체류시간을 늘리거나 접근성 조절 동작을 사용하세요" : "아래 손잡이를 위아래로 끌거나 접근성 조절 동작을 사용하세요"}
       accessibilityValue={{ text: `${previewDuration}분` }}
-      accessibilityActions={[{ name: "increment", label: "30분 늘리기" }, { name: "decrement", label: "30분 줄이기" }]}
+      hitSlop={micro ? { bottom: 8, left: 8, right: 8 } : undefined}
+      accessibilityActions={[{ name: "increment", label: `${SLOT_MINUTES}분 늘리기` }, { name: "decrement", label: `${SLOT_MINUTES}분 줄이기` }]}
       onAccessibilityAction={(event) => resizeBySlot(event.nativeEvent.actionName === "increment" ? 1 : -1)}
-      style={[styles.resizeHandle, resizing && styles.handleActive]}
+      style={[micro ? styles.resizeHandleMicro : styles.resizeHandle, !micro && compact && styles.resizeHandleCompact, !micro && resizing && styles.handleActive]}
       testID={`workspace-grid-resize-${item.id}`}
-    ><Text style={[styles.resizeHandleText, resizing && styles.handleTextActive]}>{resizing ? `${previewEndTime} · ${previewDuration}분` : "━"}</Text></View> : null}
+    >{micro
+      ? <View style={[styles.resizeHandleMicroIndicator, resizing && styles.resizeHandleMicroIndicatorActive]} />
+      : <Text style={[styles.resizeHandleText, resizing && styles.handleTextActive]}>{resizing ? `${previewEndTime} · ${previewDuration}분` : "━"}</Text>
+    }</View> : null}
   </Animated.View>;
 }
 
@@ -345,12 +416,21 @@ const styles = StyleSheet.create({
   addButton: { minHeight: 44, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: colors.primary, paddingHorizontal: spacing.md },
   addButtonText: { ...typography.caption, color: colors.white },
   interactionGuide: { ...typography.caption, color: colors.textSecondary, backgroundColor: colors.surfaceMuted, paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
+  endConditionSummary: { gap: spacing.xxs, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.warningSoft, paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
+  endConditionSummaryTitle: { ...typography.bodyStrong, color: colors.warning },
+  endConditionSummaryText: { ...typography.caption, color: colors.text },
+  endConditionSummaryMeta: { ...typography.caption, color: colors.textSecondary },
   viewport: { height: GRID_VIEWPORT_HEIGHT },
   viewportContent: { minHeight: WORKSPACE_GRID_HEIGHT_PX + spacing.md },
   grid: { position: "relative", minHeight: WORKSPACE_GRID_HEIGHT_PX, flexDirection: "row" },
   timeAxis: { position: "relative", width: TIME_AXIS_WIDTH, height: WORKSPACE_GRID_HEIGHT_PX, borderRightWidth: 1, borderRightColor: colors.border, backgroundColor: colors.surface },
   timeLabel: { position: "absolute", right: spacing.xs, ...typography.caption, fontSize: 10, color: colors.textMuted },
   dayColumn: { position: "relative", flex: 1, height: WORKSPACE_GRID_HEIGHT_PX, backgroundColor: colors.surfaceMuted },
+  endConditionWindow: { position: "absolute", left: 0, right: 0, zIndex: 1, borderLeftWidth: 3, borderLeftColor: colors.warning, backgroundColor: "rgba(255, 193, 7, 0.14)" },
+  endConditionDeadlineLine: { position: "absolute", left: 0, right: 0, zIndex: 2, borderTopWidth: 2, borderTopColor: colors.warning, borderStyle: "dashed" },
+  endConditionMarker: { position: "absolute", left: spacing.xs, right: spacing.xs, zIndex: 3, minHeight: 50, justifyContent: "center", borderRadius: radius.md, borderWidth: 1, borderColor: colors.warning, backgroundColor: colors.warningSoft, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
+  endConditionMarkerTitle: { ...typography.bodyStrong, fontSize: 12, lineHeight: 16, color: colors.warning },
+  endConditionMarkerTime: { ...typography.caption, fontSize: 10, lineHeight: 14, color: colors.textSecondary },
   slotLine: { position: "absolute", left: 0, right: 0, borderTopWidth: 1 },
   majorLine: { borderTopColor: colors.borderStrong },
   minorLine: { borderTopColor: colors.border, borderStyle: "dashed" },
@@ -361,13 +441,24 @@ const styles = StyleSheet.create({
   itemConflict: { borderColor: colors.danger, backgroundColor: colors.dangerSoft },
   itemMoving: { zIndex: 20, opacity: 0.92, elevation: 12 },
   itemOpen: { height: "100%", paddingLeft: spacing.sm, paddingRight: 48, paddingTop: spacing.xs, paddingBottom: 18 },
+  itemOpenCompact: { justifyContent: "center", paddingLeft: spacing.xs, paddingTop: 0, paddingBottom: 14, paddingRight: 40 },
+  itemOpenMicro: { paddingBottom: 0, paddingRight: 36 },
   itemPressed: { opacity: 0.78 },
   itemName: { ...typography.bodyStrong, fontSize: 13, lineHeight: 18, color: colors.navy },
+  itemNameCompact: { fontSize: 11, lineHeight: 15 },
+  itemNameMicro: { fontSize: 11, lineHeight: 13 },
   itemTime: { ...typography.caption, fontSize: 10, lineHeight: 14, color: colors.primary },
   itemMeta: { ...typography.caption, fontSize: 9, lineHeight: 13, color: colors.textSecondary },
-  moveHandle: { position: "absolute", top: 0, right: 0, width: 44, minHeight: 36, bottom: 14, alignItems: "center", justifyContent: "center", borderLeftWidth: 1, borderLeftColor: colors.border, backgroundColor: "rgba(255,255,255,0.76)" },
+  moveHandle: { position: "absolute", top: 0, right: 0, width: 44, minHeight: 36, bottom: 18, alignItems: "center", justifyContent: "center", borderLeftWidth: 1, borderLeftColor: colors.border, backgroundColor: "rgba(255,255,255,0.76)" },
+  moveHandleCompact: { width: 40, minHeight: 0, bottom: 14 },
+  moveHandleMicro: { width: 36, bottom: 0 },
   moveHandleText: { ...typography.bodyStrong, color: colors.textSecondary },
+  moveHandleTextCompact: { fontSize: 11, lineHeight: 14 },
   resizeHandle: { position: "absolute", left: spacing.xs, right: spacing.xs, bottom: 0, height: 18, alignItems: "center", justifyContent: "center", borderTopWidth: 1, borderTopColor: colors.border },
+  resizeHandleCompact: { height: 14 },
+  resizeHandleMicro: { position: "absolute", left: "50%", bottom: 0, width: 56, height: "100%", transform: [{ translateX: -28 }], alignItems: "center", justifyContent: "flex-end" },
+  resizeHandleMicroIndicator: { width: 40, height: 3, marginBottom: 1, borderRadius: radius.pill, backgroundColor: colors.primary },
+  resizeHandleMicroIndicatorActive: { height: 4, backgroundColor: colors.primaryPressed },
   resizeHandleText: { ...typography.caption, fontSize: 10, lineHeight: 14, color: colors.textSecondary },
   handleActive: { backgroundColor: colors.primary },
   handleTextActive: { color: colors.white },

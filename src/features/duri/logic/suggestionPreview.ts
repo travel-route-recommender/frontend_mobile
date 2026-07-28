@@ -1,7 +1,8 @@
-import type { ItineraryItem, Place, TripCandidate } from "../../../domain";
+import type { ItineraryItem, Place, TripCandidate, TripRoom } from "../../../domain";
 import { previewSuggestion } from "../../../duri/duri-suggestions";
 import { findTimeConflictsForDate } from "../../workspace/logic/workspaceDateTime";
 import { sortItineraryItemsByDateAndTime } from "../../../utils/schedule";
+import { analyzeTripEndCondition } from "../../workspace/logic/tripEndCondition";
 import type {
   DuriExpectedImpact,
   DuriSuggestionEnvelope,
@@ -92,11 +93,13 @@ export function createDuriSuggestionPreview({
   tripDates,
   placesById,
   candidates,
+  trip,
 }: {
   envelope: DuriSuggestionEnvelope;
   tripDates: string[];
   placesById: Record<string, Place>;
   candidates: TripCandidate[];
+  trip: TripRoom;
 }): DuriSuggestionPreview {
   const simulated = previewSuggestion(envelope.beforeItinerary, envelope.suggestion, {
     tripId: envelope.suggestion.tripId,
@@ -121,6 +124,8 @@ export function createDuriSuggestionPreview({
   const after = createItinerarySnapshot(simulated.previewItinerary);
   const diff = diffItinerarySnapshots(before, after, placesById);
   const affectedDates = [...new Set(diff.filter((item) => item.kind !== "unchanged").flatMap((item) => [item.before?.date, item.after?.date].filter((date): date is string => Boolean(date))))].sort();
+  const endCondition = analyzeTripEndCondition(trip, simulated.previewItinerary);
+  const endConditionValid = endCondition.status !== "infeasible" && endCondition.status !== "invalid";
   return {
     suggestionId: envelope.suggestion.id,
     tripId: envelope.suggestion.tripId,
@@ -130,6 +135,6 @@ export function createDuriSuggestionPreview({
     diff,
     affectedDates,
     impact: calculateExpectedImpact({ before: envelope.beforeItinerary, after: simulated.previewItinerary, tripDates, candidates }),
-    validation: { valid: true },
+    validation: endConditionValid ? { valid: true } : { valid: false, message: endCondition.message },
   };
 }

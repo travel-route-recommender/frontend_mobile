@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { useRouter } from "expo-router";
+import { BackHandler, FlatList, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import mediumSymbolWeight from "expo-symbols/androidWeights/medium";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { EmptyState, ErrorState, LoadingState } from "../../../components/feedback";
-import { Screen } from "../../../components/common";
+import { AppHeader, Screen } from "../../../components/common";
 import { colors, radius, shadows, spacing, typography } from "../../../theme/tokens";
 import { queryKeys } from "../../../query/keys";
 import { useDuriStore } from "../../../store/useDuriStore";
@@ -28,6 +28,11 @@ import { usePlaceActions } from "../../places/hooks/usePlaceActions";
 import { useExploreSearchStore } from "../store/useExploreSearchStore";
 import { loadRecentExploreSearches, mergeRecentExploreSearch, saveRecentExploreSearches } from "../services/recentExploreSearches";
 import type { PlaceLocationSelection, PlaceSortOption } from "../../places/types";
+import {
+  buildPlaceDetailHref,
+  buildTripExploreReturnHref,
+  resolveTripExploreContext,
+} from "../logic/exploreNavigation";
 
 const EXPLORE_RESULTS_PER_PAGE = 10;
 const BACKEND_PLACE_PAGE_SIZE = 50;
@@ -41,6 +46,14 @@ type SearchSuggestion = {
 
 export function ExploreScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ tripId?: string | string[]; origin?: string | string[] }>();
+  const tripExploreContext = useMemo(
+    () => resolveTripExploreContext(params.tripId, params.origin),
+    [params.origin, params.tripId],
+  );
+  const returnToTrip = useCallback(() => {
+    if (tripExploreContext) router.dismissTo(buildTripExploreReturnHref(tripExploreContext));
+  }, [router, tripExploreContext]);
   const actions = usePlaceActions();
   const searchState = useExploreSearchStore();
   const syncActiveTripRegion = useExploreSearchStore((state) => state.syncActiveTripRegion);
@@ -54,6 +67,15 @@ export function ExploreScreen() {
   const blurTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const listRef = useRef<FlatList<Place>>(null);
   const autoSelectedTripRef = useRef(false);
+
+  useFocusEffect(useCallback(() => {
+    if (!tripExploreContext || Platform.OS !== "android") return undefined;
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      returnToTrip();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [returnToTrip, tripExploreContext]));
 
   const clearBlurTimer = useCallback(() => {
     if (!blurTimerRef.current) return;
@@ -444,7 +466,9 @@ export function ExploreScreen() {
     </View> : null}
   </View> : null;
 
-  return <Screen scroll={false}>{searchHeader}<FlatList
+  return <Screen scroll={false}>
+    {tripExploreContext ? <AppHeader title="장소 더 찾기" onBack={returnToTrip} /> : null}
+    {searchHeader}<FlatList
     ref={listRef}
     style={styles.listFrame}
     data={pagedPlaces}
@@ -460,7 +484,7 @@ export function ExploreScreen() {
     ListEmptyComponent={<EmptyState title="검색 결과가 없어요" description="검색어나 지역, 카테고리 조건을 바꿔 다시 찾아보세요." ctaLabel="조건 초기화" onPress={resetFilters} />}
     renderItem={({ item }) => {
       const viewModel = cardsById[item.id];
-      return viewModel ? <PlaceCard viewModel={viewModel} distanceProximityLabel={distanceProximityById[item.id]} onPress={() => { setSearchFocused(false); router.push({ pathname: "/places/[placeId]", params: { placeId: item.id } }); }} onToggleSaved={() => { setSearchFocused(false); actions.toggleSaved(item.id); }} onAddCandidate={() => { setSearchFocused(false); actions.requestCandidate(item.id); }} /> : null;
+      return viewModel ? <PlaceCard viewModel={viewModel} distanceProximityLabel={distanceProximityById[item.id]} onPress={() => { setSearchFocused(false); router.push(buildPlaceDetailHref(item.id, tripExploreContext)); }} onToggleSaved={() => { setSearchFocused(false); actions.toggleSaved(item.id); }} onAddCandidate={() => { setSearchFocused(false); actions.requestCandidate(item.id); }} /> : null;
     }}
   />
   <PlaceFeedbackBanner feedback={actions.feedback} onClose={actions.clearFeedback} onAction={(tripId) => router.push({ pathname: "/trips/[tripId]/workspace", params: { tripId } })} />

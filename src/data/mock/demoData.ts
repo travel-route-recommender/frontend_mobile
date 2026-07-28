@@ -179,8 +179,15 @@ export function createDemoData(): DuriDomainState {
     endDate: "2026-07-19",
     status: "drafting",
     transport: "public",
-    budgetLevel: "standard",
-    intensity: "balanced",
+    accommodationLocation: { name: "부산역 인근 숙소" },
+    endCondition: {
+      type: "train",
+      location: { name: "부산역" },
+      deadline: "19:00",
+      travelMinutes: 40,
+      serviceBufferMinutes: 30,
+      note: "열차 출발 전 승강장 이동시간 확보",
+    },
     members: [
       { userId: "user-soomin", role: "owner" },
       { userId: "user-jiyoon", role: "member" },

@@ -11,6 +11,7 @@ import { createDuriSuggestionPreview, diffItinerarySnapshots } from "../src/feat
 import { buildDuriAnalysisInputFromState } from "../src/features/duri/selectors/duriSelectors";
 import type { DuriInputSource, DuriSuggestionEnvelope } from "../src/features/duri/types";
 import { prepareDuriSuggestionAtomicApply, validateDuriSuggestion } from "../src/features/duri/validation/atomicSuggestionApply";
+import { analyzeTripEndCondition, buildTripEndConditionAdjustment, resolveTripEndConditionMutation } from "../src/features/workspace/logic/tripEndCondition";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -176,7 +177,7 @@ const duplicateChangeEnvelope = envelopeFor(atomicBase, [validMove[0], { ...vali
 assert(!validateDuriSuggestion(atomicBase, { tripId: "trip", envelope: duplicateChangeEnvelope, expectedFingerprint: duplicateChangeEnvelope.baseFingerprint, appliedByUserId: "owner" }).valid, "suggestion 8: duplicate item change");
 const removeUpdateEnvelope = envelopeFor(atomicBase, [{ itemId: "i1", action: "remove", before: { date: "2026-07-18", startTime: "10:00" } }, validMove[0]]);
 assert(!validateDuriSuggestion(atomicBase, { tripId: "trip", envelope: removeUpdateEnvelope, expectedFingerprint: removeUpdateEnvelope.baseFingerprint, appliedByUserId: "owner" }).valid, "suggestion 9: remove and update same item");
-const validPreview = createDuriSuggestionPreview({ envelope: validEnvelope, tripDates: ["2026-07-18", "2026-07-19"], placesById: places, candidates: atomicBase.candidatesByTripId.trip });
+const validPreview = createDuriSuggestionPreview({ envelope: validEnvelope, tripDates: ["2026-07-18", "2026-07-19"], placesById: places, candidates: atomicBase.candidatesByTripId.trip, trip: atomicBase.tripsById.trip });
 assert(validPreview.validation.valid && validPreview.diff.some((entry) => entry.kind === "time-changed"), "suggestion 10: preview before/after diff");
 assert(atomicBase.itineraryByTripId.trip[0].startTime === "10:00", "preview must not mutate Store itinerary source");
 const changedSource = { ...atomicBase, itineraryByTripId: { ...atomicBase.itineraryByTripId, trip: atomicBase.itineraryByTripId.trip.map((entry) => entry.id === "i1" ? { ...entry, startTime: "11:00" } : entry) } };
@@ -214,4 +215,73 @@ const completedState = { ...atomicBase, tripsById: { ...atomicBase.tripsById, tr
 atomicFailure(completedState, validEnvelope); // atomic 9
 atomicFailure(afterApply, validEnvelope); // atomic 10
 
-console.log("Duri verification passed: 18 analysis + 13 suggestion + 10 atomic scenarios");
+// Trip end condition: 16 regression scenarios.
+const endCondition = {
+  type: "train" as const,
+  location: { name: "부산역" },
+  deadline: "18:00",
+  travelMinutes: 60,
+  serviceBufferMinutes: 30,
+};
+const endTrip: TripRoom = { ...trip(), endCondition };
+assert(analyzeTripEndCondition(trip(), []).status === "not-configured", "end 1: condition not configured");
+assert(analyzeTripEndCondition(endTrip, []).status === "insufficient-data", "end 2: final day empty is unknown");
+const feasibleFinal = [item("end-feasible", "a", "2026-07-19", "15:30", 60)];
+assert(analyzeTripEndCondition(endTrip, feasibleFinal).status === "feasible", "end 3: exact cutoff is feasible");
+const infeasibleFinal = [
+  item("end-early", "a", "2026-07-19", "12:00", 60),
+  item("end-late", "b", "2026-07-19", "15:00", 120),
+];
+assert(analyzeTripEndCondition(endTrip, infeasibleFinal).status === "infeasible", "end 4: travel and service buffer overflow");
+const adjustedFinal = buildTripEndConditionAdjustment(endTrip, infeasibleFinal);
+assert(adjustedFinal.status === "adjusted", "end 5a: infeasible schedule can move earlier");
+assert(adjustedFinal.status === "adjusted" && adjustedFinal.itinerary.find((entry) => entry.id === "end-early")?.startTime === "11:30" && adjustedFinal.itinerary.find((entry) => entry.id === "end-late")?.startTime === "14:30", "end 5b: all final-day items shift equally");
+assert(adjustedFinal.status === "adjusted" && adjustedFinal.itinerary.find((entry) => entry.id === "end-late")?.durationMinutes === 120, "end 6: duration is preserved");
+const originalGap = 15 * 60 - (12 * 60 + 60);
+const adjustedGap = 14 * 60 + 30 - (11 * 60 + 30 + 60);
+assert(originalGap === adjustedGap, "end 7: travel and waiting gap is preserved");
+const cannotFitFinal = [item("end-first", "a", "2026-07-19", "08:00", 60), item("end-overflow", "b", "2026-07-19", "16:00", 60)];
+assert(buildTripEndConditionAdjustment(endTrip, cannotFitFinal).status === "cannot-fit", "end 8: never move before 08:00");
+assert(resolveTripEndConditionMutation(endTrip, infeasibleFinal).status === "adjusted" && resolveTripEndConditionMutation(endTrip, cannotFitFinal).status === "rejected", "end 9: mutation preflight adjusts or rejects atomically");
+assert(analyzeTripEndCondition({ ...endTrip, endCondition: { ...endCondition, travelMinutes: Number.NaN } }, feasibleFinal).status === "invalid", "end 10a: NaN travel rejected");
+assert(analyzeTripEndCondition({ ...endTrip, endCondition: { ...endCondition, travelMinutes: -1 } }, feasibleFinal).status === "invalid", "end 10b: negative travel rejected");
+assert(analyzeTripEndCondition({ ...endTrip, endCondition: { ...endCondition, serviceBufferMinutes: Number.POSITIVE_INFINITY } }, feasibleFinal).status === "invalid", "end 10c: infinite buffer rejected");
+
+const endSource = state({
+  tripsById: { trip: endTrip, other: { ...trip(), id: "other", title: "다른 여행" } },
+  itineraryByTripId: { trip: feasibleFinal, other: [] },
+});
+const changedEndSource = {
+  ...endSource,
+  tripsById: { ...endSource.tripsById, trip: { ...endTrip, endCondition: { ...endCondition, travelMinutes: 75 } } },
+};
+assert(createDuriInputFingerprint(snapshotFor(endSource)) !== createDuriInputFingerprint(snapshotFor(changedEndSource)), "end 11: condition changes fingerprint");
+const infeasibleEndSource = { ...endSource, itineraryByTripId: { ...endSource.itineraryByTripId, trip: infeasibleFinal } };
+const endSession = sessionFor(infeasibleEndSource);
+const endIssue = endSession.issues.find((issue) => issue.category === "end-condition" && issue.severity === "high");
+assert(endIssue, "end 12: analyzer reports high end-condition issue");
+assert(generateDuriSuggestions(endSession, "2026-07-14T00:00:00.000Z").some((entry) => entry.suggestion.sourceIssueIds.includes(endIssue.id)), "end 13: feasible adjustment suggestion generated");
+
+const invalidEndMove = [{ itemId: "end-feasible", placeId: "a", action: "move" as const, before: { date: "2026-07-19", startTime: "15:30" }, after: { date: "2026-07-19", startTime: "16:00" } }];
+const invalidEndEnvelope = envelopeFor(endSource, invalidEndMove);
+const invalidEndPreview = createDuriSuggestionPreview({ envelope: invalidEndEnvelope, tripDates: ["2026-07-18", "2026-07-19"], placesById: places, candidates: endSource.candidatesByTripId.trip, trip: endTrip });
+assert(!invalidEndPreview.validation.valid, "end 14a: preview rejects infeasible final state");
+assert(!prepareDuriSuggestionAtomicApply(endSource, { tripId: "trip", envelope: invalidEndEnvelope, expectedFingerprint: invalidEndEnvelope.baseFingerprint, appliedByUserId: "owner" }, "2026-07-14").ok, "end 14b: atomic apply matches preview");
+
+const allRemovalSource = {
+  ...endSource,
+  itineraryByTripId: { ...endSource.itineraryByTripId, trip: [item("only-final", "a", "2026-07-19", "08:00", 600)] },
+};
+const allRemovalSession = sessionFor(allRemovalSource);
+const allRemovalIssue = allRemovalSession.issues.find((issue) => issue.category === "end-condition" && issue.severity === "high");
+assert(allRemovalIssue, "end 15a: cannot-fit issue exists");
+assert(!generateDuriSuggestions(allRemovalSession, "2026-07-14T00:00:00.000Z").some((entry) => entry.suggestion.sourceIssueIds.includes(allRemovalIssue.id)), "end 15b: do not solve by deleting entire final day");
+const transportOnlySource = {
+  ...allRemovalSource,
+  itineraryByTripId: { ...allRemovalSource.itineraryByTripId, trip: [{ ...allRemovalSource.itineraryByTripId.trip[0], itemType: "transport" as const }] },
+};
+const transportSession = sessionFor(transportOnlySource);
+const transportIssue = transportSession.issues.find((issue) => issue.category === "end-condition" && issue.severity === "high");
+assert(transportIssue && !generateDuriSuggestions(transportSession, "2026-07-14T00:00:00.000Z").some((entry) => entry.suggestion.sourceIssueIds.includes(transportIssue.id)), "end 16: transport block is never removal fallback");
+
+console.log("Duri verification passed: 18 analysis + 13 suggestion + 10 atomic + 16 end-condition scenarios");

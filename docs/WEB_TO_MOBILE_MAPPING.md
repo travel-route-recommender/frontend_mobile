@@ -2,7 +2,7 @@
 
 ## E2E·상태 무결성 보강 (2026-07-15)
 
-웹의 normalized entity/relation 원칙은 모바일 schema 4에서도 유지한다. 모바일은 auth/domain hydration barrier, owner-bound UI draft, session별 권한, state-integrity validator를 추가했다. `candidateCount`, `itineraryCount`, 준비율, 그룹 진단, scheduled, stale/fingerprint와 화면 ViewModel은 저장하지 않고 관계에서 파생한다. 전체 route별 계약은 `MOBILE_E2E_FEATURE_INVENTORY.md`에 있다.
+웹의 normalized entity/relation 원칙은 모바일 schema 5에서도 유지한다. 모바일은 auth/domain hydration barrier, owner-bound UI draft, session별 권한, state-integrity validator를 추가했다. `candidateCount`, `itineraryCount`, 준비율, 그룹 진단, scheduled, stale/fingerprint와 화면 ViewModel은 저장하지 않고 관계에서 파생한다. 전체 route별 계약은 `MOBILE_E2E_FEATURE_INVENTORY.md`에 있다.
 
 ## 두리 분석·제안 매핑 (2026-07-14)
 
@@ -72,7 +72,7 @@
 - 웹 group-preferences의 5개 계획 차원과 spread 규칙을 유지하고, 모바일에 결과 유효성·coverage·tag 집계·조율 지표·네이티브 상태 카드를 추가
 - 웹 여행 목록의 진행/완료 정렬, 5단계 생성 순서와 준비율 점수 규칙을 유지하고, 모바일에 FlatList 필터·native date picker·영속 생성 초안을 추가
 - 웹 탐색의 keyword/category/후보·일정 상태와 저장 화면 여행방 선택 정책을 유지하고, 모바일에 Region 필터·결정적 정렬·공유 탐색 Store·좌표 없는 지역 보드를 추가
-- 웹 워크스페이스의 08:00~24:00, 30분 slot, 60분 기본 체류, 여행 전체 Place 중복 차단, 충돌 차단 정책을 유지하고 모바일 날짜 탭·Modal·위/아래 버튼으로 재작성
+- 웹 워크스페이스의 08:00~24:00 범위, 여행 전체 Place 중복 차단과 충돌 차단 정책을 유지하되 모바일은 15분 slot, 60분 기본 체류, 날짜 탭·Modal·long-press drag/resize로 재작성
 
 ### C. 모바일에서 재작성
 

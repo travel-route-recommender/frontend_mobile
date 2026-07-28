@@ -3,7 +3,10 @@ export type { Place, Region } from "./place";
 export type {
   TripBudgetLevel,
   TripCandidate,
+  TripEndCondition,
+  TripEndConditionType,
   TripIntensity,
+  TripLocation,
   TripMember,
   TripMemberRole,
   TripRoom,
