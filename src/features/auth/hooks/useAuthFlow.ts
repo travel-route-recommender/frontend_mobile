@@ -1,35 +1,40 @@
 import { useCallback } from "react";
+import { queryClient } from "../../../query/queryClient";
 import { useDuriStore } from "../../../store/useDuriStore";
 import type { AuthSuccess } from "../types";
+import { authService } from "../services/authService";
 import { useAuthSessionStore } from "../store/useAuthSessionStore";
 
+export function applyAuthSuccessToStores(result: AuthSuccess) {
+  const domain = useDuriStore.getState();
+  domain.upsertUser(result.user);
+  domain.setCurrentUser(result.user.id);
+  if (result.invitedTripId && domain.tripsById[result.invitedTripId]) domain.addTripMember(result.invitedTripId, result.user.id);
+  useAuthSessionStore.getState().startSession({
+    userId: result.user.id,
+    sessionKind: result.sessionKind,
+    provider: result.provider,
+    profileCompleted: result.profileCompleted,
+    onboardingIntroSeen: result.onboardingIntroSeen,
+    preferenceTestCompleted: result.preferenceTestCompleted,
+  });
+}
+
+export function clearAuthStores() {
+  useAuthSessionStore.getState().clearSession();
+  useDuriStore.getState().setCurrentUser(null);
+  queryClient.clear();
+}
+
 export function useAuthFlow() {
-  const upsertUser = useDuriStore((state) => state.upsertUser);
-  const setCurrentUser = useDuriStore((state) => state.setCurrentUser);
-  const addTripMember = useDuriStore((state) => state.addTripMember);
-  const startAnonymousSession = useAuthSessionStore((state) => state.startAnonymousSession);
-  const startMockMemberSession = useAuthSessionStore((state) => state.startMockMemberSession);
-  const startMockGuestSession = useAuthSessionStore((state) => state.startMockGuestSession);
-  const logoutSession = useAuthSessionStore((state) => state.logout);
-
   const applyAuthSuccess = useCallback((result: AuthSuccess) => {
-    upsertUser(result.user);
-    setCurrentUser(result.user.id);
-    if (result.invitedTripId) addTripMember(result.invitedTripId, result.user.id);
-    const input = { userId: result.user.id, profileCompleted: result.profileCompleted, onboardingIntroSeen: result.onboardingIntroSeen, preferenceTestCompleted: result.preferenceTestCompleted };
-    if (result.sessionKind === "member") startMockMemberSession(input);
-    else startMockGuestSession(input);
-  }, [addTripMember, setCurrentUser, startMockGuestSession, startMockMemberSession, upsertUser]);
-
-  const browseAnonymously = useCallback(() => {
-    setCurrentUser(null);
-    startAnonymousSession();
-  }, [setCurrentUser, startAnonymousSession]);
+    applyAuthSuccessToStores(result);
+  }, []);
 
   const logout = useCallback(async () => {
-    await logoutSession();
-    setCurrentUser(null);
-  }, [logoutSession, setCurrentUser]);
+    useAuthSessionStore.getState().setAuthLoading();
+    try { await authService.logout(); } finally { clearAuthStores(); }
+  }, []);
 
-  return { applyAuthSuccess, browseAnonymously, logout };
+  return { applyAuthSuccess, logout };
 }

@@ -13,8 +13,8 @@ export function useMemberGate() {
   }, [sessionKind]);
 
   const closePrompt = useCallback(() => setPrompt({ visible: false }), []);
-  const go = useCallback((route: "/(auth)/login" | "/(auth)/signup-choice") => { closePrompt(); router.push(route); }, [closePrompt]);
-  const memberGatePrompt = <GuestPromptModal visible={prompt.visible} sessionKind={sessionKind} actionLabel={prompt.actionLabel} onClose={closePrompt} onLogin={() => go("/(auth)/login")} onSignup={() => go("/(auth)/signup-choice")} />;
+  const go = useCallback((route: "/(auth)/login" | "/(auth)/signup-choice" | "/(auth)/guest-upgrade") => { closePrompt(); router.push(route as never); }, [closePrompt]);
+  const memberGatePrompt = <GuestPromptModal visible={prompt.visible} sessionKind={sessionKind} actionLabel={prompt.actionLabel} onClose={closePrompt} onLogin={() => go("/(auth)/login")} onSignup={() => go(sessionKind === "guest" ? "/(auth)/guest-upgrade" : "/(auth)/signup-choice")} />;
 
   return { isMember: sessionKind === "member", sessionKind, requireMember, memberGatePrompt, closePrompt };
 }

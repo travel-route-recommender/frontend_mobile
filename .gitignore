@@ -26,6 +26,7 @@ expo-env.d.ts
 .workspace-verification/
 .duri-verification/
 .state-integrity-verification/
+.auth-verification/
 
 # debug
 npm-debug.*
@@ -37,7 +38,11 @@ yarn-error.*
 *.pem
 
 # local env files
+.env
 .env*.local
+
+# local dev server logs
+.expo-web.*.log
 
 # typescript
 *.tsbuildinfo

@@ -1,15 +1,27 @@
 import type { EntityId } from "../../domain";
 
 export type PlaceCategoryFilter = "all" | string;
-export type PlaceSortOption = "default" | "name" | "saved-first";
-export type ExploreViewMode = "list" | "map";
+export type PlaceSortOption = "popular" | "rating" | "distance" | "default" | "name" | "saved-first";
 export type PlaceCandidateState = "not-added" | "candidate" | "scheduled";
+export type PlaceLocationSelection = {
+  value: string;
+  label: string;
+  regionId: EntityId | "all";
+  district: string | "all";
+};
 
 export interface PlaceSearchParams {
   keyword: string;
   regionId: EntityId | "all";
+  district?: string | "all";
+  locations?: readonly PlaceLocationSelection[];
   category: PlaceCategoryFilter;
+  categories?: readonly string[];
   sort: PlaceSortOption;
+  eventStartDate?: string;
+  eventEndDate?: string;
+  distanceBasePlaceId?: EntityId;
+  distanceBaseLocation?: PlaceLocationSelection;
 }
 
 export interface PlaceCardViewModel {

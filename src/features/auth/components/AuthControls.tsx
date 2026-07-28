@@ -25,21 +25,25 @@ export const PasswordField = forwardRef<TextInput, Omit<AuthTextFieldProps, "sec
   return <AuthTextField ref={ref} {...props} secureTextEntry={!visible} trailing={<Pressable accessibilityRole="button" accessibilityLabel={visible ? "비밀번호 숨기기" : "비밀번호 보기"} hitSlop={8} onPress={() => setVisible((value) => !value)} style={styles.trailingButton}><Text style={styles.trailingText}>{visible ? "숨김" : "보기"}</Text></Pressable>} />;
 });
 
-export function SocialButton({ provider, onPress, disabled = false }: { provider: "kakao"; onPress: () => void | Promise<void>; disabled?: boolean }) {
+export function SocialButton({ provider, onPress, disabled = false }: { provider: "kakao" | "google"; onPress: () => void | Promise<void>; disabled?: boolean }) {
   const lock = useRef(false);
   const [pending, setPending] = useState(false);
-  const label = provider === "kakao" ? "카카오로 계속하기" : "계속하기";
+  const label = provider === "kakao" ? "카카오로 계속하기" : "Google로 계속하기";
   const blocked = disabled || pending;
   const handlePress = async () => {
     if (blocked || lock.current) return;
     lock.current = true; setPending(true);
     try { await onPress(); } finally { setPending(false); lock.current = false; }
   };
-  return <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ disabled: blocked, busy: pending }} disabled={blocked} onPress={handlePress} style={({ pressed }) => [styles.kakao, blocked && styles.disabled, pressed && styles.pressed]}>{pending ? <ActivityIndicator color="#191919" /> : <Text style={styles.kakaoBubble}>●</Text>}<Text style={styles.kakaoText}>{label}</Text></Pressable>;
+  return <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ disabled: blocked, busy: pending }} disabled={blocked} onPress={handlePress} style={({ pressed }) => [styles.social, provider === "kakao" ? styles.kakao : styles.google, blocked && styles.disabled, pressed && styles.pressed]}>{pending ? <ActivityIndicator color="#191919" /> : <Text style={[styles.socialMark, provider === "google" && styles.googleMark]}>{provider === "kakao" ? "●" : "G"}</Text>}<Text style={styles.socialText}>{label}</Text></Pressable>;
 }
 
 export function KakaoButton({ onPress, disabled = false }: { onPress: () => void | Promise<void>; disabled?: boolean }) {
   return <SocialButton provider="kakao" onPress={onPress} disabled={disabled} />;
+}
+
+export function GoogleButton({ onPress, disabled = false }: { onPress: () => void | Promise<void>; disabled?: boolean }) {
+  return <SocialButton provider="google" onPress={onPress} disabled={disabled} />;
 }
 
 export function TermsCheckbox({ checked, label, onToggle, onView }: { checked: boolean; label: string; onToggle: () => void; onView?: () => void }) {
@@ -81,9 +85,12 @@ const styles = StyleSheet.create({
   errorText: { color: colors.danger },
   trailingButton: { minWidth: sizes.touch, minHeight: sizes.touch, alignItems: "center", justifyContent: "center", marginRight: spacing.xxs },
   trailingText: { ...typography.caption, color: colors.primary },
-  kakao: { minHeight: 54, borderRadius: radius.md, paddingHorizontal: spacing.md, backgroundColor: "#FEE500", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm },
-  kakaoBubble: { color: "#191919", fontSize: 13 },
-  kakaoText: { ...typography.button, color: "#191919" },
+  social: { minHeight: 54, borderRadius: radius.md, paddingHorizontal: spacing.md, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm },
+  kakao: { backgroundColor: "#FEE500" },
+  google: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.borderStrong },
+  socialMark: { color: "#191919", fontSize: 13, fontWeight: "900" },
+  googleMark: { color: "#4285F4", fontSize: 18 },
+  socialText: { ...typography.button, color: "#191919" },
   disabled: { opacity: 0.5 },
   pressed: { opacity: 0.86, transform: [{ scale: 0.99 }] },
   termsRow: { minHeight: sizes.touch, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm },

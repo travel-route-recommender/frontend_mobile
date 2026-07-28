@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "customConditions": [],
+    "types": ["node"],
+    "target": "ES2022",
+    "rootDir": ".",
+    "outDir": ".auth-verification",
+    "declaration": false,
+    "sourceMap": false
+  },
+  "include": [
+    "scripts/verify-auth-session.ts",
+    "src/config/environment.ts",
+    "src/features/auth/services/authTokenState.ts",
+    "src/features/auth/services/guestAccessPolicy.ts",
+    "src/services/apiClient.ts"
+  ]
+}

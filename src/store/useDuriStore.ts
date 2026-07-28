@@ -5,6 +5,7 @@ import type {
   EntityId,
   ItineraryItem,
   PersonalPreferenceAnswers,
+  Place,
   TripBudgetLevel,
   TripIntensity,
   TripRoom,
@@ -121,12 +122,14 @@ type DuriActions = {
   accessMode: AccessMode;
   setAccessMode: (mode: AccessMode) => void;
   upsertUser: (user: User) => void;
+  upsertPlaces: (places: Place[]) => void;
   setCurrentUser: (userId: EntityId | null) => void;
   addTripMember: (tripId: EntityId, userId: EntityId) => void;
   updateCurrentUserProfile: (input: UpdateCurrentUserProfileInput) => boolean;
   createTrip: (input: CreateTripInput) => EntityId;
   extendTripByOneDay: (tripId: EntityId) => ExtendTripEndDateResult;
   setActiveTrip: (tripId: EntityId) => void;
+  clearActiveTrip: () => void;
   toggleSavedPlace: (placeId: EntityId, userId?: EntityId) => void;
   addCandidatePlace: (tripId: EntityId, placeId: EntityId, addedByUserId?: EntityId) => AddCandidatePlaceResult;
   removeCandidatePlace: (tripId: EntityId, placeId: EntityId) => RemoveCandidatePlaceResult;
@@ -175,6 +178,16 @@ export const useDuriStore = create<DuriState>()(
           ? state.savedPlaceIdsByUserId
           : { ...state.savedPlaceIdsByUserId, [user.id]: [] },
       })),
+      upsertPlaces: (places) => set((state) => {
+        const nextPlaces = places.filter((place) => place.id);
+        if (!nextPlaces.length) return state;
+        return {
+          placesById: {
+            ...state.placesById,
+            ...Object.fromEntries(nextPlaces.map((place) => [place.id, place])),
+          },
+        };
+      }),
       setCurrentUser: (userId) => set((state) => {
         if (!userId) return { currentUserId: "", activeTripId: "" };
         if (!state.usersById[userId]) return state;
@@ -303,6 +316,7 @@ export const useDuriStore = create<DuriState>()(
             ? { activeTripId: tripId }
             : state;
         }),
+      clearActiveTrip: () => set({ activeTripId: "" }),
       toggleSavedPlace: (placeId, userId) =>
         set((state) => {
           const targetUserId = userId ?? state.currentUserId;

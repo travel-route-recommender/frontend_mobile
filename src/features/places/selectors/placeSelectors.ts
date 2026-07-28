@@ -2,6 +2,8 @@ import type { EntityId, ItineraryItem, Place, Region, TripCandidate, TripRoom, U
 import type { PlaceCandidateState, PlaceCardViewModel } from "../types";
 import { getPlaceCategoryLabel } from "../logic/placeSearch";
 
+const isGenericTourSummary = (summary: string) => /TourAPI/i.test(summary);
+
 export interface PlaceSelectorState {
   currentUserId: EntityId;
   activeTripId: EntityId;
@@ -63,15 +65,19 @@ export function buildPlaceCardViewModel(state: PlaceSelectorState, placeId: Enti
     return trip?.members.some((member) => member.userId === state.currentUserId) && candidates.some((candidate) => candidate.placeId === placeId) ? [tripId] : [];
   });
   const activeState = state.activeTripId ? selectCandidateStateForPlace(state, state.activeTripId, placeId) : "not-added";
-  const tags = Array.isArray(place.tags) ? place.tags : [];
+  const categoryLabel = getPlaceCategoryLabel(place.category);
+  const tags = [...new Set((Array.isArray(place.tags) ? place.tags : [])
+    .map((tag) => tag.trim())
+    .filter((tag) => tag && tag !== categoryLabel && !/^\d+$/.test(tag)))];
+  const summary = place.summary.trim();
   return {
     id: place.id,
     name: place.name,
     ...(place.imageUrl ? { imageUrl: place.imageUrl } : {}),
     address: place.address,
-    summary: place.summary,
+    summary: isGenericTourSummary(summary) ? "" : summary,
     regionName: state.regionsById[place.regionId]?.name ?? "지역 정보 없음",
-    categoryLabel: getPlaceCategoryLabel(place.category),
+    categoryLabel,
     tags: tags.slice(0, 3),
     hiddenTagCount: Math.max(tags.length - 3, 0),
     ...(Number.isFinite(place.rating) ? { rating: place.rating } : {}),
