@@ -1,15 +1,13 @@
-import { useEffect, useState } from "react";
-import { usePersonalPreferenceDraftStore } from "../store/usePersonalPreferenceDraftStore";
+import { useEffect } from "react";
+import { usePersonalPreferenceDraftStore, usePreferenceDraftHydrationState } from "../store/usePersonalPreferenceDraftStore";
 
 export function usePreferenceDraftHydration() {
-  const isHydrated = usePersonalPreferenceDraftStore((state) => state.isHydrated);
-  const errorMessage = usePersonalPreferenceDraftStore((state) => state.errorMessage);
-  const [rehydrationError, setRehydrationError] = useState<Error | null>(null);
+  const isHydrated = usePreferenceDraftHydrationState((state) => state.isHydrated);
+  const hydrationError = usePreferenceDraftHydrationState((state) => state.hydrationError);
   useEffect(() => {
-    void Promise.resolve(usePersonalPreferenceDraftStore.persist.rehydrate()).catch((reason: unknown) => {
-      setRehydrationError(reason instanceof Error ? reason : new Error("진행 중인 테스트를 불러오지 못했어요."));
-      usePersonalPreferenceDraftStore.getState().setHydrated(true);
+    void Promise.resolve(usePersonalPreferenceDraftStore.persist.rehydrate()).catch(() => {
+      usePreferenceDraftHydrationState.getState().fail("진행 중인 테스트를 불러오지 못했어요.");
     });
   }, []);
-  return { isHydrated, error: errorMessage ? new Error(errorMessage) : rehydrationError, retry: () => usePersonalPreferenceDraftStore.persist.rehydrate() };
+  return { isHydrated, error: hydrationError ? new Error(hydrationError) : null, retry: () => usePersonalPreferenceDraftStore.persist.rehydrate() };
 }

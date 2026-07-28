@@ -41,9 +41,7 @@ export function CandidateBoard({
   onRemoveCandidate: (candidate: CandidatePlaceViewModel) => void;
 }) {
   return <View style={styles.section}>
-    <View style={styles.header}>
-      <View style={styles.headerCopy}><Text style={styles.eyebrow}>CANDIDATE BOARD</Text><Text style={styles.title}>후보 장소 {totalCount}곳</Text><Text style={styles.description}>미배치 {unscheduledCount}곳 · 후보는 일정에 넣어도 그대로 유지돼요.</Text></View>
-    </View>
+    <Text style={styles.description}>전체 후보 {totalCount}곳 · 미배치 {unscheduledCount}곳 · 일정에 넣어도 후보는 유지돼요.</Text>
     <View style={styles.searchWrap}>
       <TextInput
         accessibilityLabel="후보 장소 검색"
@@ -84,10 +82,6 @@ export function CandidateBoard({
 
 const styles = StyleSheet.create({
   section: { gap: spacing.md, paddingVertical: spacing.sm },
-  header: { flexDirection: "row", alignItems: "flex-start", gap: spacing.sm },
-  headerCopy: { flex: 1, gap: 3 },
-  eyebrow: { ...typography.caption, color: colors.primary },
-  title: { ...typography.subtitle, color: colors.text },
   description: { ...typography.caption, color: colors.textSecondary },
   searchWrap: { position: "relative" },
   search: { minHeight: 50, borderRadius: radius.md, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.surface, paddingHorizontal: spacing.md, paddingRight: 64, ...typography.body, color: colors.text },

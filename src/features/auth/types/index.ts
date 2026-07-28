@@ -8,7 +8,7 @@ export type AuthProvider = SocialProvider | "email" | "guest";
 export type LoginInput = { email: string; password: string };
 export type SignupInput = { nickname: string; email: string; password: string };
 export type GuestUpgradeInput = { email: string; password: string; nickname: string };
-export type InviteJoinInput = { code: string; nickname: string };
+export type InviteJoinInput = { code: string; nickname: string; tripId?: EntityId };
 
 export type SocialChallenge = {
   challengeId: string;

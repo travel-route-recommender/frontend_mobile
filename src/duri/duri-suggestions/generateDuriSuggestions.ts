@@ -1,4 +1,8 @@
-import { DEFAULT_PLACE_DURATION_MINUTES } from "../../data/workspaceSchedule";
+import {
+  DEFAULT_PLACE_DURATION_MINUTES,
+  MIN_DURATION_MINUTES,
+  SLOT_MINUTES,
+} from "../../data/workspaceSchedule";
 import type { EntityId, ItineraryItem, Place, TripCandidate } from "../../domain";
 import { DURI_ANALYSIS_CONFIG, extractStableArea, isMealPlace } from "../duri-analysis";
 import { normalizeTrait } from "../duri-analysis/shared";
@@ -171,7 +175,7 @@ function mealWindowForIssue(issue: AnalysisIssue) {
 export function findMealSlot(itinerary: ItineraryItem[], date: string, issue: AnalysisIssue, durationMinutes = 60) {
   const timeRange = mealWindowForIssue(issue);
   if (!timeRange) return undefined;
-  for (let minutes = timeRange.start; minutes + durationMinutes <= timeRange.end; minutes += 30) {
+  for (let minutes = timeRange.start; minutes + durationMinutes <= timeRange.end; minutes += SLOT_MINUTES) {
     const startTime = minutesToTimeString(minutes);
     if (!findOverlappingItem(itinerary, { date, startTime, durationMinutes })) {
       return { startTime, durationMinutes, label: timeRange.label };
@@ -254,8 +258,8 @@ export function findRestSlot(itinerary: ItineraryItem[], date: string) {
   if (items.length < 2) return undefined;
   const firstStart = timeStringToMinutes(items[0].startTime);
   const lastEnd = Math.max(...items.map((item) => timeStringToMinutes(item.startTime) + item.durationMinutes));
-  for (const durationMinutes of [60, 30]) {
-    for (let minutes = firstStart + 30; minutes + durationMinutes <= lastEnd; minutes += 30) {
+  for (const durationMinutes of [...new Set([60, SLOT_MINUTES * 2, MIN_DURATION_MINUTES])]) {
+    for (let minutes = firstStart + SLOT_MINUTES; minutes + durationMinutes <= lastEnd; minutes += SLOT_MINUTES) {
       const startTime = minutesToTimeString(minutes);
       if (!findOverlappingItem(items, { date, startTime, durationMinutes })) return { startTime, durationMinutes };
     }

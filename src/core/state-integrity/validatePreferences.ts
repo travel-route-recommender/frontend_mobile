@@ -71,11 +71,26 @@ export function validateCreateTripDraft(
   }
   if (draft.dateUndecided) {
     if (draft.startDate !== null || draft.endDate !== null) issues.push(issue("error", "trip-draft.date-undecided-range-present", "trip-draft", "날짜 미정 초안에 날짜 범위가 함께 저장되어 있습니다."));
+    if (draft.endCondition) issues.push(issue("error", "trip-draft.date-undecided-end-condition-present", "trip-draft", "날짜 미정 초안에 여행 종료 조건이 저장되어 있습니다."));
   } else if ((draft.startDate !== null || draft.endDate !== null) && (!isValidISODate(draft.startDate) || !isValidISODate(draft.endDate) || draft.endDate < draft.startDate)) {
     issues.push(issue("error", "trip-draft.date-range-invalid", "trip-draft", "여행방 초안의 날짜 범위가 올바르지 않습니다."));
   }
   if (draft.roomName.length > 40) {
     issues.push(issue("error", "trip-draft.room-name-too-long", "trip-draft", "여행방 초안의 이름이 40자를 초과합니다."));
+  }
+  if (draft.transport !== null && draft.transport !== "car" && draft.transport !== "public") {
+    issues.push(issue("error", "trip-draft.transport-invalid", "trip-draft", "여행방 초안의 이동 방식이 올바르지 않습니다."));
+  }
+  if (draft.accommodationLocation.length > 100) {
+    issues.push(issue("error", "trip-draft.accommodation-too-long", "trip-draft", "여행방 초안의 숙소 위치가 100자를 초과합니다."));
+  }
+  if (draft.endCondition) {
+    if (!draft.endCondition.location.trim() || draft.endCondition.location.length > 100) issues.push(issue("error", "trip-draft.end-condition-location-invalid", "trip-draft", "여행방 초안의 종료 지점이 올바르지 않습니다."));
+    if (!/^([01]\d|2[0-3]):(?:00|15|30|45)$/.test(draft.endCondition.deadline)) issues.push(issue("error", "trip-draft.end-condition-deadline-invalid", "trip-draft", "여행방 초안의 종료 시각이 올바르지 않습니다."));
+    const travelMinutes = Number(draft.endCondition.travelMinutes);
+    if (!/^\d{1,4}$/.test(draft.endCondition.travelMinutes) || !Number.isInteger(travelMinutes) || travelMinutes > 1440) issues.push(issue("error", "trip-draft.end-condition-travel-invalid", "trip-draft", "여행방 초안의 종료 지점 이동시간이 올바르지 않습니다."));
+    const bufferMinutes = Number(draft.endCondition.serviceBufferMinutes);
+    if (!/^\d{1,4}$/.test(draft.endCondition.serviceBufferMinutes) || !Number.isInteger(bufferMinutes) || bufferMinutes > 720) issues.push(issue("error", "trip-draft.end-condition-buffer-invalid", "trip-draft", "여행방 초안의 종료 준비시간이 올바르지 않습니다."));
   }
   if (draft.expectedMemberCount !== null && (!Number.isInteger(draft.expectedMemberCount) || draft.expectedMemberCount < 1)) {
     issues.push(issue("error", "trip-draft.member-count-invalid", "trip-draft", "여행방 초안의 예상 인원이 올바르지 않습니다."));

@@ -1,4 +1,12 @@
 import type { ItineraryItem, Place, Region, TripCandidate, TripRoom, User } from "../src/domain";
+import {
+  buildExploreListHref,
+  buildExploreMapHref,
+  buildPlaceDetailHref,
+  buildTripExploreHref,
+  buildTripExploreReturnHref,
+  resolveTripExploreContext,
+} from "../src/features/explore/logic/exploreNavigation";
 import { canAddPlaceCandidate, canSavePlace } from "../src/features/places/logic/placeCapabilities";
 import { dedupePlacesForDisplay, filterPlaces, findSimilarPlaces, getPlaceDistanceProximityLabel, normalizeSearchKeyword, parsePlaceCoordinate, searchPlaces } from "../src/features/places/logic/placeSearch";
 import { buildPlaceCardViewModel, selectCandidateStateForPlace, selectResolvedSavedPlaces } from "../src/features/places/selectors/placeSelectors";
@@ -57,4 +65,14 @@ assert(searchPlaces(places, { keyword: "", regionId: "all", category: "all", sor
 assert(searchPlaces(places, { keyword: "", regionId: "all", category: "all", sort: "saved-first" }, regions, new Set(["market"]))[0]?.id === "market", "저장 우선 정렬이 동작해야 한다");
 assert(selectCandidateStateForPlace({ candidatesByTripId: { "trip-a": [candidate] }, itineraryByTripId: { "trip-a": [itinerary] } }, "trip-a", "cafe") === "scheduled", "일정 관계가 candidate보다 우선해야 한다");
 
-console.log("Place flow verification passed: 25 scenarios + sorting and scheduled assertions");
+assert(resolveTripExploreContext(undefined, undefined) === undefined, "24. 하단 탐색은 여행방 복귀 문맥을 만들지 않아야 한다");
+const roomExplore = resolveTripExploreContext("trip-a", "room");
+const workspaceExplore = resolveTripExploreContext(["trip-a"], ["workspace"]);
+assert(roomExplore?.origin === "room" && workspaceExplore?.origin === "workspace", "25. 여행방과 워크스페이스 탐색 출처를 구분해야 한다");
+assert(roomExplore && buildTripExploreHref(roomExplore).pathname === "/trips/[tripId]/explore", "26. 여행방 전용 탐색 route를 사용해야 한다");
+assert(roomExplore && buildTripExploreReturnHref(roomExplore).pathname === "/trips/[tripId]", "27. 여행방 탐색은 여행방 홈으로 복귀해야 한다");
+assert(workspaceExplore && buildTripExploreReturnHref(workspaceExplore).pathname === "/trips/[tripId]/workspace", "28. 워크스페이스 탐색은 일정표로 복귀해야 한다");
+assert(buildExploreListHref() === "/(tabs)/explore" && roomExplore && typeof buildExploreListHref(roomExplore) === "object", "29. 하단 탐색과 여행방 탐색 목록 route를 분리해야 한다");
+assert(roomExplore && typeof buildExploreMapHref(roomExplore) === "object" && buildPlaceDetailHref("cafe", roomExplore).params.origin === "room", "30. 지도와 장소 상세에 여행방 문맥을 전달해야 한다");
+
+console.log("Place flow verification passed: 30 scenarios + sorting and scheduled assertions");

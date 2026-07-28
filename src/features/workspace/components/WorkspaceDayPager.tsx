@@ -1,9 +1,10 @@
 import type { PropsWithChildren } from "react";
 import { useEffect, useRef, useState } from "react";
 import { Animated, PanResponder, StyleSheet, type GestureResponderHandlers } from "react-native";
-
-const SWIPE_ACTIVATION_DISTANCE = 14;
-const SWIPE_CHANGE_DISTANCE = 54;
+import {
+  resolveWorkspaceDaySwipeTargetIndex,
+  shouldActivateWorkspaceDaySwipe,
+} from "../logic/workspaceDaySwipe";
 
 export function WorkspaceDayPager({
   children,
@@ -32,9 +33,11 @@ export function WorkspaceDayPager({
   }, [dayCount, disabled, onSelectIndex, selectedIndex]);
 
   useEffect(() => {
-    const canSwipe = (dx: number, dy: number) => !disabledRef.current
-      && Math.abs(dx) >= SWIPE_ACTIVATION_DISTANCE
-      && Math.abs(dx) > Math.abs(dy) * 1.25;
+    const canSwipe = (dx: number, dy: number) => shouldActivateWorkspaceDaySwipe(
+      dx,
+      dy,
+      disabledRef.current,
+    );
     const panResponder = PanResponder.create({
       onMoveShouldSetPanResponder: (_event, gesture) => canSwipe(gesture.dx, gesture.dy),
       onMoveShouldSetPanResponderCapture: (_event, gesture) => canSwipe(gesture.dx, gesture.dy),
@@ -42,9 +45,13 @@ export function WorkspaceDayPager({
         translateX.setValue(Math.max(Math.min(gesture.dx * 0.35, 64), -64));
       },
       onPanResponderRelease: (_event, gesture) => {
-        const direction = gesture.dx <= -SWIPE_CHANGE_DISTANCE ? 1 : gesture.dx >= SWIPE_CHANGE_DISTANCE ? -1 : 0;
         const currentIndex = selectedIndexRef.current;
-        const targetIndex = Math.min(Math.max(currentIndex + direction, 0), Math.max(dayCountRef.current - 1, 0));
+        const targetIndex = resolveWorkspaceDaySwipeTargetIndex(
+          currentIndex,
+          dayCountRef.current,
+          gesture.dx,
+        );
+        const direction = targetIndex - currentIndex;
         Animated.timing(translateX, {
           toValue: direction && targetIndex !== currentIndex ? direction * -32 : 0,
           duration: 100,
@@ -57,7 +64,8 @@ export function WorkspaceDayPager({
       onPanResponderTerminate: () => {
         Animated.spring(translateX, { toValue: 0, useNativeDriver: true }).start();
       },
-      onPanResponderTerminationRequest: () => true,
+      onPanResponderTerminationRequest: () => false,
+      onShouldBlockNativeResponder: () => true,
     });
     setPanHandlers(panResponder.panHandlers);
   }, [translateX]);

@@ -1,6 +1,34 @@
 import type { ItineraryItem, Place, Region, TripCandidate, TripRoom, User } from "../src/domain";
 import { createDemoData } from "../src/data/mock/demoData";
+import {
+  MIN_DURATION_MINUTES,
+  SLOT_HEIGHT_PX,
+  SLOT_MINUTES,
+} from "../src/data/workspaceSchedule";
 import { canEditTripWorkspace } from "../src/features/workspace/logic/workspaceCapabilities";
+import {
+  WORKSPACE_BOARD_COLLAPSED_HEIGHT_PX,
+  clampWorkspaceBoardHeight,
+  getInitialWorkspaceBoardHeight,
+  getWorkspaceBoardHeightBounds,
+  isWorkspaceBoardCollapsed,
+  resizeWorkspaceBoardHeight,
+  stepWorkspaceBoardHeight,
+} from "../src/features/workspace/logic/workspaceBoardLayout";
+import {
+  getInitialWorkspaceModalHeight,
+  getWorkspaceModalHeightBounds,
+  resizeWorkspaceModalHeight,
+  stepWorkspaceModalHeight,
+} from "../src/features/workspace/logic/workspaceModalLayout";
+import { resolveWorkspaceBackAction } from "../src/features/workspace/logic/workspaceNavigation";
+import {
+  buildTripEndConditionTimelineEntry,
+  resolveTripEndConditionAddition,
+} from "../src/features/workspace/logic/tripEndCondition";
+import { getScheduleBlockDisplayMode, shouldShowScheduleResizeHandle } from "../src/features/workspace/logic/workspaceScheduleLayout";
+import { resolveDayDragTargetIndex } from "../src/features/workspace/logic/workspaceDayDrag";
+import { resolveWorkspaceDaySwipeTargetIndex, shouldActivateWorkspaceDaySwipe } from "../src/features/workspace/logic/workspaceDaySwipe";
 import {
   addDaysToDate,
   buildTripDateRange,
@@ -10,8 +38,12 @@ import {
   moveItemToDate,
   moveItemToIndexWithinDate,
   moveItemWithinDate,
+  moveTripDaySchedule,
+  moveTripDayScheduleToIndex,
   normalizeItineraryOrder,
   parseTimeToMinutes,
+  remapScheduleToTripDateRange,
+  removeTripDayFromSchedule,
   validateTimeRange,
 } from "../src/features/workspace/logic/workspaceDateTime";
 import {
@@ -25,6 +57,7 @@ import {
 } from "../src/features/workspace/selectors/workspaceSelectors";
 import { validateCreateItineraryItem } from "../src/features/workspace/validation/workspaceValidation";
 import { normalizePersistedState } from "../src/store/normalizePersistedState";
+import { findNextAvailableSlot, isValidScheduleRange } from "../src/utils/schedule";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -173,11 +206,127 @@ assert(filterCandidatePlaceViewModels(relationshipCandidates, "", "companion", "
 
 const conflictValidation = validateCreateItineraryItem({ sessionKind: "member", currentUserId: "owner", trip: trip(), candidate: candidate("market"), place: places.market, itinerary: [item("existing", "cafe", "2026-07-18", "10:00", 90)], date: "2026-07-18", startTime: "11:00", endTime: "12:00" });
 assert(!conflictValidation.valid && conflictValidation.conflictItemIds[0] === "existing", "추가 validation은 겹치는 item ID를 반환해야 한다");
-assert(getSnappedStartTimeFromTranslation("10:00", 60, 40) === "10:30", "43. 일정 블록 한 슬롯 아래 이동");
+assert(getSnappedStartTimeFromTranslation("10:00", 60, SLOT_HEIGHT_PX) === "10:15", "43. 일정 블록 한 슬롯 아래 이동");
 assert(getSnappedStartTimeFromTranslation("08:00", 60, -400) === "08:00", "44. 일정 블록 시작 경계");
 assert(getSnappedStartTimeFromTranslation("23:00", 60, 400) === "23:00", "45. 일정 블록 종료 경계");
-assert(getSnappedDurationFromTranslation("10:00", 60, 40) === 90, "46. 체류시간 한 슬롯 늘리기");
-assert(getSnappedDurationFromTranslation("10:00", 30, -400) === 30, "47. 최소 체류시간 경계");
+assert(getSnappedDurationFromTranslation("10:00", 60, SLOT_HEIGHT_PX) === 75, "46. 체류시간 한 슬롯 늘리기");
+assert(getSnappedDurationFromTranslation("10:00", MIN_DURATION_MINUTES, -400) === MIN_DURATION_MINUTES, "47. 최소 체류시간 경계");
+assert(getSnappedDurationFromTranslation("10:00", MIN_DURATION_MINUTES, SLOT_HEIGHT_PX) === 30, "47b. 15분 일정 하단 손잡이를 아래로 한 슬롯 끌면 30분으로 확대");
 assert(getSnappedDurationFromTranslation("23:00", 60, 400) === 60, "48. 자정 종료 경계");
 
-console.log("Workspace editor verification passed: 48 scenarios + conflict validation");
+const threeDaySchedule = [
+  item("day-1", "cafe", "2026-07-18", "09:00"),
+  item("day-2", "market", "2026-07-19", "10:00"),
+  item("day-3", "cafe", "2026-07-20", "11:00"),
+];
+const removedMiddleDay = removeTripDayFromSchedule(threeDaySchedule, "2026-07-18", "2026-07-20", "2026-07-19");
+assert(removedMiddleDay.status === "success", "49. 중간 DAY 삭제 성공");
+assert(removedMiddleDay.status === "success" && removedMiddleDay.endDate === "2026-07-19" && removedMiddleDay.removedItineraryCount === 1, "50. 중간 DAY 삭제 시 기간과 삭제 일정 수 조정");
+assert(removedMiddleDay.status === "success" && removedMiddleDay.items.find((entry) => entry.id === "day-3")?.date === "2026-07-19", "51. 중간 DAY 삭제 시 뒤 일정 날짜 압축");
+
+const removedFirstDay = removeTripDayFromSchedule(threeDaySchedule, "2026-07-18", "2026-07-20", "2026-07-18");
+assert(removedFirstDay.status === "success" && removedFirstDay.startDate === "2026-07-19" && removedFirstDay.endDate === "2026-07-20", "52. 첫 DAY 삭제 시 시작일 이동");
+assert(removedFirstDay.status === "success" && removedFirstDay.items.find((entry) => entry.id === "day-2")?.date === "2026-07-19", "53. 첫 DAY 삭제 시 남은 실제 날짜 유지");
+assert(removeTripDayFromSchedule([threeDaySchedule[0]], "2026-07-18", "2026-07-18", "2026-07-18").status === "boundary", "54. 마지막 DAY 삭제 방지");
+
+const movedDay = moveTripDaySchedule(threeDaySchedule, "2026-07-18", "2026-07-20", "2026-07-18", "next");
+assert(movedDay.status === "success" && movedDay.selectedDate === "2026-07-19", "55. DAY 일정 묶음 다음 순서 이동");
+assert(movedDay.status === "success" && movedDay.items.find((entry) => entry.id === "day-1")?.date === "2026-07-19" && movedDay.items.find((entry) => entry.id === "day-2")?.date === "2026-07-18", "56. 인접 DAY 일정 묶음 원자적 교환");
+assert(moveTripDaySchedule(threeDaySchedule, "2026-07-18", "2026-07-20", "2026-07-18", "previous").status === "boundary", "57. 첫 DAY 이전 이동 방지");
+
+const shiftedRange = remapScheduleToTripDateRange(threeDaySchedule, "2026-07-18", "2026-07-20", "2026-08-01", "2026-08-03", "2026-07-19");
+assert(shiftedRange.status === "success" && shiftedRange.selectedDate === "2026-08-02", "58. 기간 변경 시 선택 DAY 번호 유지");
+assert(shiftedRange.status === "success" && shiftedRange.items.find((entry) => entry.id === "day-3")?.date === "2026-08-03", "59. 기간 이동 시 모든 일정 DAY 번호 유지");
+const shortenedRange = remapScheduleToTripDateRange(threeDaySchedule, "2026-07-18", "2026-07-20", "2026-08-01", "2026-08-02");
+assert(shortenedRange.status === "success" && shortenedRange.removedItineraryCount === 1 && shortenedRange.items.length === 2, "60. 기간 축소 시 잘리는 DAY 일정만 제거");
+const damagedRange = remapScheduleToTripDateRange([...threeDaySchedule, item("outside", "market", "2026-07-25", "12:00")], "2026-07-18", "2026-07-20", "2026-08-01", "2026-08-03");
+assert(damagedRange.status === "invalid-itinerary" && damagedRange.items.length === 4, "61. 기간 밖 손상 일정이 있으면 전체 변경 거부");
+
+const draggedAcrossDays = moveTripDayScheduleToIndex(threeDaySchedule, "2026-07-18", "2026-07-20", "2026-07-18", 2);
+assert(draggedAcrossDays.status === "success" && draggedAcrossDays.selectedDate === "2026-07-20", "62. 여러 DAY를 건너뛴 드롭 위치 선택");
+assert(draggedAcrossDays.status === "success" && draggedAcrossDays.items.find((entry) => entry.id === "day-1")?.date === "2026-07-20" && draggedAcrossDays.items.find((entry) => entry.id === "day-2")?.date === "2026-07-18" && draggedAcrossDays.items.find((entry) => entry.id === "day-3")?.date === "2026-07-19", "63. 다중 DAY 이동을 한 번의 순열로 반영");
+assert(moveTripDayScheduleToIndex(threeDaySchedule, "2026-07-18", "2026-07-20", "2026-07-18", 3).status === "boundary", "64. 드롭 인덱스 범위 검증");
+
+const dayTabStep = 120;
+assert(resolveDayDragTargetIndex(0, 0, dayTabStep * 0.36, 3, dayTabStep) === 1, "65. 첫 인접 DAY 위치를 빠르게 감지");
+assert(resolveDayDragTargetIndex(0, 1, dayTabStep * 1.4, 3, dayTabStep) === 1, "66. 중간 DAY 드롭 위치를 안정적으로 유지");
+assert(resolveDayDragTargetIndex(0, 1, dayTabStep * 1.66, 3, dayTabStep) === 2, "67. 다음 DAY 경계를 넘으면 한 칸씩 이동");
+assert(resolveDayDragTargetIndex(2, 2, dayTabStep * -0.36, 3, dayTabStep) === 1, "68. 왼쪽 중간 DAY 위치를 빠르게 감지");
+assert(resolveDayDragTargetIndex(4, 4, 0, 3, dayTabStep) === -1, "69. 유효하지 않은 드래그 시작 인덱스 거부");
+assert(shouldActivateWorkspaceDaySwipe(16, 4) && !shouldActivateWorkspaceDaySwipe(8, 1) && !shouldActivateWorkspaceDaySwipe(16, 20), "69b. 시간표의 명확한 가로 제스처만 DAY swipe로 활성화");
+assert(resolveWorkspaceDaySwipeTargetIndex(0, 3, -44) === 1 && resolveWorkspaceDaySwipeTargetIndex(1, 3, 44) === 0, "69c. 시간표 좌우 swipe로 인접 DAY 전환");
+assert(resolveWorkspaceDaySwipeTargetIndex(0, 3, 44) === 0 && resolveWorkspaceDaySwipeTargetIndex(2, 3, -44) === 2, "69d. 첫·마지막 DAY 경계 유지");
+
+const draggedToMiddle = moveTripDayScheduleToIndex(threeDaySchedule, "2026-07-18", "2026-07-20", "2026-07-18", 1);
+assert(draggedToMiddle.status === "success" && draggedToMiddle.selectedDate === "2026-07-19", "70. 중간에 놓은 일정 묶음의 도착 DAY 선택");
+assert(draggedToMiddle.status === "success" && draggedToMiddle.items.find((entry) => entry.id === "day-1")?.date === "2026-07-19", "71. 중간 DAY 드롭 일정 이동");
+
+const quarterHourRange = validateTimeRange("10:15", "10:30");
+assert(quarterHourRange.valid && quarterHourRange.durationMinutes === 15, "72. 15분 일정 범위 허용");
+assert(!validateTimeRange("10:10", "10:25").valid, "73. 15분 슬롯 밖 시간 거부");
+assert(!isValidScheduleRange(item("off-slot", "cafe", "2026-07-18", "10:10", 15)), "73b. 중앙 Store 검증도 15분 밖 시작 시각 거부");
+assert(findNextAvailableSlot({
+  items: [item("quarter", "cafe", "2026-07-18", "10:00", 15)],
+  date: "2026-07-18",
+  durationMinutes: 15,
+  fromMinutes: 10 * 60,
+}) === "10:15", "74. 15분 다음 빈 슬롯 검색");
+assert(SLOT_MINUTES === 15 && SLOT_HEIGHT_PX === 20 && MIN_DURATION_MINUTES === 15, "75. 15분 시간축 상수");
+
+const boardBounds = getWorkspaceBoardHeightBounds(900, 20, 30);
+const boardInitialHeight = getInitialWorkspaceBoardHeight(900, boardBounds);
+assert(boardBounds.minHeight === WORKSPACE_BOARD_COLLAPSED_HEIGHT_PX && boardBounds.maxHeight === 730, "76. 손잡이만 남기는 최소 높이와 safe area 기반 후보 보드 경계");
+assert(resizeWorkspaceBoardHeight(boardInitialHeight, -37, boardBounds) === boardInitialHeight + 37, "77. 하단 보드의 위 손잡이를 올리면 snap 없이 연속 높이 확장");
+assert(resizeWorkspaceBoardHeight(boardInitialHeight, 37, boardBounds) === boardInitialHeight - 37, "77b. 하단 보드의 위 손잡이를 내리면 snap 없이 연속 높이 축소");
+assert(resizeWorkspaceBoardHeight(boardInitialHeight, -10_000, boardBounds) === boardBounds.maxHeight, "78. 후보 보드 최대 높이 clamp");
+const collapsedBoardHeight = resizeWorkspaceBoardHeight(boardInitialHeight, 10_000, boardBounds);
+assert(collapsedBoardHeight === boardBounds.minHeight && isWorkspaceBoardCollapsed(collapsedBoardHeight, boardBounds), "79. 후보 보드를 끝까지 내리면 손잡이 전용 높이로 clamp");
+assert(resizeWorkspaceBoardHeight(collapsedBoardHeight, -37, boardBounds) === collapsedBoardHeight + 37 && !isWorkspaceBoardCollapsed(collapsedBoardHeight + 37, boardBounds), "79b. 숨긴 손잡이를 위로 끌면 snap 없이 다시 열림");
+assert(resizeWorkspaceBoardHeight(100, 55, boardBounds) === 45 && !isWorkspaceBoardCollapsed(45, boardBounds), "79c. 손잡이 높이 직전까지 연속 축소");
+assert(resizeWorkspaceBoardHeight(100, 56, boardBounds) === WORKSPACE_BOARD_COLLAPSED_HEIGHT_PX && isWorkspaceBoardCollapsed(WORKSPACE_BOARD_COLLAPSED_HEIGHT_PX, boardBounds), "79d. 손잡이 높이에 도달하는 즉시 숨김 상태 판정");
+assert(stepWorkspaceBoardHeight(boardInitialHeight, 1, boardBounds) === boardInitialHeight + 20, "80. 접근성 높이 20픽셀 증가");
+assert(stepWorkspaceBoardHeight(boardBounds.minHeight, -1, boardBounds) === boardBounds.minHeight && stepWorkspaceBoardHeight(boardBounds.minHeight, 1, boardBounds) === boardBounds.minHeight + 20, "80b. 숨김 경계 접근성 증감 clamp 및 재열기");
+const compactBoardBounds = getWorkspaceBoardHeightBounds(360, 30, 30);
+assert(compactBoardBounds.minHeight === WORKSPACE_BOARD_COLLAPSED_HEIGHT_PX && clampWorkspaceBoardHeight(boardInitialHeight, compactBoardBounds) === compactBoardBounds.maxHeight, "81. 창 축소 시 손잡이 최소 높이를 유지하며 후보 보드 높이 재조정");
+const tinyBoardBounds = getWorkspaceBoardHeightBounds(120, 40, 40);
+assert(tinyBoardBounds.minHeight === 40 && tinyBoardBounds.maxHeight === 40, "81b. 손잡이보다 작은 safe viewport에서는 후보 보드도 실제 화면 높이로 제한");
+const zeroBoardBounds = getWorkspaceBoardHeightBounds(0, 40, 40);
+assert(zeroBoardBounds.minHeight === 0 && zeroBoardBounds.maxHeight === 0, "81c. 사용할 수 없는 viewport에서 음수 높이 방지");
+assert(resolveWorkspaceBackAction(true, "trip").type === "back", "81d. navigation history가 있으면 기존 화면으로 돌아감");
+const workspaceRoomBackAction = resolveWorkspaceBackAction(false, " trip ");
+assert(workspaceRoomBackAction.type === "replace" && typeof workspaceRoomBackAction.href !== "string" && workspaceRoomBackAction.href.pathname === "/trips/[tripId]" && workspaceRoomBackAction.href.params.tripId === "trip", "81e. navigation history가 없으면 현재 여행방으로 대체 이동");
+const workspaceListBackAction = resolveWorkspaceBackAction(false, "  ");
+assert(workspaceListBackAction.type === "replace" && workspaceListBackAction.href === "/(tabs)/trips", "81f. tripId가 없으면 여행 목록으로 대체 이동");
+
+const constrainedTrip: TripRoom = {
+  ...trip(),
+  endCondition: {
+    type: "train",
+    location: { name: "부산역" },
+    deadline: "18:00",
+    travelMinutes: 60,
+    serviceBufferMinutes: 30,
+  },
+};
+const endTimeline = buildTripEndConditionTimelineEntry(constrainedTrip);
+assert(endTimeline?.date === "2026-07-19" && endTimeline.cutoffMinutes === 16 * 60 + 30, "84. 마지막 DAY 종료 조건 타임라인과 복귀 출발 시각 파생");
+const roundedTimeline = buildTripEndConditionTimelineEntry({
+  ...constrainedTrip,
+  endCondition: { ...constrainedTrip.endCondition!, travelMinutes: 47, serviceBufferMinutes: 20 },
+});
+assert(roundedTimeline?.cutoffMinutes === 16 * 60 + 45, "85. 이동·준비시간을 뺀 복귀 출발을 이전 15분 슬롯으로 보수적 정렬");
+const exactCutoffAddition = [item("exact-end", "cafe", "2026-07-19", "15:30", 60)];
+const exactAdditionResolution = resolveTripEndConditionAddition(constrainedTrip, exactCutoffAddition);
+assert(exactAdditionResolution.status === "accepted" && exactAdditionResolution.itinerary[0]?.startTime === "15:30", "86. cutoff에 정확히 끝나는 추가는 시간 변경 없이 허용");
+const lateAddition = [item("late-end", "cafe", "2026-07-19", "15:45", 60)];
+const lateAdditionResolution = resolveTripEndConditionAddition(constrainedTrip, lateAddition);
+assert(lateAdditionResolution.status === "rejected" && lateAdditionResolution.itinerary[0]?.startTime === "15:45", "87. cutoff를 15분 넘는 추가는 자동 앞당김 없이 거부");
+assert(resolveTripEndConditionAddition(constrainedTrip, [...lateAddition, item("earlier-day", "market", "2026-07-18", "20:00")], "2026-07-18").status === "accepted", "88. 기존 마지막 DAY가 위반 상태여도 다른 DAY의 일정 추가는 종료 조건으로 차단하지 않음");
+assert(getScheduleBlockDisplayMode(15) === "micro" && getScheduleBlockDisplayMode(30) === "compact" && getScheduleBlockDisplayMode(45) === "compact" && getScheduleBlockDisplayMode(60) === "full", "89. 짧은 일정 표시 밀도를 15분·30/45분·60분 이상으로 구분");
+assert(shouldShowScheduleResizeHandle(true, 15) && shouldShowScheduleResizeHandle(true, 30) && !shouldShowScheduleResizeHandle(false, 15), "89b. 편집 가능한 15분 일정도 하단 resize 손잡이를 유지");
+const modalBounds = getWorkspaceModalHeightBounds(900, 20, 30);
+const modalInitialHeight = getInitialWorkspaceModalHeight(900, modalBounds);
+assert(modalBounds.minHeight === 320 && modalBounds.maxHeight === 802 && modalInitialHeight === 612, "90. 후보 선택 창의 safe area 기반 연속 높이 경계");
+assert(resizeWorkspaceModalHeight(modalInitialHeight, -37, modalBounds) === modalInitialHeight + 37 && resizeWorkspaceModalHeight(modalInitialHeight, 10_000, modalBounds) === modalBounds.minHeight && stepWorkspaceModalHeight(modalInitialHeight, 1, modalBounds) === modalInitialHeight + 20, "91. 후보 선택 창 위 손잡이 연속 확대·최소 clamp·접근성 증분");
+
+console.log("Workspace editor verification passed: 91 scenarios + conflict validation");

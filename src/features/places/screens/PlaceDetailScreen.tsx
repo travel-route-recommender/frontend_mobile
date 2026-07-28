@@ -8,7 +8,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Chip, Screen, SectionHeader } from "../../../components/common";
 import { ErrorState, LoadingState } from "../../../components/feedback";
 import { queryKeys } from "../../../query/keys";
-import { useDuriStore } from "../../../store/useDuriStore";
+import { useDuriHydrationState, useDuriStore } from "../../../store/useDuriStore";
 import { colors, radius, shadows, spacing, typography } from "../../../theme/tokens";
 import { AddCandidateTripPickerModal, PlaceFeedbackBanner } from "../components/PlaceExploreControls";
 import { PlaceCard as RelatedPlaceCard } from "../components/PlaceCard";
@@ -17,6 +17,11 @@ import { findSimilarPlaces } from "../logic/placeSearch";
 import { buildPlaceCardViewModel } from "../selectors/placeSelectors";
 import { getBackendPlace } from "../services/placeApi";
 import { placeRepository } from "../services/placeDataPolicy";
+import {
+  buildExploreListHref,
+  buildPlaceDetailHref,
+  resolveTripExploreContext,
+} from "../../explore/logic/exploreNavigation";
 
 const HERO_MIN_HEIGHT = 284;
 const HERO_MAX_HEIGHT = 420;
@@ -26,9 +31,18 @@ export function PlaceDetailScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
-  const params = useLocalSearchParams<{ placeId?: string | string[] }>();
+  const params = useLocalSearchParams<{
+    placeId?: string | string[];
+    tripId?: string | string[];
+    origin?: string | string[];
+  }>();
   const placeId = Array.isArray(params.placeId) ? params.placeId[0] : params.placeId;
-  const hydrationError = useDuriStore((state) => state.hydrationError);
+  const tripExploreContext = useMemo(
+    () => resolveTripExploreContext(params.tripId, params.origin),
+    [params.origin, params.tripId],
+  );
+  const backToExplore = () => router.dismissTo(buildExploreListHref(tripExploreContext));
+  const hydrationError = useDuriHydrationState((state) => state.hydrationError);
   const upsertPlaces = useDuriStore((state) => state.upsertPlaces);
   const actions = usePlaceActions();
   const [expandedSummaryPlaceId, setExpandedSummaryPlaceId] = useState<string | undefined>();
@@ -60,17 +74,17 @@ export function PlaceDetailScreen() {
   }, [detailQuery.data, upsertPlaces]);
 
   if (!placeRepository.available) {
-    return <DetailStatusScreen onBack={() => router.back()}><ErrorState message={placeRepository.message ?? "장소 데이터를 사용할 수 없어요."} /></DetailStatusScreen>;
+    return <DetailStatusScreen onBack={tripExploreContext ? backToExplore : () => router.back()}><ErrorState message={placeRepository.message ?? "장소 데이터를 사용할 수 없어요."} /></DetailStatusScreen>;
   }
-  if (hydrationError) return <DetailStatusScreen onBack={() => router.back()}><ErrorState message={hydrationError} /></DetailStatusScreen>;
+  if (hydrationError) return <DetailStatusScreen onBack={tripExploreContext ? backToExplore : () => router.back()}><ErrorState message={hydrationError} /></DetailStatusScreen>;
   if (placeRepository.remoteEnabled && detailQuery.isLoading && !place) {
-    return <DetailStatusScreen onBack={() => router.back()}><LoadingState label="한국관광공사 상세 데이터를 불러오고 있어요." /></DetailStatusScreen>;
+    return <DetailStatusScreen onBack={tripExploreContext ? backToExplore : () => router.back()}><LoadingState label="한국관광공사 상세 데이터를 불러오고 있어요." /></DetailStatusScreen>;
   }
   if (placeRepository.remoteEnabled && detailQuery.isError && !place) {
-    return <DetailStatusScreen onBack={() => router.back()}><ErrorState message={detailQuery.error instanceof Error ? detailQuery.error.message : "한국관광공사 상세 데이터를 불러오지 못했어요."} onRetry={() => { void detailQuery.refetch(); }} /></DetailStatusScreen>;
+    return <DetailStatusScreen onBack={tripExploreContext ? backToExplore : () => router.back()}><ErrorState message={detailQuery.error instanceof Error ? detailQuery.error.message : "한국관광공사 상세 데이터를 불러오지 못했어요."} onRetry={() => { void detailQuery.refetch(); }} /></DetailStatusScreen>;
   }
   if (!place || !viewModel) {
-    return <DetailStatusScreen onBack={() => router.replace("/(tabs)/explore")}><ErrorState message="존재하지 않거나 삭제된 장소예요." onRetry={() => router.replace("/(tabs)/explore")} /></DetailStatusScreen>;
+    return <DetailStatusScreen onBack={backToExplore}><ErrorState message="존재하지 않거나 삭제된 장소예요." onRetry={backToExplore} /></DetailStatusScreen>;
   }
 
   const summaryText = viewModel.summary || (summaryLoading ? "소개를 불러오는 중이에요." : "아직 제공된 소개가 없어요.");
@@ -121,14 +135,14 @@ export function PlaceDetailScreen() {
             <Text style={styles.caption}>같은 지역·카테고리·태그가 겹치는 장소예요.</Text>
             {similar.map((item) => {
               const card = similarCards[item.id];
-              return card ? <RelatedPlaceCard key={item.id} viewModel={card} onPress={() => router.push({ pathname: "/places/[placeId]", params: { placeId: item.id } })} onToggleSaved={() => actions.toggleSaved(item.id)} onAddCandidate={() => actions.requestCandidate(item.id)} /> : null;
+              return card ? <RelatedPlaceCard key={item.id} viewModel={card} onPress={() => router.push(buildPlaceDetailHref(item.id, tripExploreContext))} onToggleSaved={() => actions.toggleSaved(item.id)} onAddCandidate={() => actions.requestCandidate(item.id)} /> : null;
             })}
           </View> : null}
         </View>
       </ScrollView>
 
       <View style={styles.floatingTitleBar}>
-        <DetailBackButton onPress={() => router.back()} />
+        <DetailBackButton onPress={tripExploreContext ? backToExplore : () => router.back()} />
         <Text numberOfLines={1} style={styles.stickyTitle}>{viewModel.name}</Text>
         <View style={styles.stickySpacer} />
       </View>

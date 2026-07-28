@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { PreferenceDimension, PreferenceScore } from "../../../domain";
+import { createPersistHydrationStore } from "../../../store/createPersistHydrationStore";
 import { PERSONAL_TEST_VERSION, personalTestQuestions } from "../../../duri/preferences";
 import { normalizePreferenceDraftAnswers } from "../logic/validatePreferenceAnswers";
 import type { PersonalPreferenceDraft, PreferenceDraftOwner, PreferencePreviewResult } from "../types";
@@ -48,8 +49,6 @@ export interface PersonalPreferenceDraftState {
   draft: PersonalPreferenceDraft | null;
   anonymousResult: PreferencePreviewResult | null;
   draftNotice: string | null;
-  isHydrated: boolean;
-  errorMessage: string | null;
   startTest(owner: PreferenceDraftOwner, startedAt?: string): void;
   selectAnswer(dimension: PreferenceDimension, value: PreferenceScore, updatedAt?: string): void;
   goNext(updatedAt?: string): void;
@@ -58,9 +57,9 @@ export interface PersonalPreferenceDraftState {
   resetDraft(): void;
   setAnonymousResult(result: PreferencePreviewResult | null): void;
   acknowledgeDraftNotice(): void;
-  setHydrated(hydrated: boolean): void;
-  setError(message: string | null): void;
 }
+
+export const usePreferenceDraftHydrationState = createPersistHydrationStore();
 
 export const usePersonalPreferenceDraftStore = create<PersonalPreferenceDraftState>()(
   persist(
@@ -68,8 +67,6 @@ export const usePersonalPreferenceDraftStore = create<PersonalPreferenceDraftSta
       draft: null,
       anonymousResult: null,
       draftNotice: null,
-      isHydrated: false,
-      errorMessage: null,
       startTest: (owner, startedAt = nowIso()) => set({ draft: { configVersion: PERSONAL_TEST_VERSION, owner, currentQuestionIndex: 0, answers: {}, startedAt, updatedAt: startedAt } }),
       selectAnswer: (dimension, value, updatedAt = nowIso()) => set((state) => {
         if (!state.draft) return state;
@@ -83,8 +80,6 @@ export const usePersonalPreferenceDraftStore = create<PersonalPreferenceDraftSta
       resetDraft: () => set({ draft: null }),
       setAnonymousResult: (anonymousResult) => set({ anonymousResult }),
       acknowledgeDraftNotice: () => set({ draftNotice: null }),
-      setHydrated: (isHydrated) => set({ isHydrated }),
-      setError: (errorMessage) => set({ errorMessage }),
     }),
     {
       name: PREFERENCE_DRAFT_STORAGE_KEY,
@@ -101,11 +96,14 @@ export const usePersonalPreferenceDraftStore = create<PersonalPreferenceDraftSta
         const normalized = normalizeDraft(source.draft);
         return { ...currentState, draft: normalized.draft, draftNotice: normalized.notice };
       },
-      onRehydrateStorage: (state) => {
-        state.setHydrated(false); state.setError(null);
-        return (hydratedState, error) => {
-          if (error) hydratedState?.setError("진행 중인 여행 성향 테스트를 불러오지 못했어요.");
-          hydratedState?.setHydrated(true);
+      onRehydrateStorage: () => {
+        usePreferenceDraftHydrationState.getState().begin();
+        return (_hydratedState, error) => {
+          if (error) {
+            usePreferenceDraftHydrationState.getState().fail("진행 중인 여행 성향 테스트를 불러오지 못했어요.");
+            return;
+          }
+          usePreferenceDraftHydrationState.getState().succeed();
         };
       },
       partialize: (state) => ({ draft: state.draft }),

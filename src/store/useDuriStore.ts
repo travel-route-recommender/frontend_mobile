@@ -6,8 +6,8 @@ import type {
   ItineraryItem,
   PersonalPreferenceAnswers,
   Place,
-  TripBudgetLevel,
-  TripIntensity,
+  TripEndCondition,
+  TripLocation,
   TripRoom,
   TripTransport,
   User,
@@ -26,6 +26,7 @@ import type {
 } from "../duri/duri-suggestions";
 import { createDemoData, type DuriDomainState } from "../data/mock/demoData";
 import { CURRENT_SCHEMA_VERSION, normalizePersistedState } from "./normalizePersistedState";
+import { createPersistHydrationStore } from "./createPersistHydrationStore";
 import { DEFAULT_PLACE_DURATION_MINUTES } from "../data/workspaceSchedule";
 import { isValidISODate } from "../utils/formatters";
 import { createUniqueEntityId } from "../utils/ids";
@@ -38,15 +39,24 @@ import {
 } from "../utils/schedule";
 import {
   addDaysToDate,
+  moveTripDaySchedule,
+  moveTripDayScheduleToIndex,
   moveItemToIndexWithinDate,
   moveItemWithinDate,
+  remapScheduleToTripDateRange,
+  removeTripDayFromSchedule,
 } from "../features/workspace/logic/workspaceDateTime";
-import type { ItineraryMoveDirection } from "../features/workspace/types";
+import type { ItineraryMoveDirection, TripDayMoveDirection } from "../features/workspace/types";
 import type {
   ApplyDuriSuggestionAtomicallyInput,
   ApplyDuriSuggestionAtomicallyResult,
 } from "../features/duri/types";
 import { prepareDuriSuggestionAtomicApply } from "../features/duri/validation/atomicSuggestionApply";
+import {
+  analyzeTripEndCondition,
+  resolveTripEndConditionAddition,
+  resolveTripEndConditionMutation,
+} from "../features/workspace/logic/tripEndCondition";
 
 export type AddPlaceToItineraryInput = {
   tripId: EntityId;
@@ -65,15 +75,44 @@ export type CreateTripInput = {
   endDate: string | null;
   dateUndecided: boolean;
   transport: TripTransport;
-  budgetLevel: TripBudgetLevel;
-  intensity: TripIntensity;
-  travelStyles?: string[];
+  accommodationLocation: TripLocation | null;
+  endCondition: TripEndCondition | null;
   companionType?: string | null;
   expectedMemberCount?: number | null;
   invitedUserIds: EntityId[];
 };
 
+export type UpdateTripPlanningFactsInput = {
+  transport: TripTransport;
+  accommodationLocation: TripLocation | null;
+  endCondition: TripEndCondition | null;
+};
+
+export type TripPlanningFactsMutationResult =
+  | "success"
+  | "success-adjusted"
+  | "invalid-trip"
+  | "trip-not-editable"
+  | "not-member"
+  | "invalid-facts"
+  | "end-condition";
+
 export type AccessMode = "member" | "guest";
+
+function isValidCreateTripEndCondition(condition: TripEndCondition | null) {
+  if (!condition) return true;
+  return ["train", "intercity-bus", "rental-car-return", "other"].includes(condition.type)
+    && Boolean(condition.location.name.trim())
+    && condition.location.name.trim().length <= 100
+    && /^([01]\d|2[0-3]):(?:00|15|30|45)$/.test(condition.deadline)
+    && Number.isInteger(condition.travelMinutes)
+    && condition.travelMinutes >= 0
+    && condition.travelMinutes <= 1440
+    && Number.isInteger(condition.serviceBufferMinutes)
+    && condition.serviceBufferMinutes >= 0
+    && condition.serviceBufferMinutes <= 720
+    && (condition.note?.trim().length ?? 0) <= 300;
+}
 
 export type UpdateCurrentUserProfileInput = {
   name: string;
@@ -100,6 +139,7 @@ export type RemoveCandidatePlaceResult =
 
 export type ItineraryMutationResult =
   | "success"
+  | "success-adjusted"
   | "invalid-trip"
   | "trip-not-editable"
   | "not-member"
@@ -110,15 +150,41 @@ export type ItineraryMutationResult =
   | "invalid-date"
   | "invalid-time"
   | "overlap"
-  | "boundary";
+  | "boundary"
+  | "invalid-attachment"
+  | "end-condition";
+
+export type AddPlaceToItineraryResult = Exclude<ItineraryMutationResult, "success-adjusted">;
+
+export type AddPlaceToItineraryWithIdResult =
+  | { status: "success"; itemId: EntityId }
+  | { status: Exclude<AddPlaceToItineraryResult, "success"> };
 
 export type ExtendTripEndDateResult =
   | { status: "success"; endDate: string }
   | { status: "invalid-trip" | "trip-not-editable" | "not-member" | "invalid-date" };
 
+export type TripDateMutationResult =
+  | {
+      status: "success";
+      startDate: string;
+      endDate: string;
+      selectedDate: string;
+      removedItineraryCount: number;
+      endConditionAdjusted: boolean;
+    }
+  | {
+      status:
+        | "invalid-trip"
+        | "trip-not-editable"
+        | "not-member"
+        | "invalid-date"
+        | "invalid-itinerary"
+        | "boundary"
+        | "end-condition";
+    };
+
 type DuriActions = {
-  hydrationError: string | null;
-  setHydrationError: (message: string | null) => void;
   accessMode: AccessMode;
   setAccessMode: (mode: AccessMode) => void;
   upsertUser: (user: User) => void;
@@ -127,13 +193,24 @@ type DuriActions = {
   addTripMember: (tripId: EntityId, userId: EntityId) => void;
   updateCurrentUserProfile: (input: UpdateCurrentUserProfileInput) => boolean;
   createTrip: (input: CreateTripInput) => EntityId;
+  updateTripPlanningFacts: (tripId: EntityId, input: UpdateTripPlanningFactsInput) => TripPlanningFactsMutationResult;
   extendTripByOneDay: (tripId: EntityId) => ExtendTripEndDateResult;
+  removeTripDay: (tripId: EntityId, date: string) => TripDateMutationResult;
+  moveTripDay: (tripId: EntityId, date: string, direction: TripDayMoveDirection) => TripDateMutationResult;
+  moveTripDayToIndex: (tripId: EntityId, date: string, targetIndex: number) => TripDateMutationResult;
+  updateTripDateRange: (
+    tripId: EntityId,
+    startDate: string,
+    endDate: string,
+    selectedDate?: string,
+  ) => TripDateMutationResult;
   setActiveTrip: (tripId: EntityId) => void;
   clearActiveTrip: () => void;
   toggleSavedPlace: (placeId: EntityId, userId?: EntityId) => void;
   addCandidatePlace: (tripId: EntityId, placeId: EntityId, addedByUserId?: EntityId) => AddCandidatePlaceResult;
   removeCandidatePlace: (tripId: EntityId, placeId: EntityId) => RemoveCandidatePlaceResult;
-  addPlaceToItinerary: (input: AddPlaceToItineraryInput) => ItineraryMutationResult;
+  addPlaceToItinerary: (input: AddPlaceToItineraryInput) => AddPlaceToItineraryResult;
+  addPlaceToItineraryWithId: (input: AddPlaceToItineraryInput) => AddPlaceToItineraryWithIdResult;
   removeItineraryItem: (tripId: EntityId, itineraryItemId: EntityId) => ItineraryMutationResult;
   updateItineraryItem: (
     tripId: EntityId,
@@ -155,20 +232,23 @@ type DuriActions = {
 
 export type DuriState = DuriDomainState & DuriActions;
 
+export const useDuriHydrationState = createPersistHydrationStore();
+
 function createItineraryId(state: DuriDomainState, tripId: EntityId, placeId: EntityId, date: string) {
   const prefix = `itinerary-${tripId}-${date}-${placeId}`;
   const existingIds = new Set((state.itineraryByTripId[tripId] ?? []).map((item) => item.id));
-  let sequence = 1;
-  while (existingIds.has(`${prefix}-${sequence}`)) sequence += 1;
-  return `${prefix}-${sequence}`;
+  return createUniqueEntityId(prefix, existingIds);
+}
+
+function violatesTripEndCondition(trip: TripRoom, itinerary: readonly ItineraryItem[]) {
+  const assessment = analyzeTripEndCondition(trip, itinerary);
+  return assessment.status === "infeasible" || assessment.status === "invalid";
 }
 
 export const useDuriStore = create<DuriState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       ...createDemoData(),
-      hydrationError: null,
-      setHydrationError: (message) => set({ hydrationError: message }),
       // 실제 인증 계약 전까지 guest 둘러보기 UX에만 사용하는 비영속 접근 모드다.
       accessMode: "member",
       setAccessMode: (mode) => set({ accessMode: mode }),
@@ -242,8 +322,12 @@ export const useDuriStore = create<DuriState>()(
           const hasValidDateState = input.dateUndecided
             ? input.startDate === null && input.endDate === null
             : isValidISODate(input.startDate) && isValidISODate(input.endDate) && input.endDate >= input.startDate;
+          const hasValidFacts = (input.transport === "car" || input.transport === "public")
+            && (!input.accommodationLocation || (Boolean(input.accommodationLocation.name.trim()) && input.accommodationLocation.name.trim().length <= 100))
+            && (!input.dateUndecided || input.endCondition === null)
+            && isValidCreateTripEndCondition(input.endCondition);
 
-          if (!region || !currentUser || !hasValidDateState || !normalizedTitle || normalizedTitle.length > 40) return state;
+          if (!region || !currentUser || !hasValidDateState || !hasValidFacts || !normalizedTitle || normalizedTitle.length > 40) return state;
 
           createdTripId = createUniqueEntityId("trip", Object.keys(state.tripsById));
           const invitedUserIds = [...new Set(input.invitedUserIds)].filter(
@@ -259,9 +343,19 @@ export const useDuriStore = create<DuriState>()(
             dateUndecided: input.dateUndecided,
             status: "planning",
             transport: input.transport,
-            budgetLevel: input.budgetLevel,
-            intensity: input.intensity,
-            travelStyles: [...new Set(input.travelStyles ?? [])],
+            accommodationLocation: input.accommodationLocation
+              ? { ...input.accommodationLocation, name: input.accommodationLocation.name.trim() }
+              : null,
+            endCondition: input.endCondition
+              ? {
+                  type: input.endCondition.type,
+                  location: { ...input.endCondition.location, name: input.endCondition.location.name.trim() },
+                  deadline: input.endCondition.deadline,
+                  travelMinutes: input.endCondition.travelMinutes,
+                  serviceBufferMinutes: input.endCondition.serviceBufferMinutes,
+                  ...(input.endCondition.note?.trim() ? { note: input.endCondition.note.trim() } : {}),
+                }
+              : null,
             companionType: input.companionType ?? null,
             expectedMemberCount: input.expectedMemberCount ?? memberUserIds.length,
             members: memberUserIds.map((userId, index) => ({
@@ -280,6 +374,57 @@ export const useDuriStore = create<DuriState>()(
         });
 
         return createdTripId;
+      },
+      updateTripPlanningFacts: (tripId, input) => {
+        let result: TripPlanningFactsMutationResult = "invalid-trip";
+        set((state) => {
+          const trip = state.tripsById[tripId];
+          if (!trip) return state;
+          if (trip.status === "completed") {
+            result = "trip-not-editable";
+            return state;
+          }
+          if (!trip.members.some((member) => member.userId === state.currentUserId)) {
+            result = "not-member";
+            return state;
+          }
+          const accommodationName = input.accommodationLocation?.name.trim() ?? "";
+          if (
+            (input.transport !== "car" && input.transport !== "public")
+            || (input.accommodationLocation !== null && (!accommodationName || accommodationName.length > 100))
+            || !isValidCreateTripEndCondition(input.endCondition)
+          ) {
+            result = "invalid-facts";
+            return state;
+          }
+          const nextTrip: TripRoom = {
+            ...trip,
+            transport: input.transport,
+            accommodationLocation: input.accommodationLocation
+              ? { ...input.accommodationLocation, name: accommodationName }
+              : null,
+            endCondition: input.endCondition
+              ? {
+                  ...input.endCondition,
+                  location: { ...input.endCondition.location, name: input.endCondition.location.name.trim() },
+                  ...(input.endCondition.note?.trim() ? { note: input.endCondition.note.trim() } : { note: undefined }),
+                }
+              : null,
+          };
+          const endResolution = resolveTripEndConditionMutation(nextTrip, state.itineraryByTripId[tripId] ?? []);
+          if (endResolution.status === "rejected") {
+            result = "end-condition";
+            return state;
+          }
+          result = endResolution.status === "adjusted" ? "success-adjusted" : "success";
+          return {
+            tripsById: { ...state.tripsById, [tripId]: nextTrip },
+            ...(endResolution.status === "adjusted"
+              ? { itineraryByTripId: { ...state.itineraryByTripId, [tripId]: endResolution.itinerary } }
+              : {}),
+          };
+        });
+        return result;
       },
       extendTripByOneDay: (tripId) => {
         let result: ExtendTripEndDateResult = { status: "invalid-trip" };
@@ -304,6 +449,200 @@ export const useDuriStore = create<DuriState>()(
             tripsById: {
               ...state.tripsById,
               [tripId]: { ...trip, endDate },
+            },
+          };
+        });
+        return result;
+      },
+      removeTripDay: (tripId, date) => {
+        let result: TripDateMutationResult = { status: "invalid-trip" };
+        set((state) => {
+          const trip = state.tripsById[tripId];
+          if (!trip) return state;
+          if (trip.status === "completed") {
+            result = { status: "trip-not-editable" };
+            return state;
+          }
+          if (!trip.members.some((member) => member.userId === state.currentUserId)) {
+            result = { status: "not-member" };
+            return state;
+          }
+          const change = removeTripDayFromSchedule(
+            state.itineraryByTripId[tripId] ?? [],
+            trip.startDate,
+            trip.endDate,
+            date,
+          );
+          if (change.status !== "success") {
+            result = { status: change.status };
+            return state;
+          }
+          const nextTrip = { ...trip, startDate: change.startDate, endDate: change.endDate, dateUndecided: false };
+          const endResolution = resolveTripEndConditionMutation(nextTrip, change.items);
+          if (endResolution.status === "rejected") {
+            result = { status: "end-condition" };
+            return state;
+          }
+          result = {
+            status: "success",
+            startDate: change.startDate,
+            endDate: change.endDate,
+            selectedDate: change.selectedDate,
+            removedItineraryCount: change.removedItineraryCount,
+            endConditionAdjusted: endResolution.status === "adjusted",
+          };
+          return {
+            tripsById: {
+              ...state.tripsById,
+              [tripId]: nextTrip,
+            },
+            itineraryByTripId: {
+              ...state.itineraryByTripId,
+              [tripId]: endResolution.itinerary,
+            },
+          };
+        });
+        return result;
+      },
+      moveTripDay: (tripId, date, direction) => {
+        let result: TripDateMutationResult = { status: "invalid-trip" };
+        set((state) => {
+          const trip = state.tripsById[tripId];
+          if (!trip) return state;
+          if (trip.status === "completed") {
+            result = { status: "trip-not-editable" };
+            return state;
+          }
+          if (!trip.members.some((member) => member.userId === state.currentUserId)) {
+            result = { status: "not-member" };
+            return state;
+          }
+          const change = moveTripDaySchedule(
+            state.itineraryByTripId[tripId] ?? [],
+            trip.startDate,
+            trip.endDate,
+            date,
+            direction,
+          );
+          if (change.status !== "success") {
+            result = { status: change.status };
+            return state;
+          }
+          const endResolution = resolveTripEndConditionMutation(trip, change.items);
+          if (endResolution.status === "rejected") {
+            result = { status: "end-condition" };
+            return state;
+          }
+          result = {
+            status: "success",
+            startDate: change.startDate,
+            endDate: change.endDate,
+            selectedDate: change.selectedDate,
+            removedItineraryCount: 0,
+            endConditionAdjusted: endResolution.status === "adjusted",
+          };
+          return {
+            itineraryByTripId: {
+              ...state.itineraryByTripId,
+              [tripId]: endResolution.itinerary,
+            },
+          };
+        });
+        return result;
+      },
+      moveTripDayToIndex: (tripId, date, targetIndex) => {
+        let result: TripDateMutationResult = { status: "invalid-trip" };
+        set((state) => {
+          const trip = state.tripsById[tripId];
+          if (!trip) return state;
+          if (trip.status === "completed") {
+            result = { status: "trip-not-editable" };
+            return state;
+          }
+          if (!trip.members.some((member) => member.userId === state.currentUserId)) {
+            result = { status: "not-member" };
+            return state;
+          }
+          const change = moveTripDayScheduleToIndex(
+            state.itineraryByTripId[tripId] ?? [],
+            trip.startDate,
+            trip.endDate,
+            date,
+            targetIndex,
+          );
+          if (change.status !== "success") {
+            result = { status: change.status };
+            return state;
+          }
+          const endResolution = resolveTripEndConditionMutation(trip, change.items);
+          if (endResolution.status === "rejected") {
+            result = { status: "end-condition" };
+            return state;
+          }
+          result = {
+            status: "success",
+            startDate: change.startDate,
+            endDate: change.endDate,
+            selectedDate: change.selectedDate,
+            removedItineraryCount: 0,
+            endConditionAdjusted: endResolution.status === "adjusted",
+          };
+          return {
+            itineraryByTripId: {
+              ...state.itineraryByTripId,
+              [tripId]: endResolution.itinerary,
+            },
+          };
+        });
+        return result;
+      },
+      updateTripDateRange: (tripId, startDate, endDate, selectedDate) => {
+        let result: TripDateMutationResult = { status: "invalid-trip" };
+        set((state) => {
+          const trip = state.tripsById[tripId];
+          if (!trip) return state;
+          if (trip.status === "completed") {
+            result = { status: "trip-not-editable" };
+            return state;
+          }
+          if (!trip.members.some((member) => member.userId === state.currentUserId)) {
+            result = { status: "not-member" };
+            return state;
+          }
+          const change = remapScheduleToTripDateRange(
+            state.itineraryByTripId[tripId] ?? [],
+            trip.startDate,
+            trip.endDate,
+            startDate,
+            endDate,
+            selectedDate,
+          );
+          if (change.status !== "success") {
+            result = { status: change.status };
+            return state;
+          }
+          const nextTrip = { ...trip, startDate: change.startDate, endDate: change.endDate, dateUndecided: false };
+          const endResolution = resolveTripEndConditionMutation(nextTrip, change.items);
+          if (endResolution.status === "rejected") {
+            result = { status: "end-condition" };
+            return state;
+          }
+          result = {
+            status: "success",
+            startDate: change.startDate,
+            endDate: change.endDate,
+            selectedDate: change.selectedDate,
+            removedItineraryCount: change.removedItineraryCount,
+            endConditionAdjusted: endResolution.status === "adjusted",
+          };
+          return {
+            tripsById: {
+              ...state.tripsById,
+              [tripId]: nextTrip,
+            },
+            itineraryByTripId: {
+              ...state.itineraryByTripId,
+              [tripId]: endResolution.itinerary,
             },
           };
         });
@@ -423,7 +762,7 @@ export const useDuriStore = create<DuriState>()(
         return result;
       },
       addPlaceToItinerary: (input) => {
-        let result: ItineraryMutationResult = "invalid-trip";
+        let result: AddPlaceToItineraryResult = "invalid-trip";
 
         set((state) => {
           const trip = state.tripsById[input.tripId];
@@ -475,17 +814,29 @@ export const useDuriStore = create<DuriState>()(
             result = "overlap";
             return state;
           }
+          const nextItinerary = sortItineraryItemsByDateAndTime([...current, nextItem]);
+          const endResolution = resolveTripEndConditionAddition(trip, nextItinerary, input.date);
+          if (endResolution.status === "rejected") {
+            result = "end-condition";
+            return state;
+          }
 
           result = "success";
           return {
             itineraryByTripId: {
               ...state.itineraryByTripId,
-              [input.tripId]: sortItineraryItemsByDateAndTime([...current, nextItem]),
+              [input.tripId]: endResolution.itinerary,
             },
           };
         });
 
         return result;
+      },
+      addPlaceToItineraryWithId: (input) => {
+        const status = get().addPlaceToItinerary(input);
+        if (status !== "success") return { status };
+        const item = (get().itineraryByTripId[input.tripId] ?? []).find((entry) => entry.placeId === input.placeId);
+        return item ? { status, itemId: item.id } : { status: "invalid-item" };
       },
       removeItineraryItem: (tripId, itineraryItemId) => {
         let result: ItineraryMutationResult = "invalid-trip";
@@ -558,13 +909,19 @@ export const useDuriStore = create<DuriState>()(
             result = "overlap";
             return state;
           }
-          result = "success";
+          const nextItinerary = sortItineraryItemsByDateAndTime(
+            current.map((entry) => (entry.id === itineraryItemId ? nextItem : entry)),
+          );
+          const endResolution = resolveTripEndConditionMutation(trip, nextItinerary);
+          if (endResolution.status === "rejected") {
+            result = "end-condition";
+            return state;
+          }
+          result = endResolution.status === "adjusted" ? "success-adjusted" : "success";
           return {
             itineraryByTripId: {
               ...state.itineraryByTripId,
-              [tripId]: sortItineraryItemsByDateAndTime(
-                current.map((entry) => (entry.id === itineraryItemId ? nextItem : entry)),
-              ),
+              [tripId]: endResolution.itinerary,
             },
           };
         });
@@ -589,11 +946,16 @@ export const useDuriStore = create<DuriState>()(
             result = moved.status === "boundary" ? "boundary" : moved.status;
             return state;
           }
-          result = "success";
+          const endResolution = resolveTripEndConditionMutation(trip, moved.items);
+          if (endResolution.status === "rejected") {
+            result = "end-condition";
+            return state;
+          }
+          result = endResolution.status === "adjusted" ? "success-adjusted" : "success";
           return {
             itineraryByTripId: {
               ...state.itineraryByTripId,
-              [tripId]: moved.items,
+              [tripId]: endResolution.itinerary,
             },
           };
         });
@@ -621,11 +983,16 @@ export const useDuriStore = create<DuriState>()(
             result = moved.status === "boundary" ? "boundary" : moved.status;
             return state;
           }
-          result = "success";
+          const endResolution = resolveTripEndConditionMutation(trip, moved.items);
+          if (endResolution.status === "rejected") {
+            result = "end-condition";
+            return state;
+          }
+          result = endResolution.status === "adjusted" ? "success-adjusted" : "success";
           return {
             itineraryByTripId: {
               ...state.itineraryByTripId,
-              [tripId]: moved.items,
+              [tripId]: endResolution.itinerary,
             },
           };
         });
@@ -712,6 +1079,14 @@ export const useDuriStore = create<DuriState>()(
             };
             return state;
           }
+          if (violatesTripEndCondition(trip, changed.itinerary)) {
+            result = {
+              status: "invalid",
+              changedItemIds: [],
+              message: "제안 적용 후 여행 종료 조건을 지킬 수 없어 일정은 변경하지 않았어요.",
+            };
+            return state;
+          }
           result = {
             status: "applied",
             changedItemIds: changed.changedItemIds,
@@ -778,10 +1153,14 @@ export const useDuriStore = create<DuriState>()(
         ...currentState,
         ...normalizePersistedState(persistedState),
       }),
-      onRehydrateStorage: (state) => {
-        state.setHydrationError(null);
+      onRehydrateStorage: () => {
+        useDuriHydrationState.getState().begin();
         return (_hydratedState, error) => {
-          if (error) state.setHydrationError("저장된 여행 정보를 불러오지 못했어요.");
+          if (error) {
+            useDuriHydrationState.getState().fail("저장된 여행 정보를 불러오지 못했어요.");
+            return;
+          }
+          useDuriHydrationState.getState().succeed();
         };
       },
       partialize: (state) => ({

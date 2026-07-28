@@ -8,11 +8,12 @@ type ScreenProps = PropsWithChildren<{
   scrollEnabled?: boolean;
   padded?: boolean;
   keyboardAware?: boolean;
+  includeBottomSafeArea?: boolean;
   testID?: string;
 }>;
 
-export function Screen({ children, scroll = true, scrollEnabled = true, padded = true, keyboardAware = false, testID }: ScreenProps) {
-  const contentStyle = [styles.content, padded && styles.padded];
+export function Screen({ children, scroll = true, scrollEnabled = true, padded = true, keyboardAware = false, includeBottomSafeArea = true, testID }: ScreenProps) {
+  const contentStyle = [styles.content, !scroll && styles.fixedContent, padded && styles.padded];
   const body = scroll ? (
     <ScrollView contentContainerStyle={contentStyle} keyboardShouldPersistTaps="handled" scrollEnabled={scrollEnabled} showsVerticalScrollIndicator={false}>
       {children}
@@ -22,7 +23,7 @@ export function Screen({ children, scroll = true, scrollEnabled = true, padded =
   );
 
   return (
-    <SafeAreaView edges={["top", "left", "right"]} style={styles.safeArea} testID={testID}>
+    <SafeAreaView edges={includeBottomSafeArea ? ["top", "right", "bottom", "left"] : ["top", "right", "left"]} style={styles.safeArea} testID={testID}>
       {keyboardAware ? (
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.flex}>
           {body}
@@ -36,5 +37,6 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colors.background },
   flex: { flex: 1 },
   content: { flexGrow: 1, width: "100%", alignSelf: "center" },
+  fixedContent: { flex: 1 },
   padded: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xxxl },
 });

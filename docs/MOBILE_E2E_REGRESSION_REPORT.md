@@ -39,7 +39,7 @@ Expo export 결과는 group-qualified 항목을 포함해 static route 38개였�
 
 | 흐름 | 자동/정적 검증 | 결과 | 실기기 확인 |
 |---|---|---|---|
-| 첫 설치 및 네 Store hydration | root layout과 `skipHydration` 순서 trace, demo validator | 통과 | cold launch 권장 |
+| 첫 설치 및 여섯 persisted 영역 hydration | root gate, `skipHydration`, 비영속 hydration 상태 분리 trace | 통과 | cold launch 권장 |
 | 오래된/부분 손상 persist | `verify:state-integrity` migration fixture | 통과 | 실제 AsyncStorage 업그레이드 권장 |
 | anonymous 둘러보기→상세→save/candidate gate | route/action/capability trace | 통과 | modal/back 확인 필요 |
 | mock login/signup/invite→profile→intro | auth service와 route replace trace | 통과 | keyboard/CTA 확인 필요 |
@@ -81,7 +81,7 @@ owner 누락, 누락된 user/place/date/result는 의미를 추정할 수 없어
 
 ## 6. Hydration·persist 결론
 
-- root가 domain/auth/두 draft Store를 모두 기다리므로 hydration 전 Stack/redirect가 없다.
+- root가 domain/auth/두 draft/invite/trip-document 영역을 모두 기다리고 hydration flag를 persist 대상과 분리하므로 읽기 전 빈 상태 저장이나 Stack/redirect 실행이 없다.
 - persisted relation이 있으면 정규화해 merge하며 seed 배열을 append하지 않아 demo trip 중복 생성 경로가 없다.
 - JSON parse/rehydration 오류는 root ErrorState와 retry로 연결된다. 전체 사용자 데이터를 reset하지 않는다.
 - auth/domain 완료 순서가 달라도 root barrier 이후 session reconciliation을 실행한다.

@@ -137,9 +137,9 @@ export function isValidScheduleRange(range: ScheduleRange) {
     Number.isFinite(start) &&
     start >= WORKSPACE_START_MINUTES &&
     start < WORKSPACE_END_MINUTES &&
+    start % SLOT_MINUTES === 0 &&
     range.durationMinutes >= MIN_DURATION_MINUTES &&
     range.durationMinutes % SLOT_MINUTES === 0 &&
     start + range.durationMinutes <= WORKSPACE_END_MINUTES
   );
 }
-

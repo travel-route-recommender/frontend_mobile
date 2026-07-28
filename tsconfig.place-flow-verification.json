@@ -18,7 +18,7 @@
     "src/features/places/types.ts",
     "src/features/places/logic/**/*.ts",
     "src/features/places/selectors/**/*.ts",
+    "src/features/explore/logic/**/*.ts",
     "src/utils/entityRelations.ts"
   ]
 }
-

@@ -9,10 +9,10 @@
 | `/(auth)/login` | `LoginScreen` | 이메일·Kakao mock 로그인, 익명 둘러보기 |
 | `/(auth)/signup-choice` | `SignupChoiceScreen` | 이메일 또는 Kakao 시작 방식 선택 |
 | `/(auth)/signup-email` | `SignupEmailScreen` | 이메일·비밀번호와 필수 약관 동의 |
-| `/(auth)/invite` | `InviteJoinScreen` | 초대 코드 기반 guest 참여 |
+| `/(auth)/invite` | `InviteJoinScreen` | 링크 preview, 활성 상태 검증, member 또는 guest 참여 |
 | `/(auth)/terms?type=service` | `TermsScreen` | 임시 서비스 안내 문구 |
 | `/(auth)/terms?type=privacy` | `TermsScreen` | 임시 개인정보 안내 문구 |
-| `/invite/[code]` | redirect | 딥링크 코드를 초대 화면으로 전달 |
+| `/invite/[code]` | redirect | 딥링크의 코드·tripId·revision을 초대 화면으로 전달 |
 
 route 파일은 `src/features/auth/screens`의 화면만 export한다. 긴 화면 로직은 `app` 아래에 두지 않는다.
 
@@ -24,12 +24,12 @@ route 파일은 `src/features/auth/screens`의 화면만 export한다. 긴 화�
 | `/(onboarding)/intro` | `OnboardingIntroScreen` | `onboardingIntroSeen` |
 | `/tests/personal` | 기존 `PersonalTestScreen` | 실제 결과 저장 성공 시 `preferenceTestCompleted` |
 
-`app/index.tsx`의 bootstrap은 domain, auth, preference draft Store hydration이 끝난 뒤 세션 상태, 프로필 완료, 소개 확인 순으로 진입 위치를 결정한다. root layout은 인증 세션의 사용자 ID를 기존 도메인 Store의 `currentUserId`와 맞춘다.
+`app/index.tsx`의 bootstrap은 domain, auth, preference draft Store hydration이 끝난 뒤 세션 상태, 프로필 완료, 소개 확인 순으로 진입 위치를 결정한다. root layout은 여기에 여행방 생성 draft와 invite link Store까지 client에서 복원하고, 인증 세션의 사용자 ID를 기존 도메인 Store의 `currentUserId`와 맞춘다.
 
 ## 3. sessionKind
 
 - `anonymous`: 로그인 없이 홈·탐색·장소 상세를 둘러보는 세션. 가짜 User를 만들지 않는다.
-- `guest`: mock 초대 코드로 특정 여행방에 참여한 임시 사용자. guest → member 병합은 구현하지 않는다.
+- `guest`: mock 초대 링크로 특정 여행방에 바로 참여한 임시 사용자. guest → member 병합은 구현하지 않는다.
 - `member`: 이메일 또는 Kakao mock으로 시작한 회원 세션.
 - `null`: 아직 시작 방법을 선택하지 않았거나 로그아웃한 상태.
 
@@ -51,7 +51,7 @@ route 파일은 `src/features/auth/screens`의 화면만 export한다. 긴 화�
 
 | mode | 인증 동작 |
 |---|---|
-| `mock` | 고정 데모 로그인, 안정적인 ID의 이메일 가입, 고정 코드 guest 참여가 로컬에서 동작한다. token은 만들지 않는다. |
+| `mock` | 고정 데모 로그인, 안정적인 ID의 이메일 가입, 여행방별 로컬 링크/code 참여가 동작한다. 운영 token은 만들지 않는다. |
 | `api` | 실제 DTO와 endpoint를 추측하지 않는다. 제출 시 계약 연결 전 오류를 반환하고 네트워크를 호출하지 않는다. |
 | `hybrid` | 공개·로컬 기능은 기존 설정을 따르되 Auth는 `api`와 동일하게 계약 대기 상태다. mock으로 fallback하지 않는다. |
 
@@ -85,6 +85,8 @@ route 파일은 `src/features/auth/screens`의 화면만 export한다. 긴 화�
 - 약관 버전과 동의 이력
 
 `UnavailableApiAuthService`는 `fetch`를 호출하지 않고 명시적인 unavailable 결과를 반환한다.
+
+프런트 mock 링크 관리, OS/Kakao 공유 경계와 추후 API 계약은 `MOBILE_INVITE_LINK_FLOW.md`를 따른다.
 
 ## 9. mock 정보
 

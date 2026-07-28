@@ -25,7 +25,7 @@ UI는 환경 변수를 직접 읽지 않고 service availability만 사용한다
 `canonicalizeDuriInput` 후 안정적인 FNV 계열 hash를 만든다.
 
 - algorithm version
-- trip id/region/dates/status/transport/budget/intensity/member role
+- trip id/region/dates/status/transport/accommodation/endCondition/member role와 legacy 호환 budget/intensity
 - itinerary id/tripId/placeId/date/startTime/duration/order/type/preferredByUserIds
 - candidate tripId/placeId/addedByUserIds/recommendedByDuri
 - place id/region/name/category/tags/address/실제 좌표
@@ -52,7 +52,7 @@ analyzedAt, createdAt, UI 상태와 랜덤 값은 제외한다. 보안 hash 목�
 
 ## 8. issue category와 severity
 
-웹 실제 category는 route, density, meal, preference다. status는 good, attention, warning, insufficient-data이고 severity는 info, low, medium, high다. 모바일 report는 계산 근거가 명확한 time-conflict, day-balance, candidate-usage context를 더하되 웹 엔진 타입은 변경하지 않는다. 정렬은 high→medium→low→info, 날짜, category, stable id 순이다.
+웹 실제 category는 route, density, meal, preference다. status는 good, attention, warning, insufficient-data이고 severity는 info, low, medium, high다. 모바일 report는 계산 근거가 명확한 end-condition, time-conflict, day-balance, candidate-usage context를 더하되 웹 엔진 타입은 변경하지 않는다. 정렬은 high→medium→low→info, 날짜, category, stable id 순이다.
 
 ## 9. 일정 밀도
 
@@ -92,7 +92,7 @@ candidate placeId와 itinerary placeId로 배치/미배치를 파생한다. `add
 
 ## 16. suggestion 타입
 
-웹 실제 7개 타입을 유지한다: reorder-route, move-item, insert-rest, insert-meal, add-preference-place, remove-overload-item, replace-place. 웹 생성기는 meal→density→route→preference issue와 stable ID/priority 순서를 쓴다. 모바일 context는 같은 operation/validation으로 시간 충돌의 빈 슬롯 이동과 일정 수 차이 3개 이상의 날짜 분산만 보완한다.
+웹 실제 7개 타입을 유지한다: reorder-route, move-item, insert-rest, insert-meal, add-preference-place, remove-overload-item, replace-place. 웹 생성기는 meal→density→route→preference issue와 stable ID/priority 순서를 쓴다. 모바일 context는 같은 operation/validation으로 종료 조건을 지키는 마지막 날 전체 이동 또는 장소 제외, 시간 충돌의 빈 슬롯 이동, 일정 수 차이 3개 이상의 날짜 분산을 보완한다.
 
 ## 17. change operation
 
@@ -112,7 +112,7 @@ stable item ID로 같은 항목을 연결해 added, removed, moved, time-changed
 
 ## 21. stale 판정
 
-analysis session과 suggestion envelope의 full input fingerprint를 workspace/report/preview/적용 직전에 현재 값과 비교한다. 일정·후보·반영 preference·trip 날짜/상태가 달라지면 stale이다. selectedDate, 검색어, Modal은 무관하다.
+analysis session과 suggestion envelope의 full input fingerprint를 workspace/report/preview/적용 직전에 현재 값과 비교한다. 일정·후보·반영 preference·trip 날짜/상태/이동 방식/숙소/종료 조건이 달라지면 stale이다. selectedDate, 검색어, Modal은 무관하다.
 
 ## 22. apply validation과 원자 update
 
@@ -124,7 +124,7 @@ trip/suggestion/tripId/version/fingerprint, member/completed, supported change, 
 
 ## 24. persist 정책과 migration
 
-웹 분석은 파생 결과이고 모바일 기존 analysesByTripId도 normalize 시 비운다. session/suggestion/receipt는 비영속이며 isStale/currentFingerprint/expected impact도 파생한다. 새 영속 필드가 없어 persist version 4와 migration을 변경하지 않았다.
+웹 분석은 파생 결과이고 모바일 기존 analysesByTripId도 normalize 시 비운다. session/suggestion/receipt는 비영속이며 isStale/currentFingerprint/expected impact도 파생한다. 두리 분석 기능 자체는 새 영속 필드를 만들지 않는다. 현재 persist version은 여행방 사실 정보 migration이 반영된 5다.
 
 ## 25. api/server 대기
 
@@ -134,6 +134,10 @@ trip/suggestion/tripId/version/fingerprint, member/completed, supported change, 
 
 server apply는 한 요청에서 전체 changes를 검증·적용하고 실패 시 rollback하는 계약, current version/fingerprint 또는 ETag, idempotency key, receipt가 있어야 한다. 그전에는 server suggestion을 여러 일정 API로 나누어 호출하지 않는다.
 
+## 27. 여행 종료 조건
+
+종료 조건은 마지막 DAY의 일정 종료 시각에 사용자 입력 예상 이동시간과 승차·반납 준비시간을 더해 마감 시각을 지킬 수 있는지 분석한다. `location`, 15분 정렬 deadline, 유한한 정수 이동·준비시간을 공통 validator에서 확인한다. 초과하면 마지막 날 전체 일정을 같은 15분 단위만큼 앞당겨 순서·체류시간·기존 이동 및 대기 간격을 보존한다. 08:00 이전 시작이 필요하면 장소 일정만 가장 늦은 순서부터 미배치로 돌리는 대안을 만들며, transport 항목과 마지막 DAY 전체 삭제는 해결로 간주하지 않는다. 생성·미리보기·원자 적용·직접 편집이 모두 최종 상태를 `feasible`로 판정해야 commit한다. 실제 경로시간, 교통 상황, 렌터카 영업시간은 현재 로컬 엔진이 확정하지 않으며 서버 Directions 계약 전까지 사용자가 확인한 예상 시간을 사실 입력으로 사용한다.
+
 ## 검증
 
-`npm run verify:duri-analysis`는 분석 18, 제안 13, 원자 적용 10 fixture를 실행한다. lint, typecheck, expo-doctor, export도 완료 조건이다.
+`npm run verify:duri-analysis`는 분석 18, 제안 13, 원자 적용 10, 종료 조건 16 fixture를 실행한다. lint, typecheck, expo-doctor, export도 완료 조건이다.

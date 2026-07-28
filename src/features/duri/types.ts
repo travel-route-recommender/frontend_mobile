@@ -39,7 +39,8 @@ export type DuriReportIssueCategory =
   | "preference"
   | "time-conflict"
   | "day-balance"
-  | "candidate-usage";
+  | "candidate-usage"
+  | "end-condition";
 
 export interface DuriReportIssue {
   id: string;

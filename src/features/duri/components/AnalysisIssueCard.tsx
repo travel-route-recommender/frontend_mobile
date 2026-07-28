@@ -10,6 +10,7 @@ const categoryLabel: Record<DuriReportIssueCategory, string> = {
   "time-conflict": "시간 충돌",
   "day-balance": "날짜 균형",
   "candidate-usage": "후보 활용",
+  "end-condition": "여행 종료",
 };
 const severityLabel = { info: "참고해보세요", low: "참고해보세요", medium: "조금 조정하면 좋아요", high: "먼저 확인해보세요" } as const;
 

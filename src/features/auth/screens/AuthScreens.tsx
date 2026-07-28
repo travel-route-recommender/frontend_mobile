@@ -2,8 +2,13 @@ import { useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { PrimaryButton } from "../../../components/common";
+import { environment } from "../../../config/environment";
 import { ApiError } from "../../../services/apiClient";
+import { useDuriStore } from "../../../store/useDuriStore";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
+import { formatTripDateRange } from "../../../utils/formatters";
+import { resolveMockTripInvite } from "../../invitations/logic/tripInviteLinks";
+import { useTripInviteHydrationState, useTripInviteStore } from "../../invitations/store/useTripInviteStore";
 import { AuthDivider, AuthErrorBanner, AuthTextField, GoogleButton, KakaoButton, PasswordField, TermsCheckbox } from "../components/AuthControls";
 import { AuthLayout } from "../components/AuthLayout";
 import { DuriLogo } from "../components/DuriLogo";
@@ -177,9 +182,16 @@ function inviteError(error: unknown, sessionKind: "anonymous" | "guest" | "membe
 export function InviteJoinScreen() {
   const sessionKind = useAuthSessionStore((state) => state.sessionKind);
   const member = sessionKind === "member";
-  const params = useLocalSearchParams<{ code?: string }>();
+  const params = useLocalSearchParams<{
+    code?: string | string[];
+    tripId?: string | string[];
+    revision?: string | string[];
+  }>();
   const initialCode = Array.isArray(params.code) ? params.code[0] : params.code;
-  const [code, setCode] = useState(normalizeInviteCode(initialCode ?? ""));
+  const routeTripId = Array.isArray(params.tripId) ? params.tripId[0] : params.tripId;
+  const routeRevision = Array.isArray(params.revision) ? params.revision[0] : params.revision;
+  const sharedCode = normalizeInviteCode(initialCode ?? "");
+  const [code, setCode] = useState(sharedCode);
   const [nickname, setNickname] = useState("");
   const [preview, setPreview] = useState<InvitePreview | null>(null);
   const [error, setError] = useState<string>();
@@ -189,18 +201,113 @@ export function InviteJoinScreen() {
   const inputRef = useRef<TextInput>(null);
   const nicknameRef = useRef<TextInput>(null);
   const { applyAuthSuccess } = useAuthFlow();
+  const currentUserId = useDuriStore((state) => state.currentUserId);
+  const regionsById = useDuriStore((state) => state.regionsById);
+  const usersById = useDuriStore((state) => state.usersById);
+  const addTripMember = useDuriStore((state) => state.addTripMember);
+  const setActiveTrip = useDuriStore((state) => state.setActiveTrip);
+  const inviteStoreHydrated = useTripInviteHydrationState((state) => state.isHydrated);
+  const localUser = usersById[currentUserId];
+  const existingParticipant = environment.dataSource === "mock" ? Boolean(localUser) : member;
+
+  const currentMockRouteInput = () => {
+    const normalizedCode = normalizeInviteCode(code);
+    const usesSharedLinkMetadata = Boolean(
+      routeTripId && routeRevision && sharedCode && normalizedCode === sharedCode,
+    );
+    return {
+      code: normalizedCode,
+      tripId: usesSharedLinkMetadata ? routeTripId : undefined,
+      revision: usesSharedLinkMetadata ? routeRevision : undefined,
+    };
+  };
 
   const checkCode = async () => {
     const nextError = validateInviteCode(code); setError(nextError);
     if (nextError) { inputRef.current?.focus(); return; }
     setLoading(true); setServiceError(null);
     try {
+      if (environment.dataSource === "mock") {
+        if (!useTripInviteHydrationState.getState().isHydrated) {
+          setServiceError("저장된 초대 링크를 불러오는 중이에요. 잠시 후 다시 시도해 주세요.");
+          return;
+        }
+        const resolution = resolveMockTripInvite(
+          currentMockRouteInput(),
+          useDuriStore.getState().tripsById,
+          useTripInviteStore.getState().linksByTripId,
+        );
+        if (resolution.status !== "success") {
+          setPreview(null);
+          setServiceError(resolution.message);
+          return;
+        }
+        const trip = resolution.trip;
+        setPreview({
+          roomId: trip.id,
+          title: trip.title,
+          destination: regionsById[trip.regionId]?.name,
+          startDate: trip.startDate ?? undefined,
+          endDate: trip.endDate ?? undefined,
+          memberCount: trip.members.length,
+        });
+        if (!localUser) requestAnimationFrame(() => nicknameRef.current?.focus());
+        return;
+      }
       setPreview(await authService.previewInvite(code));
       requestAnimationFrame(() => nicknameRef.current?.focus());
     } catch (reason) { setServiceError(inviteError(reason, sessionKind)); } finally { setLoading(false); }
   };
 
   const join = async () => {
+    if (environment.dataSource === "mock") {
+      if (!preview) return;
+      if (!localUser) {
+        const nextError = validateNickname(nickname); setNicknameError(nextError);
+        if (nextError) { nicknameRef.current?.focus(); return; }
+      }
+      setLoading(true); setServiceError(null);
+      try {
+        const resolution = resolveMockTripInvite(
+          currentMockRouteInput(),
+          useDuriStore.getState().tripsById,
+          useTripInviteStore.getState().linksByTripId,
+        );
+        if (resolution.status !== "success") {
+          setPreview(null);
+          setServiceError(resolution.message);
+          return;
+        }
+
+        const latestState = useDuriStore.getState();
+        const existingUser = latestState.usersById[latestState.currentUserId];
+        if (existingUser) {
+          addTripMember(resolution.trip.id, existingUser.id);
+        } else {
+          const result = await authService.joinByInvite({
+            code: normalizeInviteCode(code),
+            nickname: nickname.trim(),
+            tripId: resolution.trip.id,
+          });
+          if (result.status === "error") { setServiceError(result.message); return; }
+          applyAuthSuccess(result);
+        }
+
+        const joinedState = useDuriStore.getState();
+        const joinedUserId = existingUser?.id ?? joinedState.currentUserId;
+        const joined = joinedState.tripsById[resolution.trip.id]?.members.some(
+          (tripMember) => tripMember.userId === joinedUserId,
+        );
+        if (!joined) {
+          setServiceError("여행방 참여 상태를 저장하지 못했어요. 다시 시도해 주세요.");
+          return;
+        }
+        setActiveTrip(resolution.trip.id);
+        router.replace({ pathname: "/trips/[tripId]", params: { tripId: resolution.trip.id } });
+      } finally { setLoading(false); }
+      return;
+    }
+
     if (member) {
       setLoading(true); setServiceError(null);
       try {
@@ -227,14 +334,14 @@ export function InviteJoinScreen() {
     } finally { setLoading(false); }
   };
 
-  return <AuthLayout title={preview ? (member ? "초대받은 여행 확인" : "게스트 닉네임 설정") : "초대 코드 확인"} subtitle={preview ? (member ? "현재 회원 계정으로 여행방에 참여합니다." : "이 여행방에서 사용할 이름을 정해주세요.") : "유효한 초대 코드를 확인한 뒤 여행방에 참여할 수 있어요."} onBack={() => preview ? setPreview(null) : router.back()} footer={<PrimaryButton label={preview ? (member ? "여행방 참여하기" : "게스트로 참여하기") : "초대 코드 확인"} loading={loading} onPress={preview ? join : checkCode} />}>
-    <View style={styles.inviteHero}><Text style={styles.inviteEmoji}>✈️</Text><Text style={styles.inviteCopy}>{member ? "회원 계정의 기존 로그인 세션을 유지한 채 초대받은 여행방에 참여해요." : "게스트는 초대받은 여행방 조회와 허용된 참여 기능만 이용할 수 있어요. 여행방 생성·저장 등 회원 기능은 서버에서도 차단됩니다."}</Text></View>
+  return <AuthLayout title={preview ? (existingParticipant ? "초대받은 여행 확인" : "게스트 닉네임 설정") : "초대 코드 확인"} subtitle={preview ? (existingParticipant ? "현재 프로필로 여행방에 참여합니다." : "이 여행방에서 사용할 이름을 정해주세요.") : "유효한 초대 코드를 확인한 뒤 여행방에 참여할 수 있어요."} onBack={() => preview ? setPreview(null) : router.back()} footer={<PrimaryButton label={preview ? (existingParticipant ? "여행방 참여하기" : "게스트로 참여하기") : "초대 코드 확인"} loading={loading} disabled={environment.dataSource === "mock" && !inviteStoreHydrated} onPress={preview ? join : checkCode} />}>
+    <View style={styles.inviteHero}><Text style={styles.inviteEmoji}>✈️</Text><Text style={styles.inviteCopy}>{existingParticipant ? "현재 프로필을 유지한 채 초대받은 여행방에 참여해요." : "게스트는 초대받은 여행방 조회와 허용된 참여 기능만 이용할 수 있어요. 여행방 생성·저장 등 회원 기능은 서버에서도 차단됩니다."}</Text></View>
     {!preview ? <>
       <AuthTextField ref={inputRef} label="초대 코드" value={code} onChangeText={(value) => { setCode(normalizeInviteCode(value)); setError(undefined); setServiceError(null); }} error={error} autoCapitalize="characters" autoCorrect={false} maxLength={8} returnKeyType="done" onSubmitEditing={checkCode} />
       {__DEV__ ? <Pressable accessibilityRole="button" onPress={() => { setCode(DEMO_INVITE_CODE); setError(undefined); }} style={styles.demoBox}><Text style={styles.demoTitle}>Mock 초대 코드 사용</Text><Text style={styles.demoText}>{DEMO_INVITE_CODE}</Text></Pressable> : null}
     </> : <>
-      <View style={styles.previewBox}><Text style={styles.previewTitle}>{preview.title}</Text><Text style={styles.previewMeta}>{[preview.destination, preview.startDate && preview.endDate ? `${preview.startDate} ~ ${preview.endDate}` : undefined, `${preview.memberCount}명 참여 중`].filter(Boolean).join(" · ")}</Text></View>
-      {!member ? <AuthTextField ref={nicknameRef} label="게스트 닉네임" value={nickname} onChangeText={(value) => { setNickname(value); setNicknameError(undefined); }} error={nicknameError} helperText="이 여행방에서 다른 구성원에게 표시되는 이름이에요." maxLength={12} autoCapitalize="none" returnKeyType="done" onSubmitEditing={join} /> : null}
+      <View style={styles.previewBox}><Text style={styles.previewTitle}>{preview.title}</Text><Text style={styles.previewMeta}>{[preview.destination, preview.startDate && preview.endDate ? formatTripDateRange(preview.startDate, preview.endDate) : undefined, `${preview.memberCount}명 참여 중`].filter(Boolean).join(" · ")}</Text></View>
+      {!existingParticipant ? <AuthTextField ref={nicknameRef} label="게스트 닉네임" value={nickname} onChangeText={(value) => { setNickname(value); setNicknameError(undefined); }} error={nicknameError} helperText="이 여행방에서 다른 구성원에게 표시되는 이름이에요." maxLength={12} autoCapitalize="none" returnKeyType="done" onSubmitEditing={join} /> : null}
     </>}
     <AuthErrorBanner message={serviceError} />
     <View style={styles.inlineLinks}><Text style={styles.muted}>이미 두리 회원인가요?</Text><TextLink label="로그인" onPress={() => router.replace("/(auth)/login")} /></View>

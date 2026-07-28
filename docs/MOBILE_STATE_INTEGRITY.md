@@ -43,7 +43,7 @@ ID는 이름에서 추정하지 않는다. 저장과 후보는 같은 Place를 �
 
 ## 5. Migration과 자동 복구
 
-Domain schema 4는 persist middleware version과 같은 `CURRENT_SCHEMA_VERSION`을 source로 사용한다. 정규화는 다음만 자동 처리한다.
+Domain schema 5는 persist middleware version과 같은 `CURRENT_SCHEMA_VERSION`을 source로 사용한다. 정규화는 다음만 자동 처리한다.
 
 - 중복/존재하지 않는 tripOrder 제거 후 빠진 실제 trip ID append.
 - 누락 relation array를 빈 배열로 생성.
@@ -52,6 +52,8 @@ Domain schema 4는 persist middleware version과 같은 `CURRENT_SCHEMA_VERSION`
 - item ID 중복, 다른 trip 혼합, 유효하지 않은 날짜·시간·place 항목 제거 후 날짜/시간 정렬.
 - itinerary 선호 사용자를 해당 여행방 member로 제한.
 - 저장 ID 중복/없는 place 제거.
+- legacy `walking` 이동 방식은 `public`으로 합치고, 숙소·종료 조건은 허용된 길이·15분 단위 시각·분 범위를 통과한 값만 복원.
+- 날짜 미정 여행방과 초안의 종료 조건은 추측하지 않고 제거.
 - 지원 가능한 결과만 user key에 맞춰 정규화하고 legacy 결과만 명시적으로 변환.
 - legacy analysis cache 제거. Duri feature Store는 비영속이라 앱 재실행 시 오래된 session/suggestion이 복구되지 않음.
 - config version이 다른 UI draft는 폐기하고 사용자에게 notice 제공.
@@ -72,4 +74,3 @@ npm.cmd run verify:state-integrity
 ## 7. 로그아웃과 사용자 전환 정책
 
 로그아웃은 SecureStore token과 auth session을 초기화하고 domain `currentUserId`/`activeTripId`를 비운다. mock entity와 비민감 관계는 prototype dataset으로 유지한다. 화면 selector는 current user membership을 요구하므로 이전 사용자의 저장·여행·결과가 새 세션 화면에 노출되지 않는다. Draft는 owner ID로 격리되어 다른 사용자가 이어 쓸 수 없다. 운영 API 전환 시 domain server state는 Query cache clear 정책으로 교체해야 한다.
-
