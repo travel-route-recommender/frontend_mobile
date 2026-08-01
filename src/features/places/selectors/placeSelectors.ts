@@ -3,6 +3,37 @@ import type { PlaceCandidateState, PlaceCardViewModel } from "../types";
 import { getPlaceCategoryLabel } from "../logic/placeSearch";
 
 const isGenericTourSummary = (summary: string) => /TourAPI/i.test(summary);
+const REGION_NAME_FALLBACKS: readonly [RegExp, string][] = [
+  [/^서울/, "서울특별시"],
+  [/^부산/, "부산광역시"],
+  [/^대구/, "대구광역시"],
+  [/^인천/, "인천광역시"],
+  [/^광주/, "광주광역시"],
+  [/^대전/, "대전광역시"],
+  [/^울산/, "울산광역시"],
+  [/^세종/, "세종특별자치시"],
+  [/^경기/, "경기도"],
+  [/^강원/, "강원특별자치도"],
+  [/^충청북도|^충북/, "충청북도"],
+  [/^충청남도|^충남/, "충청남도"],
+  [/^전북|^전라북도/, "전북특별자치도"],
+  [/^전라남도|^전남/, "전라남도"],
+  [/^경상북도|^경북/, "경상북도"],
+  [/^경상남도|^경남/, "경상남도"],
+  [/^제주/, "제주특별자치도"],
+];
+
+function resolvePlaceRegionName(place: Place, regionsById: Readonly<Record<EntityId, Region>>) {
+  const regionName = regionsById[place.regionId]?.name;
+  if (regionName) return regionName;
+
+  const address = place.address.trim();
+  const fallback = REGION_NAME_FALLBACKS.find(([pattern]) => pattern.test(address))?.[1];
+  if (fallback) return fallback;
+
+  const firstToken = address.split(/\s+/)[0]?.trim();
+  return firstToken && firstToken !== "주소" ? firstToken : "지역 정보 없음";
+}
 
 export interface PlaceSelectorState {
   currentUserId: EntityId;
@@ -76,10 +107,10 @@ export function buildPlaceCardViewModel(state: PlaceSelectorState, placeId: Enti
     ...(place.imageUrl ? { imageUrl: place.imageUrl } : {}),
     address: place.address,
     summary: isGenericTourSummary(summary) ? "" : summary,
-    regionName: state.regionsById[place.regionId]?.name ?? "지역 정보 없음",
+    regionName: resolvePlaceRegionName(place, state.regionsById),
     categoryLabel,
-    tags: tags.slice(0, 3),
-    hiddenTagCount: Math.max(tags.length - 3, 0),
+    tags,
+    hiddenTagCount: 0,
     ...(Number.isFinite(place.rating) ? { rating: place.rating } : {}),
     ...(place.distanceLabel ? { distanceLabel: place.distanceLabel } : {}),
     isSaved: savedIds.has(place.id),

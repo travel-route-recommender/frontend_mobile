@@ -1,0 +1,574 @@
+diff -ruN .codex_backend_tour_patch/a/src/tour/dto/tour-query.dto.ts .codex_backend_tour_patch/b/src/tour/dto/tour-query.dto.ts
+--- .codex_backend_tour_patch/a/src/tour/dto/tour-query.dto.ts	2026-07-29 21:49:03
++++ .codex_backend_tour_patch/b/src/tour/dto/tour-query.dto.ts	2026-07-29 21:50:31
+@@ -36,6 +36,21 @@
+   @IsIn(CONTENT_TYPE_VALUES)
+   contentTypeId?: number;
+ 
++  @ApiPropertyOptional({ example: 'NA', description: '신분류체계 대분류 코드' })
++  @IsOptional()
++  @IsString()
++  lclsSystm1?: string;
++
++  @ApiPropertyOptional({ example: 'NA02', description: '신분류체계 중분류 코드' })
++  @IsOptional()
++  @IsString()
++  lclsSystm2?: string;
++
++  @ApiPropertyOptional({ example: 'NA020400', description: '신분류체계 소분류 코드' })
++  @IsOptional()
++  @IsString()
++  lclsSystm3?: string;
++
+   @ApiPropertyOptional({
+     example: 'O',
+     description: 'A:제목 C:수정일 O:이미지+제목 Q:이미지+수정일',
+@@ -86,6 +101,21 @@
+   @IsIn(CONTENT_TYPE_VALUES)
+   contentTypeId?: number;
+ 
++  @ApiPropertyOptional({ example: 'NA', description: '신분류체계 대분류 코드' })
++  @IsOptional()
++  @IsString()
++  lclsSystm1?: string;
++
++  @ApiPropertyOptional({ example: 'NA02', description: '신분류체계 중분류 코드' })
++  @IsOptional()
++  @IsString()
++  lclsSystm2?: string;
++
++  @ApiPropertyOptional({ example: 'NA020400', description: '신분류체계 소분류 코드' })
++  @IsOptional()
++  @IsString()
++  lclsSystm3?: string;
++
+   @ApiPropertyOptional({ example: 1, default: 1 })
+   @IsOptional()
+   @Type(() => Number)
+@@ -138,6 +168,21 @@
+   @IsIn(CONTENT_TYPE_VALUES)
+   contentTypeId?: number;
+ 
++  @ApiPropertyOptional({ example: 'NA', description: '신분류체계 대분류 코드' })
++  @IsOptional()
++  @IsString()
++  lclsSystm1?: string;
++
++  @ApiPropertyOptional({ example: 'NA02', description: '신분류체계 중분류 코드' })
++  @IsOptional()
++  @IsString()
++  lclsSystm2?: string;
++
++  @ApiPropertyOptional({ example: 'NA020400', description: '신분류체계 소분류 코드' })
++  @IsOptional()
++  @IsString()
++  lclsSystm3?: string;
++
+   @ApiPropertyOptional({ example: 1, default: 1 })
+   @IsOptional()
+   @Type(() => Number)
+@@ -179,6 +224,21 @@
+   @IsIn(CONTENT_TYPE_VALUES)
+   contentTypeId?: number;
+ 
++  @ApiPropertyOptional({ example: 'NA', description: '신분류체계 대분류 코드' })
++  @IsOptional()
++  @IsString()
++  lclsSystm1?: string;
++
++  @ApiPropertyOptional({ example: 'NA02', description: '신분류체계 중분류 코드' })
++  @IsOptional()
++  @IsString()
++  lclsSystm2?: string;
++
++  @ApiPropertyOptional({ example: 'NA020400', description: '신분류체계 소분류 코드' })
++  @IsOptional()
++  @IsString()
++  lclsSystm3?: string;
++
+   @ApiPropertyOptional({ example: 1, default: 1 })
+   @IsOptional()
+   @Type(() => Number)
+@@ -227,6 +287,21 @@
+   @IsString()
+   sigunguCode?: string;
+ 
++  @ApiPropertyOptional({ example: 'EV', description: '신분류체계 대분류 코드' })
++  @IsOptional()
++  @IsString()
++  lclsSystm1?: string;
++
++  @ApiPropertyOptional({ example: 'EV01', description: '신분류체계 중분류 코드' })
++  @IsOptional()
++  @IsString()
++  lclsSystm2?: string;
++
++  @ApiPropertyOptional({ example: 'EV010100', description: '신분류체계 소분류 코드' })
++  @IsOptional()
++  @IsString()
++  lclsSystm3?: string;
++
+   @ApiPropertyOptional({ example: 'O' })
+   @IsOptional()
+   @IsString()
+@@ -259,6 +334,21 @@
+   @IsString()
+   sigunguCode?: string;
+ 
++  @ApiPropertyOptional({ example: 'AC', description: '신분류체계 대분류 코드' })
++  @IsOptional()
++  @IsString()
++  lclsSystm1?: string;
++
++  @ApiPropertyOptional({ example: 'AC01', description: '신분류체계 중분류 코드' })
++  @IsOptional()
++  @IsString()
++  lclsSystm2?: string;
++
++  @ApiPropertyOptional({ example: 'AC010100', description: '신분류체계 소분류 코드' })
++  @IsOptional()
++  @IsString()
++  lclsSystm3?: string;
++
+   @ApiPropertyOptional({ example: 'O' })
+   @IsOptional()
+   @IsString()
+@@ -297,6 +387,21 @@
+   @IsIn(CONTENT_TYPE_VALUES)
+   contentTypeId?: number;
+ 
++  @ApiPropertyOptional({ example: 'NA', description: '신분류체계 대분류 코드' })
++  @IsOptional()
++  @IsString()
++  lclsSystm1?: string;
++
++  @ApiPropertyOptional({ example: 'NA02', description: '신분류체계 중분류 코드' })
++  @IsOptional()
++  @IsString()
++  lclsSystm2?: string;
++
++  @ApiPropertyOptional({ example: 'NA020400', description: '신분류체계 소분류 코드' })
++  @IsOptional()
++  @IsString()
++  lclsSystm3?: string;
++
+   @ApiPropertyOptional({
+     example: '20260101000000',
+     description: '이 시각 이후 수정분만 (YYYYMMDDHHMMSS)',
+@@ -361,6 +466,20 @@
+   @IsOptional()
+   @IsString()
+   lclsSystm2?: string;
++
++  @ApiPropertyOptional({ example: 'AC010100', description: '분류체계 소분류 코드' })
++  @IsOptional()
++  @IsString()
++  lclsSystm3?: string;
++
++  @ApiPropertyOptional({
++    example: 'Y',
++    enum: ['Y', 'N'],
++    description: 'Y면 대/중/소 전체 목록을 한 번에 반환',
++  })
++  @IsOptional()
++  @IsIn(['Y', 'N'])
++  lclsSystmListYn?: 'Y' | 'N';
+ 
+   @ApiPropertyOptional({ example: 1, default: 1 })
+   @IsOptional()
+diff -ruN .codex_backend_tour_patch/a/src/tour/dto/tour-response.dto.ts .codex_backend_tour_patch/b/src/tour/dto/tour-response.dto.ts
+--- .codex_backend_tour_patch/a/src/tour/dto/tour-response.dto.ts	2026-07-29 21:49:03
++++ .codex_backend_tour_patch/b/src/tour/dto/tour-response.dto.ts	2026-07-29 21:49:51
+@@ -32,6 +32,48 @@
+   @ApiProperty({ example: '관광지', nullable: true })
+   contentTypeLabel: string | null;
+ 
++  @ApiPropertyOptional({
++    example: 'NA',
++    nullable: true,
++    description: '신분류체계 대분류 코드',
++  })
++  lclsSystm1?: string | null;
++
++  @ApiPropertyOptional({
++    example: '자연관광',
++    nullable: true,
++    description: '신분류체계 대분류명',
++  })
++  lclsSystm1Name?: string | null;
++
++  @ApiPropertyOptional({
++    example: 'NA02',
++    nullable: true,
++    description: '신분류체계 중분류 코드',
++  })
++  lclsSystm2?: string | null;
++
++  @ApiPropertyOptional({
++    example: '자연생태',
++    nullable: true,
++    description: '신분류체계 중분류명',
++  })
++  lclsSystm2Name?: string | null;
++
++  @ApiPropertyOptional({
++    example: 'NA020400',
++    nullable: true,
++    description: '신분류체계 소분류 코드',
++  })
++  lclsSystm3?: string | null;
++
++  @ApiPropertyOptional({
++    example: '숲',
++    nullable: true,
++    description: '신분류체계 소분류명',
++  })
++  lclsSystm3Name?: string | null;
++
+   @ApiProperty({ example: '성산일출봉 [유네스코 세계자연유산]' })
+   name: string;
+ 
+@@ -409,4 +451,14 @@
+ 
+   @ApiProperty({ type: [TourCodeItemDto], description: '해당 시도의 시군구 코드 목록' })
+   sigungu: TourCodeItemDto[];
++}
++
++export class TourCategoryMiddleCodeDto extends TourCodeItemDto {
++  @ApiProperty({ type: [TourCodeItemDto], description: '소분류 코드 목록' })
++  children: TourCodeItemDto[];
++}
++
++export class TourCategoryCodeTreeDto extends TourCodeItemDto {
++  @ApiProperty({ type: [TourCategoryMiddleCodeDto], description: '중분류 코드 목록' })
++  children: TourCategoryMiddleCodeDto[];
+ }
+diff -ruN .codex_backend_tour_patch/a/src/tour/tour.controller.ts .codex_backend_tour_patch/b/src/tour/tour.controller.ts
+--- .codex_backend_tour_patch/a/src/tour/tour.controller.ts	2026-07-29 21:49:03
++++ .codex_backend_tour_patch/b/src/tour/tour.controller.ts	2026-07-29 21:51:31
+@@ -23,6 +23,7 @@
+   VisitorsQueryDto,
+ } from './dto/tour-query.dto';
+ import {
++  TourCategoryCodeTreeDto,
+   TourCodeItemDto,
+   TourCongestionDto,
+   TourFestivalPageDto,
+@@ -288,5 +289,15 @@
+   @ApiOkResponse({ type: TourCodeItemDto, isArray: true })
+   categoryCodes(@Query() query: CategoryCodeQueryDto) {
+     return this.tourService.categoryCodes(query);
++  }
++
++  @Get('meta/category-codes/tree')
++  @ApiOperation({
++    summary: '[필터용] 분류체계 코드 트리',
++    description: 'lclsSystmCode2 전체 목록을 대/중/소 트리로 반환합니다.',
++  })
++  @ApiOkResponse({ type: TourCategoryCodeTreeDto, isArray: true })
++  categoryCodeTree() {
++    return this.tourService.categoryCodeTree();
+   }
+ }
+diff -ruN .codex_backend_tour_patch/a/src/tour/tour.service.ts .codex_backend_tour_patch/b/src/tour/tour.service.ts
+--- .codex_backend_tour_patch/a/src/tour/tour.service.ts	2026-07-29 21:49:08
++++ .codex_backend_tour_patch/b/src/tour/tour.service.ts	2026-07-29 21:51:22
+@@ -6,6 +6,7 @@
+ import { TourApiClient } from './tour-api.client';
+ import {
+   bucketCoord,
++  CategoryCodeTreeItem,
+   cleanPlaceKeyword,
+   CodeItem,
+   CongestionDay,
+@@ -24,6 +25,7 @@
+   SyncPlaceCard,
+   toCodeItem,
+   toCongestionDay,
++  toCategoryCodeTree,
+   toFestivalCard,
+   toHubCard,
+   toPetTourInfo,
+@@ -78,6 +80,9 @@
+       areaCode: query.areaCode,
+       sigunguCode: query.sigunguCode,
+       contentTypeId: query.contentTypeId,
++      lclsSystm1: query.lclsSystm1,
++      lclsSystm2: query.lclsSystm2,
++      lclsSystm3: query.lclsSystm3,
+       numOfRows: query.size ?? 20,
+       pageNo: query.page ?? 1,
+     });
+@@ -148,6 +153,9 @@
+       keyword?: string;
+       sigunguCode?: string;
+       contentTypeId?: number;
++      lclsSystm1?: string;
++      lclsSystm2?: string;
++      lclsSystm3?: string;
+       page?: number;
+       size?: number;
+     },
+@@ -162,6 +170,9 @@
+         areaCode,
+         sigunguCode: query.sigunguCode,
+         contentTypeId: query.contentTypeId,
++        lclsSystm1: query.lclsSystm1,
++        lclsSystm2: query.lclsSystm2,
++        lclsSystm3: query.lclsSystm3,
+         page: query.page,
+         size: query.size,
+       });
+@@ -171,6 +182,9 @@
+       areaCode,
+       sigunguCode: query.sigunguCode,
+       contentTypeId: query.contentTypeId,
++      lclsSystm1: query.lclsSystm1,
++      lclsSystm2: query.lclsSystm2,
++      lclsSystm3: query.lclsSystm3,
+       page: query.page,
+       size: query.size,
+     });
+@@ -186,6 +200,9 @@
+       areaCode: query.areaCode,
+       sigunguCode: query.sigunguCode,
+       contentTypeId: query.contentTypeId,
++      lclsSystm1: query.lclsSystm1,
++      lclsSystm2: query.lclsSystm2,
++      lclsSystm3: query.lclsSystm3,
+       numOfRows: query.size ?? 20,
+       pageNo: query.page ?? 1,
+     });
+@@ -214,6 +231,9 @@
+       mapY: query.mapY,
+       radius: query.radius ?? 2000,
+       contentTypeId: query.contentTypeId,
++      lclsSystm1: query.lclsSystm1,
++      lclsSystm2: query.lclsSystm2,
++      lclsSystm3: query.lclsSystm3,
+       arrange: 'E', // 거리순
+       numOfRows: query.size ?? 20,
+       pageNo: query.page ?? 1,
+@@ -586,6 +606,9 @@
+       eventEndDate: query.eventEndDate,
+       areaCode: query.areaCode,
+       sigunguCode: query.sigunguCode,
++      lclsSystm1: query.lclsSystm1,
++      lclsSystm2: query.lclsSystm2,
++      lclsSystm3: query.lclsSystm3,
+       arrange: query.arrange ?? 'O',
+       numOfRows: query.size ?? 20,
+       pageNo: query.page ?? 1,
+@@ -608,6 +631,9 @@
+     const data = await this.client.call('searchStay2', {
+       areaCode: query.areaCode,
+       sigunguCode: query.sigunguCode,
++      lclsSystm1: query.lclsSystm1,
++      lclsSystm2: query.lclsSystm2,
++      lclsSystm3: query.lclsSystm3,
+       arrange: query.arrange ?? 'O',
+       numOfRows: query.size ?? 20,
+       pageNo: query.page ?? 1,
+@@ -624,6 +650,9 @@
+       areaCode: query.areaCode,
+       sigunguCode: query.sigunguCode,
+       contentTypeId: query.contentTypeId,
++      lclsSystm1: query.lclsSystm1,
++      lclsSystm2: query.lclsSystm2,
++      lclsSystm3: query.lclsSystm3,
+       modifiedtime: query.modifiedtime,
+       arrange: 'C',
+       numOfRows: query.size ?? 100,
+@@ -675,6 +704,8 @@
+     const data = await this.client.call('lclsSystmCode2', {
+       lclsSystm1: query.lclsSystm1,
+       lclsSystm2: query.lclsSystm2,
++      lclsSystm3: query.lclsSystm3,
++      lclsSystmListYn: query.lclsSystmListYn,
+       numOfRows: query.size ?? 100,
+       pageNo: query.page ?? 1,
+     });
+@@ -682,6 +713,22 @@
+     const codes = extractItems(data).map(toCodeItem);
+     await this.cache.set(key, codes, META_TTL);
+     return codes;
++  }
++
++  async categoryCodeTree(): Promise<CategoryCodeTreeItem[]> {
++    const key = 'tour:lcls:tree';
++    const cached = await this.cache.get<CategoryCodeTreeItem[]>(key);
++    if (cached) return cached;
++
++    const data = await this.client.call('lclsSystmCode2', {
++      lclsSystmListYn: 'Y',
++      numOfRows: 1000,
++      pageNo: 1,
++    });
++
++    const tree = toCategoryCodeTree(extractItems(data));
++    await this.cache.set(key, tree, META_TTL);
++    return tree;
+   }
+ 
+   /** 부가정보 호출 실패(파라미터 오류 등)는 무시하고 빈 데이터로 처리. */
+diff -ruN .codex_backend_tour_patch/a/src/tour/tour.util.ts .codex_backend_tour_patch/b/src/tour/tour.util.ts
+--- .codex_backend_tour_patch/a/src/tour/tour.util.ts	2026-07-29 21:49:02
++++ .codex_backend_tour_patch/b/src/tour/tour.util.ts	2026-07-29 21:49:37
+@@ -17,6 +17,12 @@
+   source: 'TOUR_API';
+   contentTypeId: number;
+   contentTypeLabel: string | null;
++  lclsSystm1: string | null;
++  lclsSystm1Name: string | null;
++  lclsSystm2: string | null;
++  lclsSystm2Name: string | null;
++  lclsSystm3: string | null;
++  lclsSystm3Name: string | null;
+   name: string;
+   address: string | null;
+   areaCode: string | null;
+@@ -90,6 +96,19 @@
+   };
+ }
+ 
++function readRawString(
++  raw: Record<string, string>,
++  keys: readonly string[],
++): string | null {
++  for (const key of keys) {
++    const value = raw[key];
++    if (value !== undefined && value !== null && String(value).trim()) {
++      return String(value).trim();
++    }
++  }
++  return null;
++}
++
+ export function toPlaceCard(raw: Record<string, string>): PlaceCard {
+   const contentTypeId = Number(raw.contenttypeid);
+   return {
+@@ -97,6 +116,30 @@
+     source: 'TOUR_API',
+     contentTypeId,
+     contentTypeLabel: CONTENT_TYPE_LABELS[contentTypeId] ?? null,
++    lclsSystm1: readRawString(raw, ['lclsSystm1', 'lclssystm1']),
++    lclsSystm1Name: readRawString(raw, [
++      'lclsSystm1Name',
++      'lclsSystm1Nm',
++      'lclsSystm1nm',
++      'lclssystm1name',
++      'lclssystm1nm',
++    ]),
++    lclsSystm2: readRawString(raw, ['lclsSystm2', 'lclssystm2']),
++    lclsSystm2Name: readRawString(raw, [
++      'lclsSystm2Name',
++      'lclsSystm2Nm',
++      'lclsSystm2nm',
++      'lclssystm2name',
++      'lclssystm2nm',
++    ]),
++    lclsSystm3: readRawString(raw, ['lclsSystm3', 'lclssystm3']),
++    lclsSystm3Name: readRawString(raw, [
++      'lclsSystm3Name',
++      'lclsSystm3Nm',
++      'lclsSystm3nm',
++      'lclssystm3name',
++      'lclssystm3nm',
++    ]),
+     name: raw.title ?? '',
+     address: [raw.addr1, raw.addr2].filter(Boolean).join(' ') || null,
+     areaCode: raw.areacode || null,
+@@ -190,6 +233,93 @@
+ export type RegionCodeTreeItem = CodeItem & {
+   sigungu: CodeItem[];
+ };
++
++export type CategoryMiddleCodeItem = CodeItem & {
++  children: CodeItem[];
++};
++
++export type CategoryCodeTreeItem = CodeItem & {
++  children: CategoryMiddleCodeItem[];
++};
++
++function readClassificationField(
++  raw: Record<string, string>,
++  level: 1 | 2 | 3,
++  kind: 'code' | 'name',
++): string | null {
++  const prefix = `lclsSystm${level}`;
++  const lowerPrefix = `lclssystm${level}`;
++  return kind === 'code'
++    ? readRawString(raw, [
++        `${prefix}Cd`,
++        `${prefix}cd`,
++        `${lowerPrefix}cd`,
++        prefix,
++        lowerPrefix,
++      ])
++    : readRawString(raw, [
++        `${prefix}Nm`,
++        `${prefix}nm`,
++        `${lowerPrefix}nm`,
++        `${prefix}Name`,
++        `${lowerPrefix}name`,
++      ]);
++}
++
++export function toCategoryCodeTree(
++  rows: Record<string, string>[],
++): CategoryCodeTreeItem[] {
++  const largeByCode = new Map<string, CategoryCodeTreeItem>();
++  const middleByKey = new Map<string, CategoryMiddleCodeItem>();
++
++  rows.forEach((row) => {
++    const largeCode = readClassificationField(row, 1, 'code');
++    if (!largeCode) return;
++    const largeName = readClassificationField(row, 1, 'name') ?? largeCode;
++    let large = largeByCode.get(largeCode);
++    if (!large) {
++      large = { code: largeCode, name: largeName, children: [] };
++      largeByCode.set(largeCode, large);
++    } else if (large.name === large.code && largeName !== largeCode) {
++      large.name = largeName;
++    }
++
++    const middleCode = readClassificationField(row, 2, 'code');
++    if (!middleCode) return;
++    const middleKey = `${largeCode}:${middleCode}`;
++    const middleName = readClassificationField(row, 2, 'name') ?? middleCode;
++    let middle = middleByKey.get(middleKey);
++    if (!middle) {
++      middle = { code: middleCode, name: middleName, children: [] };
++      middleByKey.set(middleKey, middle);
++      large.children.push(middle);
++    } else if (middle.name === middle.code && middleName !== middleCode) {
++      middle.name = middleName;
++    }
++
++    const smallCode = readClassificationField(row, 3, 'code');
++    if (!smallCode) return;
++    if (middle.children.some((item) => item.code === smallCode)) return;
++    middle.children.push({
++      code: smallCode,
++      name: readClassificationField(row, 3, 'name') ?? smallCode,
++    });
++  });
++
++  return [...largeByCode.values()]
++    .map((large) => ({
++      ...large,
++      children: large.children
++        .map((middle) => ({
++          ...middle,
++          children: middle.children.sort((left, right) =>
++            left.name.localeCompare(right.name, 'ko'),
++          ),
++        }))
++        .sort((left, right) => left.name.localeCompare(right.name, 'ko')),
++    }))
++    .sort((left, right) => left.name.localeCompare(right.name, 'ko'));
++}
+ 
+ export const REGION_AREA_CODES: RegionCodeItem[] = [
+   { code: '1', name: '서울특별시', aliases: ['서울'] },

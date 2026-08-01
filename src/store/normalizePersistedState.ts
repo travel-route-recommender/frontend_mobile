@@ -91,11 +91,32 @@ function normalizePlaces(value: unknown, fallback: Record<EntityId, Place>) {
     const fallbackPlace = fallback[id];
     const latitude = asOptionalFiniteNumber(entry.latitude) ?? fallbackPlace?.latitude;
     const longitude = asOptionalFiniteNumber(entry.longitude) ?? fallbackPlace?.longitude;
+    const rawClassification = sourceRecord(entry.classification, fallbackPlace?.classification ?? {});
+    const classification = {
+      ...(asString(rawClassification.lclsSystm1) ? { lclsSystm1: asString(rawClassification.lclsSystm1) } : {}),
+      ...(asString(rawClassification.lclsSystm1Name) ? { lclsSystm1Name: asString(rawClassification.lclsSystm1Name) } : {}),
+      ...(asString(rawClassification.lclsSystm2) ? { lclsSystm2: asString(rawClassification.lclsSystm2) } : {}),
+      ...(asString(rawClassification.lclsSystm2Name) ? { lclsSystm2Name: asString(rawClassification.lclsSystm2Name) } : {}),
+      ...(asString(rawClassification.lclsSystm3) ? { lclsSystm3: asString(rawClassification.lclsSystm3) } : {}),
+      ...(asString(rawClassification.lclsSystm3Name) ? { lclsSystm3Name: asString(rawClassification.lclsSystm3Name) } : {}),
+    };
+    const infoItems = Array.isArray(entry.infoItems)
+      ? entry.infoItems.flatMap((item) => {
+        if (!isRecord(item)) return [];
+        const label = asString(item.label).trim();
+        const value = asString(item.value).trim();
+        const tag = asString(item.tag).trim();
+        return label && value ? [{ label, value, ...(tag ? { tag } : {}) }] : [];
+      })
+      : fallbackPlace?.infoItems;
     const place: Place = {
       id,
       regionId: asString(entry.regionId),
       name: asString(entry.name, "이름 없는 장소"),
       category: asString(entry.category, "기타"),
+      ...(asOptionalFiniteNumber(entry.contentTypeId) ? { contentTypeId: asOptionalFiniteNumber(entry.contentTypeId) } : {}),
+      ...(Object.keys(classification).length ? { classification } : {}),
+      ...(infoItems?.length ? { infoItems } : {}),
       tags: unique(asStringArray(entry.tags)),
       rating: Math.max(0, asFiniteNumber(entry.rating)),
       distanceLabel: asString(entry.distanceLabel),

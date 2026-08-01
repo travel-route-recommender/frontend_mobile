@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { EntityId } from "../../../domain";
+import type { PlaceClassificationSelection } from "../../places/logic/placeClassification";
 import type { PlaceLocationSelection, PlaceSortOption } from "../../places/types";
 
 interface ExploreSearchState {
@@ -11,6 +12,8 @@ interface ExploreSearchState {
   selectedLocations: PlaceLocationSelection[];
   selectedCategory: string | "all";
   selectedCategories: string[];
+  selectedClassification?: PlaceClassificationSelection;
+  selectedClassifications: PlaceClassificationSelection[];
   eventStartDate?: string;
   eventEndDate?: string;
   sortOption: PlaceSortOption;
@@ -23,6 +26,8 @@ interface ExploreSearchState {
   setLocations(locations: PlaceLocationSelection[]): void;
   setCategory(category: string | "all"): void;
   setCategories(categories: string[]): void;
+  setClassification(classification?: PlaceClassificationSelection): void;
+  setClassifications(classifications: PlaceClassificationSelection[]): void;
   setEventDateRange(startDate?: string, endDate?: string): void;
   setSort(sort: PlaceSortOption): void;
   setDistanceBasePlace(placeId?: EntityId): void;
@@ -33,6 +38,8 @@ interface ExploreSearchState {
     locations?: PlaceLocationSelection[];
     category: string | "all";
     categories?: string[];
+    classification?: PlaceClassificationSelection;
+    classifications?: PlaceClassificationSelection[];
     eventStartDate?: string;
     eventEndDate?: string;
     sort: PlaceSortOption;
@@ -54,6 +61,8 @@ export const useExploreSearchStore = create<ExploreSearchState>((set) => ({
   selectedLocations: [],
   selectedCategory: "all",
   selectedCategories: [],
+  selectedClassification: undefined,
+  selectedClassifications: [],
   eventStartDate: undefined,
   eventEndDate: undefined,
   sortOption: "popular",
@@ -68,18 +77,23 @@ export const useExploreSearchStore = create<ExploreSearchState>((set) => ({
   }),
   setCategory: (selectedCategory) => set({ selectedCategory, selectedCategories: selectedCategory === "all" ? [] : [selectedCategory] }),
   setCategories: (selectedCategories) => set({ selectedCategories, selectedCategory: selectedCategories[0] ?? "all" }),
+  setClassification: (selectedClassification) => set({ selectedClassification, selectedClassifications: selectedClassification ? [selectedClassification] : [] }),
+  setClassifications: (selectedClassifications) => set({ selectedClassifications, selectedClassification: selectedClassifications[0] }),
   setEventDateRange: (eventStartDate, eventEndDate) => set({ eventStartDate, eventEndDate }),
   setSort: (sortOption) => set({ sortOption }),
   setDistanceBasePlace: (distanceBasePlaceId) => set({ distanceBasePlaceId, distanceBaseLocation: undefined }),
   setDistanceBaseLocation: (distanceBaseLocation) => set({ distanceBaseLocation, distanceBasePlaceId: undefined }),
-  applyFilters: ({ regionId, district, locations = [], category, categories, eventStartDate, eventEndDate, sort, distanceBasePlaceId, distanceBaseLocation }) => {
+  applyFilters: ({ regionId, district, locations = [], category, categories, classification, classifications, eventStartDate, eventEndDate, sort, distanceBasePlaceId, distanceBaseLocation }) => {
     const selectedCategories = categories?.length ? categories : category === "all" ? [] : [category];
+    const selectedClassifications = classifications?.length ? classifications : classification ? [classification] : [];
     return set({
     selectedRegionId: locations[0]?.regionId ?? regionId,
     selectedDistrict: locations[0]?.district ?? district,
     selectedLocations: locations,
     selectedCategory: selectedCategories[0] ?? "all",
     selectedCategories,
+    selectedClassification: selectedClassifications[0],
+    selectedClassifications,
     eventStartDate,
     eventEndDate,
     sortOption: sort,
@@ -99,7 +113,6 @@ export const useExploreSearchStore = create<ExploreSearchState>((set) => ({
     };
   }),
   clearActiveTripContext: () => set({ activeTripRegionContext: undefined }),
-  startTripExplore: (selectedRegionId) => set({ selectedRegionId, selectedDistrict: "all", selectedLocations: [], selectedCategory: "all", selectedCategories: [], eventStartDate: undefined, eventEndDate: undefined, keyword: "", submittedKeyword: "", distanceBasePlaceId: undefined, distanceBaseLocation: undefined }),
-  resetFilters: () => set({ keyword: "", submittedKeyword: "", selectedRegionId: "all", selectedDistrict: "all", selectedLocations: [], selectedCategory: "all", selectedCategories: [], eventStartDate: undefined, eventEndDate: undefined, sortOption: "popular", distanceBasePlaceId: undefined, distanceBaseLocation: undefined }),
+  startTripExplore: (selectedRegionId) => set({ selectedRegionId, selectedDistrict: "all", selectedLocations: [], selectedCategory: "all", selectedCategories: [], selectedClassification: undefined, selectedClassifications: [], eventStartDate: undefined, eventEndDate: undefined, keyword: "", submittedKeyword: "", distanceBasePlaceId: undefined, distanceBaseLocation: undefined }),
+  resetFilters: () => set({ keyword: "", submittedKeyword: "", selectedRegionId: "all", selectedDistrict: "all", selectedLocations: [], selectedCategory: "all", selectedCategories: [], selectedClassification: undefined, selectedClassifications: [], eventStartDate: undefined, eventEndDate: undefined }),
 }));
-

@@ -1,5 +1,5 @@
 export type { EntityId, ISODateString, TimeString, User } from "./user";
-export type { Place, Region } from "./place";
+export type { Place, PlaceClassification, PlaceInfoItem, Region } from "./place";
 export type {
   TripBudgetLevel,
   TripCandidate,
