@@ -10,20 +10,18 @@ import type {
   StaminaLevel,
 } from "../types";
 
-export const PERSONAL_SURVEY_DRAFT_VERSION = 8;
+export const PERSONAL_SURVEY_DRAFT_VERSION = 9;
 
 export const preferenceSteps: readonly {
   id: PreferenceStepId;
-  eyebrow: string;
   title: string;
   description: string;
 }[] = [
-  { id: "challengeStyle", eyebrow: "CHAPTER 1–3 · 계획표 밖의 선택", title: "계획표 밖에서 만나는 진짜 여행 성향", description: "예상하지 못한 여섯 장면에서 지금의 나와 가까운 답장을 골라 주세요." },
-  { id: "itinerary", eyebrow: "CHAPTER 4 · 오늘의 여행 가방", title: "이번 여행에는 어떤 장면을 담아볼까요?", description: "하고 싶은 활동 8가지와 하루의 속도를 여행 메이트와 맞춰봐요." },
-  { id: "accommodation", eyebrow: "CHAPTER 5 · 체크인할 시간", title: "오늘 밤 머물 숙소를 골라볼까요?", description: "두 숙소 카드 사이에서 마음이 기우는 정도를 표시해 주세요." },
-  { id: "stamina", eyebrow: "CHAPTER 6 · 오후 5시의 배터리", title: "아직 보고 싶은 곳이 하나 남았어요", description: "아침부터 여행한 지금, 내 실제 체력과 가장 가까운 행동을 골라 주세요." },
-  { id: "budget", eyebrow: "CHAPTER 7 · 여행 지갑", title: "여행 코인 100개를 어디에 쓸까요?", description: "더 기억에 남기고 싶은 곳에 코인을 나눠 담아 주세요." },
-  { id: "discovery", eyebrow: "CHAPTER 8 · 마지막 두 장면", title: "이번 여행을 완성할 두 장면을 골라볼까요?", description: "대표 명소와 로컬 동네는 반대 선택이 아니에요. 각각 끌리는 정도를 알려 주세요." },
+  { id: "challengeStyle", title: "여행 메이트와 취향을 맞춰볼까요?", description: "메신저와 여행 현장에 나타나는 여러 장면에서 지금의 나와 가까운 선택을 골라 주세요." },
+  { id: "accommodation", title: "오늘 밤 머물 숙소를 골라볼까요?", description: "두 숙소 카드 사이에서 마음이 기우는 정도를 표시해 주세요." },
+  { id: "stamina", title: "아직 보고 싶은 곳이 하나 남았어요", description: "아침부터 여행한 지금, 내 실제 체력과 가장 가까운 행동을 골라 주세요." },
+  { id: "budget", title: "여행 코인 100개를 어디에 쓸까요?", description: "더 기억에 남기고 싶은 곳에 코인을 나눠 담아 주세요." },
+  { id: "discovery", title: "이번 여행을 완성할 두 장면을 골라볼까요?", description: "대표 명소와 로컬 동네는 반대 선택이 아니에요. 각각 끌리는 정도를 알려 주세요." },
 ];
 
 export const activityBlocks: readonly { id: ActivityTagId; icon: string; label: string; color: string; softColor: string }[] = [
@@ -110,5 +108,5 @@ export const discoveryScenes: readonly {
 ];
 
 export const preferenceStepLabels: Record<PreferenceStepId, string> = Object.fromEntries(
-  preferenceSteps.map((step) => [step.id, step.eyebrow]),
+  preferenceSteps.map((step) => [step.id, step.title]),
 ) as Record<PreferenceStepId, string>;

@@ -182,7 +182,7 @@ export function getBudgetTotal(answers: PersonalPreferenceDraftAnswers) {
 
 export function isPreferenceStepComplete(stepId: PreferenceStepId, answers: PersonalPreferenceDraftAnswers) {
   switch (stepId) {
-    case "challengeStyle": return isChallengeStyleSurveyComplete(answers);
+    case "challengeStyle": return isChallengeStyleSurveyComplete(answers) && (isItineraryMessageSurveyComplete(answers) || getFilledItineraryCount(answers) > 0);
     case "itinerary": return isItineraryMessageSurveyComplete(answers) || getFilledItineraryCount(answers) > 0;
     case "mobility": return Boolean(answers.mobilityModes?.length);
     case "accommodation": return accommodationAxes.every((axis) => isAccommodationScaleValue(answers.accommodation?.[axis.id]));
@@ -206,12 +206,12 @@ export function validateTravelPreferenceSurvey(answers: PersonalPreferenceDraftA
   if (firstInvalidStepIndex < 0) return { valid: true, answers };
   const step = preferenceSteps[firstInvalidStepIndex];
   const message = step.id === "challengeStyle"
-    ? `여행 메이트의 가벼운 질문에 모두 답해 주세요. 현재 ${getChallengeStyleAnswerCount(answers)} / ${challengeStyleQuestions.length}개에 답했어요.`
+    ? `여행 메이트의 질문에 모두 답해 주세요. 현재 ${getChallengeStyleAnswerCount(answers) + getItineraryMessageAnswerCount(answers)} / ${challengeStyleQuestions.length + itineraryMessageQuestions.length}개에 답했어요.`
     : step.id === "itinerary"
     ? `여행 활동과 일정 밀도 대화에 모두 답해 주세요. 현재 ${getItineraryMessageAnswerCount(answers)} / ${itineraryMessageQuestions.length}개에 답했어요.`
     : step.id === "budget"
     ? `여행 코인을 100개 모두 배분해 주세요. 현재 ${getBudgetTotal(answers)}개를 배분했어요.`
-    : `${step.eyebrow} 항목의 응답을 완료해 주세요.`;
+    : `${step.title} 항목의 응답을 완료해 주세요.`;
   return { valid: false, message, firstInvalidStepIndex };
 }
 
@@ -255,7 +255,14 @@ const scaleText = (value: number | undefined, max: number) => value ? `${value} 
 
 export function formatPreferenceStepAnswer(stepId: PreferenceStepId, answers: PersonalPreferenceDraftAnswers) {
   switch (stepId) {
-    case "challengeStyle": return `${getChallengeStyleAnswerCount(answers)} / ${challengeStyleQuestions.length}개 대화 응답`;
+    case "challengeStyle": {
+      const messageAnswerCount = getItineraryMessageAnswerCount(answers);
+      return messageAnswerCount
+        ? `${getChallengeStyleAnswerCount(answers) + messageAnswerCount} / ${challengeStyleQuestions.length + itineraryMessageQuestions.length}개 대화 응답`
+        : getFilledItineraryCount(answers) > 0
+          ? `${getChallengeStyleAnswerCount(answers)} / ${challengeStyleQuestions.length}개 성향 · 기존 일정 응답`
+          : `${getChallengeStyleAnswerCount(answers)} / ${challengeStyleQuestions.length + itineraryMessageQuestions.length}개 대화 응답`;
+    }
     case "itinerary": {
       const messageAnswerCount = getItineraryMessageAnswerCount(answers);
       return messageAnswerCount

@@ -7,8 +7,6 @@ type Props<OptionId extends string | number> = {
   senderStatus: string;
   message: string;
   options: readonly PreferenceMessageOption<OptionId>[];
-  categoryIcon: string;
-  categoryLabel: string;
   current: number;
   total: number;
   selectedOptionId?: OptionId;
@@ -23,8 +21,6 @@ export function PreferenceMessageQuestion<OptionId extends string | number>({
   senderStatus,
   message,
   options,
-  categoryIcon,
-  categoryLabel,
   current,
   total,
   selectedOptionId,
@@ -66,10 +62,6 @@ export function PreferenceMessageQuestion<OptionId extends string | number>({
           <View style={styles.dividerLine} />
         </View>
 
-        <View style={styles.categoryBadge}>
-          <Text style={styles.categoryBadgeText}>{categoryIcon} {categoryLabel}</Text>
-        </View>
-
         <View style={styles.incomingRow}>
           <View accessibilityElementsHidden style={styles.messageAvatar}>
             <Text style={styles.messageAvatarText}>{senderInitial}</Text>
@@ -99,7 +91,7 @@ export function PreferenceMessageQuestion<OptionId extends string | number>({
       </View>
 
       <View style={styles.replyPanel}>
-        <Text style={styles.replyLabel}>{categoryLabel}에 대해 답장하기</Text>
+        <Text style={styles.replyLabel}>답장 선택하기</Text>
         <View accessibilityLabel="답장 선택지" accessibilityRole="radiogroup" style={styles.optionList}>
           {options.map((option) => {
             const selected = option.id === selectedOptionId;
@@ -140,13 +132,13 @@ export function PreferenceMessageQuestion<OptionId extends string | number>({
               onPress={onNext}
               style={({ pressed }) => [styles.nextMessageButton, pressed && styles.optionPressed]}
             >
-              <Text style={styles.nextMessageButtonText}>다음 메시지 ›</Text>
+              <Text style={styles.nextMessageButtonText}>다음</Text>
             </Pressable>
           ) : null}
         </View>
         {selectedOption && !onNext ? (
           <Text accessibilityLiveRegion="polite" style={styles.completedHelper}>
-            {completionMessage ?? `${total}개의 대화에 모두 답했어요. 아래의 ‘다음’을 눌러 계속해 주세요.`}
+            {completionMessage ?? `${total}개의 질문에 모두 답했어요. 아래의 ‘다음’을 눌러 계속해 주세요.`}
           </Text>
         ) : null}
       </View>
@@ -205,14 +197,6 @@ const styles = StyleSheet.create({
   dateDivider: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
   dividerLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: colors.borderStrong },
   dateLabel: { ...typography.caption, color: colors.textMuted },
-  categoryBadge: {
-    alignSelf: "center",
-    borderRadius: radius.pill,
-    backgroundColor: colors.surface,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xxs,
-  },
-  categoryBadgeText: { ...typography.caption, color: colors.textSecondary },
   incomingRow: { flexDirection: "row", alignItems: "flex-end", gap: spacing.xs },
   messageAvatar: {
     width: 34,

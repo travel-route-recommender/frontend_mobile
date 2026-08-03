@@ -9,12 +9,22 @@ export type PreferenceMessageOption<OptionId extends string | number = Itinerary
   label: string;
 };
 
+export type PreferenceQuestionPresentation =
+  | { kind: "chat" }
+  | {
+    kind: "group-choice" | "scene-choice";
+    location: string;
+    title: string;
+    description: string;
+  };
+
 export type ItineraryMessageQuestion = {
   id: ItineraryMessageQuestionId;
   categoryIcon: string;
   categoryLabel: string;
   senderName: string;
   senderStatus: string;
+  presentation: PreferenceQuestionPresentation;
   message: string;
   options: readonly PreferenceMessageOption<ItineraryPreferenceLevel>[];
 };
@@ -30,6 +40,12 @@ export const itineraryMessageQuestions: readonly ItineraryMessageQuestion[] = [
     categoryIcon: "🍜",
     categoryLabel: "식당",
     ...sender,
+    presentation: {
+      kind: "group-choice",
+      location: "여행 첫날 · 점심시간",
+      title: "친구들과 첫 끼를 고르고 있어요",
+      description: "모두 배가 고픈데 유명한 식당은 조금 멀고 대기도 있대요.",
+    },
     message: "점심시간이 됐어. 조금 기다리거나 멀리 가더라도, 맛있는 곳을 찾아가는 하루는 어때?",
     options: [
       { id: "like", meaning: "선호", label: "응, 조금 기다리거나 멀어도 맛있는 곳은 꼭 가고 싶어." },
@@ -42,6 +58,12 @@ export const itineraryMessageQuestions: readonly ItineraryMessageQuestion[] = [
     categoryIcon: "☕",
     categoryLabel: "카페",
     ...sender,
+    presentation: {
+      kind: "scene-choice",
+      location: "오후 3:20 · 많이 걸은 뒤",
+      title: "분위기 좋은 공간 앞에 멈췄어요",
+      description: "친구들은 잠깐 쉬어갈지 다음 장소로 바로 갈지 기다리고 있어요.",
+    },
     message: "한참 걷다 보니 분위기 좋은 카페가 보여. 카페에 머무는 시간도 여행 코스로 담을까?",
     options: [
       { id: "like", meaning: "선호", label: "좋아, 카페도 여행의 중요한 코스니까 여유 있게 들르고 싶어." },
@@ -54,6 +76,12 @@ export const itineraryMessageQuestions: readonly ItineraryMessageQuestion[] = [
     categoryIcon: "🛍️",
     categoryLabel: "쇼핑",
     ...sender,
+    presentation: {
+      kind: "group-choice",
+      location: "작은 상점이 모인 거리",
+      title: "친구들이 자유시간을 의논해요",
+      description: "천천히 둘러보자는 친구와 필요한 것만 사자는 친구가 있어요.",
+    },
     message: "기념품 가게와 작은 상점이 모인 거리가 나왔어. 쇼핑 시간을 따로 챙겨둘까?",
     options: [
       { id: "like", meaning: "선호", label: "응, 상점이나 쇼핑몰을 천천히 둘러볼 시간을 꼭 갖고 싶어." },
@@ -66,6 +94,7 @@ export const itineraryMessageQuestions: readonly ItineraryMessageQuestion[] = [
     categoryIcon: "🏛️",
     categoryLabel: "명소 관광",
     ...sender,
+    presentation: { kind: "chat" },
     message: "사진에서 보던 대표 명소가 가까이 있어. 조금 붐벼도 이번 여행에 담아볼까?",
     options: [
       { id: "like", meaning: "선호", label: "응, 대표 명소는 기다리더라도 꼭 챙겨서 보고 싶어." },
@@ -78,6 +107,12 @@ export const itineraryMessageQuestions: readonly ItineraryMessageQuestion[] = [
     categoryIcon: "🪴",
     categoryLabel: "로컬 탐방",
     ...sender,
+    presentation: {
+      kind: "scene-choice",
+      location: "관광 지도 끝의 골목",
+      title: "익숙한 길과 낯선 동네가 갈라져요",
+      description: "친구들이 어느 쪽으로 걸을지 당신의 선택을 기다리고 있어요.",
+    },
     message: "관광 지도 끝에 현지 시장과 작은 골목이 보여. 동네를 천천히 걷는 시간도 넣을까?",
     options: [
       { id: "like", meaning: "선호", label: "좋아, 현지 사람들이 사는 동네와 시장을 오래 걸어보고 싶어." },
@@ -90,6 +125,12 @@ export const itineraryMessageQuestions: readonly ItineraryMessageQuestion[] = [
     categoryIcon: "🎟️",
     categoryLabel: "액티비티",
     ...sender,
+    presentation: {
+      kind: "group-choice",
+      location: "현장 접수 마감 10분 전",
+      title: "오늘만 가능한 체험을 발견했어요",
+      description: "친구들이 지금 신청할지 자유 일정으로 남을지 함께 정하려 해요.",
+    },
     message: "오늘만 참여할 수 있는 체험 티켓이 남아 있대. 직접 해보는 일정도 하나 담을까?",
     options: [
       { id: "like", meaning: "선호", label: "좋아, 직접 해보는 체험이나 액티비티를 꼭 하나 이상 하고 싶어." },
@@ -102,6 +143,7 @@ export const itineraryMessageQuestions: readonly ItineraryMessageQuestion[] = [
     categoryIcon: "🌿",
     categoryLabel: "자연",
     ...sender,
+    presentation: { kind: "chat" },
     message: "도심 밖으로 조금 나가면 바다와 공원이 있대. 이동 시간을 써서라도 자연을 보러 갈까?",
     options: [
       { id: "like", meaning: "선호", label: "응, 시간이 걸려도 자연 풍경을 보는 일정은 꼭 넣고 싶어." },
@@ -114,6 +156,12 @@ export const itineraryMessageQuestions: readonly ItineraryMessageQuestion[] = [
     categoryIcon: "🛋️",
     categoryLabel: "휴식",
     ...sender,
+    presentation: {
+      kind: "scene-choice",
+      location: "해 질 무렵 · 숙소 근처",
+      title: "아직 남은 저녁 시간을 바라봐요",
+      description: "숙소로 돌아가는 길과 한 곳을 더 둘러보는 길이 앞에 있어요.",
+    },
     message: "오후가 길어졌어. 숙소에 들어가 쉬거나 아무것도 하지 않는 빈칸도 남겨둘까?",
     options: [
       { id: "like", meaning: "선호", label: "응, 쉬는 시간이 충분해야 여행을 더 즐길 수 있어." },
@@ -126,6 +174,12 @@ export const itineraryMessageQuestions: readonly ItineraryMessageQuestion[] = [
     categoryIcon: "🗓️",
     categoryLabel: "일정 밀도",
     ...sender,
+    presentation: {
+      kind: "group-choice",
+      location: "여행 전날 · 함께 계획하는 밤",
+      title: "친구들과 하루의 속도를 맞춰요",
+      description: "가고 싶은 곳을 모두 펼쳐두고 내일 일정을 어느 정도 채울지 정하는 중이에요.",
+    },
     message: "이제 하루 지도를 거의 다 채웠어. 우리 일정은 어느 정도 속도로 흘러가면 좋을까?",
     options: [
       { id: "like", meaning: "선호", label: "아침부터 저녁까지 여러 곳을 알차게 다니고 싶어." },

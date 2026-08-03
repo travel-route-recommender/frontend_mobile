@@ -26,17 +26,20 @@ import type {
   PreferenceStepId,
 } from "../types";
 import { PreferenceMessageQuestion } from "./preference-message-question";
+import { PreferenceSceneQuestion } from "./preference-scene-question";
 
 type Props = {
   stepId: PreferenceStepId;
   answers: PersonalPreferenceDraftAnswers;
   onChange: (patch: Partial<PersonalPreferenceDraftAnswers>) => void;
+  onComplete?: () => void;
 };
 
-export function PreferenceStepContent({ stepId, answers, onChange }: Props) {
+export function PreferenceStepContent({ stepId, answers, onChange, onComplete }: Props) {
   switch (stepId) {
-    case "challengeStyle": return <ChallengeStyleMessageStep answers={answers} onChange={onChange} />;
-    case "itinerary": return <ItineraryMessageStep answers={answers} onChange={onChange} />;
+    case "challengeStyle":
+    case "itinerary":
+      return <StoryPreferenceStep answers={answers} onChange={onChange} onComplete={onComplete} />;
     case "mobility": return <MobilityStep answers={answers} onChange={onChange} />;
     case "accommodation": return <AccommodationStep answers={answers} onChange={onChange} />;
     case "adventure": return <AdventureStep answers={answers} onChange={onChange} />;
@@ -46,79 +49,65 @@ export function PreferenceStepContent({ stepId, answers, onChange }: Props) {
   }
 }
 
-function getFirstUnansweredChallengeStyleIndex(answers: PersonalPreferenceDraftAnswers) {
-  const index = challengeStyleQuestions.findIndex((question) => !answers.challengeStyleAnswers?.[question.id]);
-  return index < 0 ? challengeStyleQuestions.length - 1 : index;
+const storyQuestions = [
+  ...challengeStyleQuestions.map((question) => ({ kind: "challenge" as const, question })),
+  ...itineraryMessageQuestions.map((question) => ({ kind: "itinerary" as const, question })),
+] as const;
+
+function getFirstUnansweredStoryIndex(answers: PersonalPreferenceDraftAnswers) {
+  const index = storyQuestions.findIndex((entry) => entry.kind === "challenge"
+    ? !answers.challengeStyleAnswers?.[entry.question.id]
+    : !answers.itineraryMessageAnswers?.[entry.question.id]);
+  return index < 0 ? storyQuestions.length - 1 : index;
 }
 
-function ChallengeStyleMessageStep({ answers, onChange }: Omit<Props, "stepId">) {
-  const [questionIndex, setQuestionIndex] = useState(() => getFirstUnansweredChallengeStyleIndex(answers));
-  const question = challengeStyleQuestions[questionIndex];
-  const selectedOptionId = answers.challengeStyleAnswers?.[question.id];
+function StoryPreferenceStep({ answers, onChange, onComplete }: Omit<Props, "stepId">) {
+  const [questionIndex, setQuestionIndex] = useState(() => getFirstUnansweredStoryIndex(answers));
+  const entry = storyQuestions[questionIndex];
+  const navigationProps = {
+    current: questionIndex + 1,
+    onNext: questionIndex < storyQuestions.length - 1 ? () => setQuestionIndex(questionIndex + 1) : onComplete,
+    onPrevious: questionIndex > 0 ? () => setQuestionIndex(questionIndex - 1) : undefined,
+    total: storyQuestions.length,
+  };
 
-  const selectOption = (value: FivePointScaleValue) => {
-    onChange({
+  if (entry.kind === "challenge") {
+    const question = entry.question;
+    const selectOption = (value: FivePointScaleValue) => onChange({
       challengeStyleAnswers: {
         ...answers.challengeStyleAnswers,
         [question.id as ChallengeStyleQuestionId]: value,
       },
     });
+    const questionProps = {
+      ...navigationProps,
+      message: question.message,
+      onSelect: selectOption,
+      options: question.options,
+      selectedOptionId: answers.challengeStyleAnswers?.[question.id],
+    };
+    return question.presentation.kind === "chat"
+      ? <PreferenceMessageQuestion {...questionProps} senderName={question.senderName} senderStatus={question.senderStatus} />
+      : <PreferenceSceneQuestion {...questionProps} presentation={question.presentation} />;
+  }
+
+  const question = entry.question;
+  const selectOption = (level: ItineraryPreferenceLevel) => onChange({
+    itineraryMessageAnswers: {
+      ...answers.itineraryMessageAnswers,
+      [question.id]: level,
+    },
+  });
+  const questionProps = {
+    ...navigationProps,
+    message: question.message,
+    onSelect: selectOption,
+    options: question.options,
+    selectedOptionId: answers.itineraryMessageAnswers?.[question.id],
   };
-
-  return (
-    <PreferenceMessageQuestion
-      categoryIcon={question.categoryIcon}
-      categoryLabel={question.categoryLabel}
-      completionMessage="취향 토크 끝! 여섯 답장을 모두 보냈어요. 아래의 ‘다음’을 눌러 이어가 볼까요?"
-      current={questionIndex + 1}
-      message={question.message}
-      onNext={questionIndex < challengeStyleQuestions.length - 1 ? () => setQuestionIndex(questionIndex + 1) : undefined}
-      onPrevious={questionIndex > 0 ? () => setQuestionIndex(questionIndex - 1) : undefined}
-      onSelect={selectOption}
-      options={question.options}
-      selectedOptionId={selectedOptionId}
-      senderName={question.senderName}
-      senderStatus={question.senderStatus}
-      total={challengeStyleQuestions.length}
-    />
-  );
-}
-
-function getFirstUnansweredItineraryMessageIndex(answers: PersonalPreferenceDraftAnswers) {
-  const index = itineraryMessageQuestions.findIndex((question) => !answers.itineraryMessageAnswers?.[question.id]);
-  return index < 0 ? itineraryMessageQuestions.length - 1 : index;
-}
-
-function ItineraryMessageStep({ answers, onChange }: Omit<Props, "stepId">) {
-  const [questionIndex, setQuestionIndex] = useState(() => getFirstUnansweredItineraryMessageIndex(answers));
-  const question = itineraryMessageQuestions[questionIndex];
-  const selectedOptionId = answers.itineraryMessageAnswers?.[question.id];
-
-  const selectOption = (level: ItineraryPreferenceLevel) => {
-    onChange({
-      itineraryMessageAnswers: {
-        ...answers.itineraryMessageAnswers,
-        [question.id]: level,
-      },
-    });
-  };
-
-  return (
-    <PreferenceMessageQuestion
-      categoryIcon={question.categoryIcon}
-      categoryLabel={question.categoryLabel}
-      current={questionIndex + 1}
-      message={question.message}
-      onNext={questionIndex < itineraryMessageQuestions.length - 1 ? () => setQuestionIndex(questionIndex + 1) : undefined}
-      onPrevious={questionIndex > 0 ? () => setQuestionIndex(questionIndex - 1) : undefined}
-      onSelect={selectOption}
-      options={question.options}
-      selectedOptionId={selectedOptionId}
-      senderName={question.senderName}
-      senderStatus={question.senderStatus}
-      total={itineraryMessageQuestions.length}
-    />
-  );
+  return question.presentation.kind === "chat"
+    ? <PreferenceMessageQuestion {...questionProps} senderName={question.senderName} senderStatus={question.senderStatus} />
+    : <PreferenceSceneQuestion {...questionProps} presentation={question.presentation} />;
 }
 
 function MobilityStep({ answers, onChange }: Omit<Props, "stepId">) {

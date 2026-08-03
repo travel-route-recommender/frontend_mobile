@@ -94,9 +94,9 @@ export function PersonalReviewScreen() {
     <View style={styles.list}>{preferenceSteps.map((step, index) => {
       const complete = isPreferenceStepComplete(step.id, draft.answers);
       const answer = formatPreferenceStepAnswer(step.id, draft.answers);
-      return <Pressable key={step.id} accessibilityRole="button" accessibilityLabel={`${step.eyebrow}. ${answer}. 답변 수정`} onPress={() => editQuestion(index)} style={({ pressed }) => [pressed && styles.pressed]}>
+      return <Pressable key={step.id} accessibilityRole="button" accessibilityLabel={`${step.title}. ${answer}. 답변 수정`} onPress={() => editQuestion(index)} style={({ pressed }) => [pressed && styles.pressed]}>
         <Card style={[styles.answerCard, !complete && styles.missingCard]}>
-          <View style={styles.answerCopy}><Text style={styles.dimension}>{step.eyebrow}</Text><Text style={styles.question} numberOfLines={2}>{step.title}</Text><Text selectable style={[styles.answer, !complete && styles.missing]}>{answer}</Text></View>
+          <View style={styles.answerCopy}><Text style={styles.question} numberOfLines={2}>{step.title}</Text><Text selectable style={[styles.answer, !complete && styles.missing]}>{answer}</Text></View>
           <Text style={styles.edit}>수정 ›</Text>
         </Card>
       </Pressable>;
@@ -109,6 +109,6 @@ export function PersonalReviewScreen() {
 
 const styles = StyleSheet.create({
   summary: { borderRadius: radius.lg, backgroundColor: colors.primarySoft, padding: spacing.md }, summaryTitle: { ...typography.subtitle, color: colors.primary }, summaryText: { ...typography.caption, color: colors.textSecondary, marginTop: spacing.xxs },
-  list: { gap: spacing.sm, marginVertical: spacing.lg }, pressed: { opacity: 0.82 }, answerCard: { minHeight: 104, flexDirection: "row", alignItems: "center", gap: spacing.sm }, missingCard: { borderColor: colors.warning, backgroundColor: colors.warningSoft }, answerCopy: { flex: 1, minWidth: 0 }, dimension: { ...typography.caption, color: colors.primary }, question: { ...typography.body, color: colors.textSecondary, marginTop: spacing.xxs }, answer: { ...typography.bodyStrong, color: colors.text, marginTop: spacing.xs }, missing: { color: colors.warning }, edit: { ...typography.caption, color: colors.primary },
+  list: { gap: spacing.sm, marginVertical: spacing.lg }, pressed: { opacity: 0.82 }, answerCard: { minHeight: 104, flexDirection: "row", alignItems: "center", gap: spacing.sm }, missingCard: { borderColor: colors.warning, backgroundColor: colors.warningSoft }, answerCopy: { flex: 1, minWidth: 0 }, question: { ...typography.body, color: colors.textSecondary }, answer: { ...typography.bodyStrong, color: colors.text, marginTop: spacing.xs }, missing: { color: colors.warning }, edit: { ...typography.caption, color: colors.primary },
   errorBanner: { borderRadius: radius.md, backgroundColor: colors.dangerSoft, padding: spacing.md, marginBottom: spacing.sm }, errorText: { ...typography.body, color: colors.danger },
 });

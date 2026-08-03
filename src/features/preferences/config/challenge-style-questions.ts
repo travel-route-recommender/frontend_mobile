@@ -2,7 +2,7 @@ import type {
   ChallengeStyleQuestionId,
   FivePointScaleValue,
 } from "../types";
-import type { PreferenceMessageOption } from "./itinerary-message-questions";
+import type { PreferenceMessageOption, PreferenceQuestionPresentation } from "./itinerary-message-questions";
 
 export const CHALLENGE_STYLE_QUESTIONNAIRE_VERSION = "challenge-style-short-v1";
 
@@ -14,6 +14,7 @@ export type ChallengeStyleQuestion = {
   categoryLabel: string;
   senderName: string;
   senderStatus: string;
+  presentation: PreferenceQuestionPresentation;
   message: string;
   options: readonly PreferenceMessageOption<FivePointScaleValue>[];
 };
@@ -31,6 +32,12 @@ export const challengeStyleQuestions: readonly ChallengeStyleQuestion[] = [
     categoryIcon: "🌈",
     categoryLabel: "새로움 한 스푼",
     ...sender,
+    presentation: {
+      kind: "group-choice",
+      location: "여행 첫날 · 숙소 라운지",
+      title: "비어 있는 하루를 함께 정해요",
+      description: "친구들이 오늘은 익숙한 코스로 갈지 새로운 일을 해볼지 이야기하기 시작했어요.",
+    },
     message: "여행도 일상도 비슷한 흐름이 계속되면 살짝 심심하잖아. 너는 중간중간 새로운 걸 해보는 게 좋아?",
     options: [
       { id: 1, meaning: "새로움 선호가 매우 낮음", label: "나는 익숙한 흐름이 제일 편해." },
@@ -47,6 +54,7 @@ export const challengeStyleQuestions: readonly ChallengeStyleQuestion[] = [
     categoryIcon: "🧩",
     categoryLabel: "내가 편한 방식",
     ...sender,
+    presentation: { kind: "chat" },
     message: "처음 보는 방법이 있어도, 굳이 바꾸기보단 손에 익은 방식으로 하는 편이야?",
     options: [
       { id: 1, meaning: "익숙한 방식 선호가 매우 낮음", label: "아니, 새 방법도 바로 해보는 편이야." },
@@ -63,6 +71,12 @@ export const challengeStyleQuestions: readonly ChallengeStyleQuestion[] = [
     categoryIcon: "🎢",
     categoryLabel: "두근두근 체험",
     ...sender,
+    presentation: {
+      kind: "scene-choice",
+      location: "여행지 광장 · 오후 2:20",
+      title: "처음 보는 체험 부스 앞에 섰어요",
+      description: "조금 긴장되지만 재미있어 보이는 체험을 친구들과 발견했어요.",
+    },
     message: "여행 중에 조금 두근거리는 체험이 보이면 어때? 짜릿한 것도 꽤 좋아하는 편이야?",
     options: [
       { id: 1, meaning: "자극 선호가 매우 낮음", label: "나는 편안하고 잔잔한 게 좋아." },
@@ -79,6 +93,12 @@ export const challengeStyleQuestions: readonly ChallengeStyleQuestion[] = [
     categoryIcon: "🧭",
     categoryLabel: "작은 모험",
     ...sender,
+    presentation: {
+      kind: "scene-choice",
+      location: "다음 장소로 이동하는 길",
+      title: "계획에 없던 갈림길이 나타났어요",
+      description: "원래 경로 옆으로 흥미로워 보이는 길이 이어지고 있어요.",
+    },
     message: "일정에 없더라도 ‘이건 작은 모험인데?’ 싶은 게 보이면 일부러 해보러 가는 편이야?",
     options: [
       { id: 1, meaning: "모험 탐색이 매우 낮음", label: "아니, 굳이 찾아가진 않아." },
@@ -95,6 +115,7 @@ export const challengeStyleQuestions: readonly ChallengeStyleQuestion[] = [
     categoryIcon: "🎟️",
     categoryLabel: "예약 버튼 앞에서",
     ...sender,
+    presentation: { kind: "chat" },
     message: "마음에 드는 게 보이면 자세히 알아보기 전에 ‘일단 예약!’부터 하는 편이야?",
     options: [
       { id: 1, meaning: "성급한 결정이 매우 낮음", label: "아니, 중요한 건 확인하고 예약해." },
@@ -111,6 +132,12 @@ export const challengeStyleQuestions: readonly ChallengeStyleQuestion[] = [
     categoryIcon: "💭",
     categoryLabel: "고민되는 선택",
     ...sender,
+    presentation: {
+      kind: "group-choice",
+      location: "저녁 계획을 정하는 테이블",
+      title: "마지막 한 곳을 고르는 중이에요",
+      description: "친구들이 후보를 펼쳐놓고 당신이 어떻게 고르는지 기다리고 있어요.",
+    },
     message: "갈 곳을 고를 때 오래 비교하기보다, 끌리는 곳부터 먼저 골라보는 편이야?",
     options: [
       { id: 1, meaning: "즉흥 결정이 매우 낮음", label: "아니, 비교해 보고 고르는 편이야." },
