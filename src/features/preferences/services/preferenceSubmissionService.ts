@@ -1,30 +1,40 @@
 import type { DataSourceMode } from "../../../config/environment";
 import { environment } from "../../../config/environment";
-import { calculatePersonalPreferenceResult, PERSONAL_TEST_VERSION } from "../../../duri/preferences";
-import { validatePreferenceAnswers } from "../logic/validatePreferenceAnswers";
-import type { PreferenceSubmissionInput, PreferenceSubmissionResult } from "../types";
+import { calculateTravelPreferenceSurveyResult } from "../logic/calculate-travel-preference-result";
+import { validateTravelPreferenceSurvey } from "../logic/travel-preference-survey";
+import type { PersonalPreferenceDraftAnswers, TravelPreferenceSurveyResult } from "../types";
 
-export interface PreferenceSubmissionService {
-  submit(input: PreferenceSubmissionInput): Promise<PreferenceSubmissionResult>;
+export type PreferenceCalculationInput = {
+  userId: string;
+  answers: PersonalPreferenceDraftAnswers;
+  completedAt: string;
+};
+
+type PreferenceCalculationOutcome =
+  | { status: "success"; source: "local-mock"; result: TravelPreferenceSurveyResult }
+  | { status: "error"; code: "invalid-answers" | "contract-unavailable"; message: string };
+
+export interface PreferenceResultService {
+  calculate(input: PreferenceCalculationInput): Promise<PreferenceCalculationOutcome>;
 }
 
-class LocalMockPreferenceSubmissionService implements PreferenceSubmissionService {
-  async submit(input: PreferenceSubmissionInput): Promise<PreferenceSubmissionResult> {
-    const validation = validatePreferenceAnswers(input.answers, PERSONAL_TEST_VERSION);
-    if (!validation.valid) return { status: "error", code: validation.code === "empty-config" ? "empty-config" : "invalid-answers", message: validation.message };
-    const { userId: _userId, ...result } = calculatePersonalPreferenceResult("", validation.answers, input.completedAt);
+class LocalPreferenceResultService implements PreferenceResultService {
+  async calculate(input: PreferenceCalculationInput): Promise<PreferenceCalculationOutcome> {
+    const validation = validateTravelPreferenceSurvey(input.answers);
+    if (!validation.valid) return { status: "error", code: "invalid-answers", message: validation.message };
+    const result = calculateTravelPreferenceSurveyResult(input.userId, validation.answers, input.completedAt);
     return { status: "success", source: "local-mock", result };
   }
 }
 
-class UnavailableQuizSubmissionService implements PreferenceSubmissionService {
-  async submit(): Promise<PreferenceSubmissionResult> {
+class UnavailablePreferenceResultService implements PreferenceResultService {
+  async calculate(): Promise<PreferenceCalculationOutcome> {
     return { status: "error", code: "contract-unavailable", message: "백엔드 Quiz 계약 연결 전입니다. 답변은 기기에 그대로 보관했어요." };
   }
 }
 
-export function createPreferenceSubmissionService(mode: DataSourceMode): PreferenceSubmissionService {
-  return mode === "mock" ? new LocalMockPreferenceSubmissionService() : new UnavailableQuizSubmissionService();
+export function createPreferenceResultService(mode: DataSourceMode): PreferenceResultService {
+  return mode === "mock" ? new LocalPreferenceResultService() : new UnavailablePreferenceResultService();
 }
 
-export const preferenceSubmissionService = createPreferenceSubmissionService(environment.dataSource);
+export const preferenceResultService = createPreferenceResultService(environment.dataSource);

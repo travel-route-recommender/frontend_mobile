@@ -32,8 +32,10 @@ export type DuriDomainState = {
 export function createDemoData(): DuriDomainState {
   const users: User[] = [
     { id: "user-soomin", name: "수민", initial: "수" },
-    { id: "user-jiyoon", name: "지윤", initial: "지" },
-    { id: "user-minjae", name: "민재", initial: "민" },
+    { id: "user-jiyoon", name: "윤지", initial: "윤" },
+    { id: "user-minjae", name: "민석", initial: "민" },
+    { id: "user-hyunho", name: "현호", initial: "현" },
+    { id: "user-suhyeon", name: "수현", initial: "수" },
   ];
 
   const regions: Region[] = [

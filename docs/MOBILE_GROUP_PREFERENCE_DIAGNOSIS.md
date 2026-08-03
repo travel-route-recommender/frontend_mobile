@@ -30,7 +30,7 @@ TripRoom
   -> preferenceResultsByUserId[userId]
 ```
 
-이름으로 사용자를 연결하지 않는다. 부산 데모방은 `user-soomin`, `user-jiyoon`, `user-minjae`가 동일 ID로 User, TripMember, PreferenceResult에 연결된다. 수민·지윤은 v1 결과가 있고 민재는 결과가 없어 기본 partial 상태다.
+이름으로 사용자를 연결하지 않는다. 부산 데모방은 `user-soomin`, `user-jiyoon`, `user-minjae`가 동일 ID로 User, TripMember, PreferenceResult에 연결된다. 수민·윤지는 v1 결과가 있고 민석은 결과가 없어 기본 partial 상태다.
 
 ## 3. completed / pending / invalid
 

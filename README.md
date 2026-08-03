@@ -455,3 +455,17 @@ git push -u origin feature/mobile-workspace
 ## 라이선스
 
 이 저장소의 라이선스 정보는 [LICENSE](LICENSE)를 확인하세요.
+
+## 메시지 응답형 여행 성향 테스트
+
+기존 일정표형 테스트를 메시지 응답형으로 바꾸고, 8종류 활동 블록의 선호도와 일정 밀도를 묻는 총 9개 질문을 추가했습니다. 질문 문구와 구성은 추후 변경하거나 확장할 수 있습니다.
+
+## 일정표 에셋 관리
+
+일정표·드래그 기능 본체: [`DraggableItineraryEditor.tsx`](src/features/preferences/components/DraggableItineraryEditor.tsx)
+
+재사용 에셋 진입점: [`itinerary-schedule-builder.tsx`](src/features/preferences/assets/itinerary-schedule-builder.tsx)
+
+8종류 블록의 이름·아이콘·색상: [`travel-preference-test-config.ts`](src/features/preferences/config/travel-preference-test-config.ts)
+
+08:00~24:00 시간 슬롯·일정표 행 설정: [`travel-preference-test-config.ts`](src/features/preferences/config/travel-preference-test-config.ts)

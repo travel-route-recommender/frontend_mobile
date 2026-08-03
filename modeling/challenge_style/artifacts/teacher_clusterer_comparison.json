@@ -1,0 +1,1327 @@
+{
+  "schemaVersion": 1,
+  "experimentVersion": "challenge-style-teacher-clusterers-v1",
+  "sourceFile": "IPIP_NEO_120.csv",
+  "sourceRows": 619150,
+  "validRows": 583770,
+  "uniqueFacetPoints": 4697,
+  "seed": 20260731,
+  "facetMeans": {
+    "O4": 3.115088,
+    "E5": 3.246758,
+    "C6": 3.300188
+  },
+  "facetStandardDeviations": {
+    "O4": 0.805803,
+    "E5": 0.846413,
+    "C6": 1.037238
+  },
+  "comparisonScope": "Teacher cluster quality and fidelity of the same six-item decision-tree student; not accuracy against real travel behavior.",
+  "methods": {
+    "kmeans": {
+      "details": {
+        "kind": "kmeans",
+        "clusterCount": 3
+      },
+      "centers": {
+        "challenge_executor": {
+          "O4": 3.253351,
+          "E5": 3.964393,
+          "C6": 2.290877
+        },
+        "cautious_explorer": {
+          "O4": 3.71157,
+          "E5": 3.164659,
+          "C6": 3.990158
+        },
+        "stable_planner": {
+          "O4": 2.379087,
+          "E5": 2.52914,
+          "C6": 3.74863
+        }
+      },
+      "distribution": {
+        "challenge_executor": {
+          "count": 210161,
+          "ratio": 0.360007
+        },
+        "cautious_explorer": {
+          "count": 184557,
+          "ratio": 0.316147
+        },
+        "stable_planner": {
+          "count": 189052,
+          "ratio": 0.323847
+        }
+      },
+      "clusterQuality": {
+        "silhouetteSampled": 0.281539,
+        "daviesBouldin": 1.182976,
+        "calinskiHarabasz": 287965.134
+      },
+      "studentDecisionTree": {
+        "selectedCandidate": {
+          "requestedMaxDepth": 10,
+          "actualDepth": 10,
+          "nodeCount": 1087,
+          "leafCount": 544,
+          "accuracy": 0.819474,
+          "macroF1": 0.817754,
+          "confusionMatrix": [
+            [
+              36372,
+              3136,
+              2524
+            ],
+            [
+              3351,
+              29396,
+              4164
+            ],
+            [
+              3424,
+              4478,
+              29908
+            ]
+          ],
+          "perClass": {
+            "challenge_executor": {
+              "precision": 0.842979,
+              "recall": 0.865341,
+              "f1": 0.854013,
+              "support": 42032
+            },
+            "cautious_explorer": {
+              "precision": 0.794272,
+              "recall": 0.796402,
+              "f1": 0.795336,
+              "support": 36911
+            },
+            "stable_planner": {
+              "precision": 0.817248,
+              "recall": 0.791008,
+              "f1": 0.803914,
+              "support": 37810
+            }
+          }
+        },
+        "candidateMetrics": [
+          {
+            "requestedMaxDepth": 4,
+            "actualDepth": 4,
+            "nodeCount": 31,
+            "leafCount": 16,
+            "accuracy": 0.767141,
+            "macroF1": 0.766531,
+            "confusionMatrix": [
+              [
+                32250,
+                6314,
+                3468
+              ],
+              [
+                2060,
+                28231,
+                6620
+              ],
+              [
+                4007,
+                4718,
+                29085
+              ]
+            ],
+            "perClass": {
+              "challenge_executor": {
+                "precision": 0.841663,
+                "recall": 0.767273,
+                "f1": 0.802748,
+                "support": 42032
+              },
+              "cautious_explorer": {
+                "precision": 0.719023,
+                "recall": 0.76484,
+                "f1": 0.741224,
+                "support": 36911
+              },
+              "stable_planner": {
+                "precision": 0.742476,
+                "recall": 0.769241,
+                "f1": 0.755621,
+                "support": 37810
+              }
+            }
+          },
+          {
+            "requestedMaxDepth": 6,
+            "actualDepth": 6,
+            "nodeCount": 127,
+            "leafCount": 64,
+            "accuracy": 0.798626,
+            "macroF1": 0.796781,
+            "confusionMatrix": [
+              [
+                35480,
+                3474,
+                3078
+              ],
+              [
+                3512,
+                28001,
+                5398
+              ],
+              [
+                3906,
+                4143,
+                29761
+              ]
+            ],
+            "perClass": {
+              "challenge_executor": {
+                "precision": 0.827078,
+                "recall": 0.844119,
+                "f1": 0.835512,
+                "support": 42032
+              },
+              "cautious_explorer": {
+                "precision": 0.786147,
+                "recall": 0.758609,
+                "f1": 0.772133,
+                "support": 36911
+              },
+              "stable_planner": {
+                "precision": 0.77833,
+                "recall": 0.78712,
+                "f1": 0.7827,
+                "support": 37810
+              }
+            }
+          },
+          {
+            "requestedMaxDepth": 8,
+            "actualDepth": 8,
+            "nodeCount": 473,
+            "leafCount": 237,
+            "accuracy": 0.815225,
+            "macroF1": 0.813693,
+            "confusionMatrix": [
+              [
+                35928,
+                3350,
+                2754
+              ],
+              [
+                3344,
+                29818,
+                3749
+              ],
+              [
+                3313,
+                5063,
+                29434
+              ]
+            ],
+            "perClass": {
+              "challenge_executor": {
+                "precision": 0.843677,
+                "recall": 0.854777,
+                "f1": 0.849191,
+                "support": 42032
+              },
+              "cautious_explorer": {
+                "precision": 0.779943,
+                "recall": 0.807835,
+                "f1": 0.793644,
+                "support": 36911
+              },
+              "stable_planner": {
+                "precision": 0.819044,
+                "recall": 0.778471,
+                "f1": 0.798243,
+                "support": 37810
+              }
+            }
+          },
+          {
+            "requestedMaxDepth": 10,
+            "actualDepth": 10,
+            "nodeCount": 1087,
+            "leafCount": 544,
+            "accuracy": 0.819474,
+            "macroF1": 0.817754,
+            "confusionMatrix": [
+              [
+                36372,
+                3136,
+                2524
+              ],
+              [
+                3351,
+                29396,
+                4164
+              ],
+              [
+                3424,
+                4478,
+                29908
+              ]
+            ],
+            "perClass": {
+              "challenge_executor": {
+                "precision": 0.842979,
+                "recall": 0.865341,
+                "f1": 0.854013,
+                "support": 42032
+              },
+              "cautious_explorer": {
+                "precision": 0.794272,
+                "recall": 0.796402,
+                "f1": 0.795336,
+                "support": 36911
+              },
+              "stable_planner": {
+                "precision": 0.817248,
+                "recall": 0.791008,
+                "f1": 0.803914,
+                "support": 37810
+              }
+            }
+          },
+          {
+            "requestedMaxDepth": 12,
+            "actualDepth": 12,
+            "nodeCount": 1437,
+            "leafCount": 719,
+            "accuracy": 0.819987,
+            "macroF1": 0.818361,
+            "confusionMatrix": [
+              [
+                36256,
+                3189,
+                2587
+              ],
+              [
+                3297,
+                29552,
+                4062
+              ],
+              [
+                3304,
+                4578,
+                29928
+              ]
+            ],
+            "perClass": {
+              "challenge_executor": {
+                "precision": 0.845976,
+                "recall": 0.862581,
+                "f1": 0.854198,
+                "support": 42032
+              },
+              "cautious_explorer": {
+                "precision": 0.791875,
+                "recall": 0.800629,
+                "f1": 0.796228,
+                "support": 36911
+              },
+              "stable_planner": {
+                "precision": 0.818219,
+                "recall": 0.791537,
+                "f1": 0.804657,
+                "support": 37810
+              }
+            }
+          }
+        ]
+      },
+      "agreementWithKmeans": {
+        "adjustedRandIndex": 1.0,
+        "normalizedMutualInformation": 1.0
+      }
+    },
+    "hierarchical": {
+      "details": {
+        "kind": "ward_on_weighted_microclusters",
+        "microclusterCount": 128
+      },
+      "centers": {
+        "challenge_executor": {
+          "O4": 3.100295,
+          "E5": 3.602263,
+          "C6": 2.504232
+        },
+        "cautious_explorer": {
+          "O4": 3.911067,
+          "E5": 3.311043,
+          "C6": 4.171485
+        },
+        "stable_planner": {
+          "O4": 2.553088,
+          "E5": 2.547221,
+          "C6": 4.115006
+        }
+      },
+      "distribution": {
+        "challenge_executor": {
+          "count": 299542,
+          "ratio": 0.513116
+        },
+        "cautious_explorer": {
+          "count": 120891,
+          "ratio": 0.207087
+        },
+        "stable_planner": {
+          "count": 163337,
+          "ratio": 0.279797
+        }
+      },
+      "clusterQuality": {
+        "silhouetteSampled": 0.218053,
+        "daviesBouldin": 1.222002,
+        "calinskiHarabasz": 206246.408
+      },
+      "studentDecisionTree": {
+        "selectedCandidate": {
+          "requestedMaxDepth": 10,
+          "actualDepth": 10,
+          "nodeCount": 1037,
+          "leafCount": 519,
+          "accuracy": 0.826009,
+          "macroF1": 0.802649,
+          "confusionMatrix": [
+            [
+              53159,
+              3112,
+              3637
+            ],
+            [
+              2841,
+              17801,
+              3536
+            ],
+            [
+              4462,
+              2726,
+              25479
+            ]
+          ],
+          "perClass": {
+            "challenge_executor": {
+              "precision": 0.879213,
+              "recall": 0.887344,
+              "f1": 0.88326,
+              "support": 59908
+            },
+            "cautious_explorer": {
+              "precision": 0.753035,
+              "recall": 0.736248,
+              "f1": 0.744547,
+              "support": 24178
+            },
+            "stable_planner": {
+              "precision": 0.78032,
+              "recall": 0.779961,
+              "f1": 0.780141,
+              "support": 32667
+            }
+          }
+        },
+        "candidateMetrics": [
+          {
+            "requestedMaxDepth": 4,
+            "actualDepth": 4,
+            "nodeCount": 31,
+            "leafCount": 16,
+            "accuracy": 0.77974,
+            "macroF1": 0.734809,
+            "confusionMatrix": [
+              [
+                52932,
+                1527,
+                5449
+              ],
+              [
+                5080,
+                11997,
+                7101
+              ],
+              [
+                4995,
+                1564,
+                26108
+              ]
+            ],
+            "perClass": {
+              "challenge_executor": {
+                "precision": 0.840097,
+                "recall": 0.883555,
+                "f1": 0.861278,
+                "support": 59908
+              },
+              "cautious_explorer": {
+                "precision": 0.795135,
+                "recall": 0.496195,
+                "f1": 0.611063,
+                "support": 24178
+              },
+              "stable_planner": {
+                "precision": 0.675358,
+                "recall": 0.799216,
+                "f1": 0.732086,
+                "support": 32667
+              }
+            }
+          },
+          {
+            "requestedMaxDepth": 6,
+            "actualDepth": 6,
+            "nodeCount": 127,
+            "leafCount": 64,
+            "accuracy": 0.80833,
+            "macroF1": 0.780178,
+            "confusionMatrix": [
+              [
+                52569,
+                2715,
+                4624
+              ],
+              [
+                3163,
+                16771,
+                4244
+              ],
+              [
+                4054,
+                3578,
+                25035
+              ]
+            ],
+            "perClass": {
+              "challenge_executor": {
+                "precision": 0.879286,
+                "recall": 0.877495,
+                "f1": 0.87839,
+                "support": 59908
+              },
+              "cautious_explorer": {
+                "precision": 0.727151,
+                "recall": 0.693647,
+                "f1": 0.710004,
+                "support": 24178
+              },
+              "stable_planner": {
+                "precision": 0.73843,
+                "recall": 0.76637,
+                "f1": 0.752141,
+                "support": 32667
+              }
+            }
+          },
+          {
+            "requestedMaxDepth": 8,
+            "actualDepth": 8,
+            "nodeCount": 439,
+            "leafCount": 220,
+            "accuracy": 0.821589,
+            "macroF1": 0.795828,
+            "confusionMatrix": [
+              [
+                53102,
+                2889,
+                3917
+              ],
+              [
+                2925,
+                17086,
+                4167
+              ],
+              [
+                4255,
+                2677,
+                25735
+              ]
+            ],
+            "perClass": {
+              "challenge_executor": {
+                "precision": 0.880893,
+                "recall": 0.886392,
+                "f1": 0.883634,
+                "support": 59908
+              },
+              "cautious_explorer": {
+                "precision": 0.754282,
+                "recall": 0.706675,
+                "f1": 0.729703,
+                "support": 24178
+              },
+              "stable_planner": {
+                "precision": 0.760963,
+                "recall": 0.787798,
+                "f1": 0.774148,
+                "support": 32667
+              }
+            }
+          },
+          {
+            "requestedMaxDepth": 10,
+            "actualDepth": 10,
+            "nodeCount": 1037,
+            "leafCount": 519,
+            "accuracy": 0.826009,
+            "macroF1": 0.802649,
+            "confusionMatrix": [
+              [
+                53159,
+                3112,
+                3637
+              ],
+              [
+                2841,
+                17801,
+                3536
+              ],
+              [
+                4462,
+                2726,
+                25479
+              ]
+            ],
+            "perClass": {
+              "challenge_executor": {
+                "precision": 0.879213,
+                "recall": 0.887344,
+                "f1": 0.88326,
+                "support": 59908
+              },
+              "cautious_explorer": {
+                "precision": 0.753035,
+                "recall": 0.736248,
+                "f1": 0.744547,
+                "support": 24178
+              },
+              "stable_planner": {
+                "precision": 0.78032,
+                "recall": 0.779961,
+                "f1": 0.780141,
+                "support": 32667
+              }
+            }
+          },
+          {
+            "requestedMaxDepth": 12,
+            "actualDepth": 12,
+            "nodeCount": 1435,
+            "leafCount": 718,
+            "accuracy": 0.82678,
+            "macroF1": 0.803988,
+            "confusionMatrix": [
+              [
+                52959,
+                3083,
+                3866
+              ],
+              [
+                2742,
+                17939,
+                3497
+              ],
+              [
+                4237,
+                2799,
+                25631
+              ]
+            ],
+            "perClass": {
+              "challenge_executor": {
+                "precision": 0.883563,
+                "recall": 0.884005,
+                "f1": 0.883784,
+                "support": 59908
+              },
+              "cautious_explorer": {
+                "precision": 0.753075,
+                "recall": 0.741955,
+                "f1": 0.747474,
+                "support": 24178
+              },
+              "stable_planner": {
+                "precision": 0.776838,
+                "recall": 0.784614,
+                "f1": 0.780707,
+                "support": 32667
+              }
+            }
+          }
+        ]
+      },
+      "agreementWithKmeans": {
+        "adjustedRandIndex": 0.414296,
+        "normalizedMutualInformation": 0.421884
+      }
+    },
+    "dbscan": {
+      "details": {
+        "kind": "weighted_dbscan_with_postprocessing",
+        "selected": {
+          "epsilon": 0.3,
+          "minSamples": 4000,
+          "clusterCount": 4,
+          "noiseRatio": 0.911599,
+          "clusterRatios": [
+            0.0071,
+            0.040096,
+            0.022523,
+            0.018682
+          ]
+        },
+        "searchedCandidateCount": 60,
+        "naturalThreeClusterSolution": false,
+        "wardMergeToThree": true,
+        "noiseFallback": "nearest_cluster_center"
+      },
+      "centers": {
+        "challenge_executor": {
+          "O4": 2.895658,
+          "E5": 3.619693,
+          "C6": 2.570268
+        },
+        "cautious_explorer": {
+          "O4": 3.918418,
+          "E5": 3.418836,
+          "C6": 3.624328
+        },
+        "stable_planner": {
+          "O4": 2.356492,
+          "E5": 2.365365,
+          "C6": 4.092083
+        }
+      },
+      "distribution": {
+        "challenge_executor": {
+          "count": 242338,
+          "ratio": 0.415126
+        },
+        "cautious_explorer": {
+          "count": 199872,
+          "ratio": 0.342381
+        },
+        "stable_planner": {
+          "count": 141560,
+          "ratio": 0.242493
+        }
+      },
+      "clusterQuality": {
+        "silhouetteSampled": 0.239455,
+        "daviesBouldin": 1.339653,
+        "calinskiHarabasz": 230589.816
+      },
+      "studentDecisionTree": {
+        "selectedCandidate": {
+          "requestedMaxDepth": 10,
+          "actualDepth": 10,
+          "nodeCount": 1105,
+          "leafCount": 553,
+          "accuracy": 0.805574,
+          "macroF1": 0.80351,
+          "confusionMatrix": [
+            [
+              39724,
+              5528,
+              3216
+            ],
+            [
+              5484,
+              32134,
+              2356
+            ],
+            [
+              3836,
+              2280,
+              22196
+            ]
+          ],
+          "perClass": {
+            "challenge_executor": {
+              "precision": 0.809967,
+              "recall": 0.819592,
+              "f1": 0.814751,
+              "support": 48468
+            },
+            "cautious_explorer": {
+              "precision": 0.804517,
+              "recall": 0.803873,
+              "f1": 0.804194,
+              "support": 39974
+            },
+            "stable_planner": {
+              "precision": 0.799337,
+              "recall": 0.783979,
+              "f1": 0.791583,
+              "support": 28312
+            }
+          }
+        },
+        "candidateMetrics": [
+          {
+            "requestedMaxDepth": 4,
+            "actualDepth": 4,
+            "nodeCount": 31,
+            "leafCount": 16,
+            "accuracy": 0.743409,
+            "macroF1": 0.743147,
+            "confusionMatrix": [
+              [
+                34820,
+                6992,
+                6656
+              ],
+              [
+                7047,
+                29955,
+                2972
+              ],
+              [
+                4218,
+                2073,
+                22021
+              ]
+            ],
+            "perClass": {
+              "challenge_executor": {
+                "precision": 0.75556,
+                "recall": 0.718412,
+                "f1": 0.736518,
+                "support": 48468
+              },
+              "cautious_explorer": {
+                "precision": 0.767683,
+                "recall": 0.749362,
+                "f1": 0.758412,
+                "support": 39974
+              },
+              "stable_planner": {
+                "precision": 0.695788,
+                "recall": 0.777797,
+                "f1": 0.734511,
+                "support": 28312
+              }
+            }
+          },
+          {
+            "requestedMaxDepth": 6,
+            "actualDepth": 6,
+            "nodeCount": 127,
+            "leafCount": 64,
+            "accuracy": 0.784787,
+            "macroF1": 0.781618,
+            "confusionMatrix": [
+              [
+                36919,
+                7178,
+                4371
+              ],
+              [
+                4366,
+                33353,
+                2255
+              ],
+              [
+                3354,
+                3603,
+                21355
+              ]
+            ],
+            "perClass": {
+              "challenge_executor": {
+                "precision": 0.827057,
+                "recall": 0.761719,
+                "f1": 0.793045,
+                "support": 48468
+              },
+              "cautious_explorer": {
+                "precision": 0.755721,
+                "recall": 0.834367,
+                "f1": 0.793099,
+                "support": 39974
+              },
+              "stable_planner": {
+                "precision": 0.763196,
+                "recall": 0.754274,
+                "f1": 0.758709,
+                "support": 28312
+              }
+            }
+          },
+          {
+            "requestedMaxDepth": 8,
+            "actualDepth": 8,
+            "nodeCount": 487,
+            "leafCount": 244,
+            "accuracy": 0.800486,
+            "macroF1": 0.797863,
+            "confusionMatrix": [
+              [
+                39760,
+                5061,
+                3647
+              ],
+              [
+                5869,
+                31515,
+                2590
+              ],
+              [
+                3878,
+                2249,
+                22185
+              ]
+            ],
+            "perClass": {
+              "challenge_executor": {
+                "precision": 0.803119,
+                "recall": 0.820335,
+                "f1": 0.811636,
+                "support": 48468
+              },
+              "cautious_explorer": {
+                "precision": 0.811719,
+                "recall": 0.788387,
+                "f1": 0.799883,
+                "support": 39974
+              },
+              "stable_planner": {
+                "precision": 0.780557,
+                "recall": 0.78359,
+                "f1": 0.782071,
+                "support": 28312
+              }
+            }
+          },
+          {
+            "requestedMaxDepth": 10,
+            "actualDepth": 10,
+            "nodeCount": 1105,
+            "leafCount": 553,
+            "accuracy": 0.805574,
+            "macroF1": 0.80351,
+            "confusionMatrix": [
+              [
+                39724,
+                5528,
+                3216
+              ],
+              [
+                5484,
+                32134,
+                2356
+              ],
+              [
+                3836,
+                2280,
+                22196
+              ]
+            ],
+            "perClass": {
+              "challenge_executor": {
+                "precision": 0.809967,
+                "recall": 0.819592,
+                "f1": 0.814751,
+                "support": 48468
+              },
+              "cautious_explorer": {
+                "precision": 0.804517,
+                "recall": 0.803873,
+                "f1": 0.804194,
+                "support": 39974
+              },
+              "stable_planner": {
+                "precision": 0.799337,
+                "recall": 0.783979,
+                "f1": 0.791583,
+                "support": 28312
+              }
+            }
+          },
+          {
+            "requestedMaxDepth": 12,
+            "actualDepth": 12,
+            "nodeCount": 1515,
+            "leafCount": 758,
+            "accuracy": 0.806122,
+            "macroF1": 0.804149,
+            "confusionMatrix": [
+              [
+                39542,
+                5564,
+                3362
+              ],
+              [
+                5365,
+                32222,
+                2387
+              ],
+              [
+                3654,
+                2304,
+                22354
+              ]
+            ],
+            "perClass": {
+              "challenge_executor": {
+                "precision": 0.814275,
+                "recall": 0.815837,
+                "f1": 0.815055,
+                "support": 48468
+              },
+              "cautious_explorer": {
+                "precision": 0.803742,
+                "recall": 0.806074,
+                "f1": 0.804906,
+                "support": 39974
+              },
+              "stable_planner": {
+                "precision": 0.795431,
+                "recall": 0.789559,
+                "f1": 0.792484,
+                "support": 28312
+              }
+            }
+          }
+        ]
+      },
+      "agreementWithKmeans": {
+        "adjustedRandIndex": 0.433366,
+        "normalizedMutualInformation": 0.461719
+      }
+    },
+    "gmm": {
+      "details": {
+        "kind": "full_covariance_weighted_gmm",
+        "initializations": 5,
+        "iterations": 256,
+        "converged": true,
+        "logLikelihood": -2339655.497,
+        "bic": 4679696.035,
+        "aic": 4679368.995,
+        "mixtureWeights": [
+          0.165435,
+          0.314726,
+          0.519839
+        ]
+      },
+      "centers": {
+        "challenge_executor": {
+          "O4": 3.35162,
+          "E5": 4.31936,
+          "C6": 1.879281
+        },
+        "cautious_explorer": {
+          "O4": 3.104221,
+          "E5": 3.342876,
+          "C6": 3.063911
+        },
+        "stable_planner": {
+          "O4": 3.01641,
+          "E5": 2.566758,
+          "C6": 4.37523
+        }
+      },
+      "distribution": {
+        "challenge_executor": {
+          "count": 92701,
+          "ratio": 0.158797
+        },
+        "cautious_explorer": {
+          "count": 302139,
+          "ratio": 0.517565
+        },
+        "stable_planner": {
+          "count": 188930,
+          "ratio": 0.323638
+        }
+      },
+      "clusterQuality": {
+        "silhouetteSampled": 0.176897,
+        "daviesBouldin": 1.538962,
+        "calinskiHarabasz": 184458.041
+      },
+      "studentDecisionTree": {
+        "selectedCandidate": {
+          "requestedMaxDepth": 10,
+          "actualDepth": 10,
+          "nodeCount": 901,
+          "leafCount": 451,
+          "accuracy": 0.817548,
+          "macroF1": 0.806943,
+          "confusionMatrix": [
+            [
+              13856,
+              4683,
+              1
+            ],
+            [
+              3848,
+              50026,
+              6554
+            ],
+            [
+              0,
+              6216,
+              31570
+            ]
+          ],
+          "perClass": {
+            "challenge_executor": {
+              "precision": 0.782648,
+              "recall": 0.747357,
+              "f1": 0.764596,
+              "support": 18540
+            },
+            "cautious_explorer": {
+              "precision": 0.821108,
+              "recall": 0.827861,
+              "f1": 0.824471,
+              "support": 60428
+            },
+            "stable_planner": {
+              "precision": 0.828066,
+              "recall": 0.835495,
+              "f1": 0.831764,
+              "support": 37786
+            }
+          }
+        },
+        "candidateMetrics": [
+          {
+            "requestedMaxDepth": 4,
+            "actualDepth": 4,
+            "nodeCount": 31,
+            "leafCount": 16,
+            "accuracy": 0.79456,
+            "macroF1": 0.774651,
+            "confusionMatrix": [
+              [
+                11356,
+                7182,
+                2
+              ],
+              [
+                2478,
+                48987,
+                8963
+              ],
+              [
+                0,
+                5361,
+                32425
+              ]
+            ],
+            "perClass": {
+              "challenge_executor": {
+                "precision": 0.820876,
+                "recall": 0.612513,
+                "f1": 0.701551,
+                "support": 18540
+              },
+              "cautious_explorer": {
+                "precision": 0.796148,
+                "recall": 0.810667,
+                "f1": 0.803342,
+                "support": 60428
+              },
+              "stable_planner": {
+                "precision": 0.783402,
+                "recall": 0.858122,
+                "f1": 0.819061,
+                "support": 37786
+              }
+            }
+          },
+          {
+            "requestedMaxDepth": 6,
+            "actualDepth": 6,
+            "nodeCount": 123,
+            "leafCount": 62,
+            "accuracy": 0.808341,
+            "macroF1": 0.79662,
+            "confusionMatrix": [
+              [
+                13285,
+                5255,
+                0
+              ],
+              [
+                3730,
+                48090,
+                8608
+              ],
+              [
+                1,
+                4783,
+                33002
+              ]
+            ],
+            "perClass": {
+              "challenge_executor": {
+                "precision": 0.780736,
+                "recall": 0.716559,
+                "f1": 0.747272,
+                "support": 18540
+              },
+              "cautious_explorer": {
+                "precision": 0.827312,
+                "recall": 0.795823,
+                "f1": 0.811262,
+                "support": 60428
+              },
+              "stable_planner": {
+                "precision": 0.793127,
+                "recall": 0.873392,
+                "f1": 0.831327,
+                "support": 37786
+              }
+            }
+          },
+          {
+            "requestedMaxDepth": 8,
+            "actualDepth": 8,
+            "nodeCount": 397,
+            "leafCount": 199,
+            "accuracy": 0.815364,
+            "macroF1": 0.804177,
+            "confusionMatrix": [
+              [
+                13380,
+                5160,
+                0
+              ],
+              [
+                3389,
+                48680,
+                8359
+              ],
+              [
+                0,
+                4649,
+                33137
+              ]
+            ],
+            "perClass": {
+              "challenge_executor": {
+                "precision": 0.797901,
+                "recall": 0.721683,
+                "f1": 0.75788,
+                "support": 18540
+              },
+              "cautious_explorer": {
+                "precision": 0.832293,
+                "recall": 0.805587,
+                "f1": 0.818722,
+                "support": 60428
+              },
+              "stable_planner": {
+                "precision": 0.798559,
+                "recall": 0.876965,
+                "f1": 0.835927,
+                "support": 37786
+              }
+            }
+          },
+          {
+            "requestedMaxDepth": 10,
+            "actualDepth": 10,
+            "nodeCount": 901,
+            "leafCount": 451,
+            "accuracy": 0.817548,
+            "macroF1": 0.806943,
+            "confusionMatrix": [
+              [
+                13856,
+                4683,
+                1
+              ],
+              [
+                3848,
+                50026,
+                6554
+              ],
+              [
+                0,
+                6216,
+                31570
+              ]
+            ],
+            "perClass": {
+              "challenge_executor": {
+                "precision": 0.782648,
+                "recall": 0.747357,
+                "f1": 0.764596,
+                "support": 18540
+              },
+              "cautious_explorer": {
+                "precision": 0.821108,
+                "recall": 0.827861,
+                "f1": 0.824471,
+                "support": 60428
+              },
+              "stable_planner": {
+                "precision": 0.828066,
+                "recall": 0.835495,
+                "f1": 0.831764,
+                "support": 37786
+              }
+            }
+          },
+          {
+            "requestedMaxDepth": 12,
+            "actualDepth": 12,
+            "nodeCount": 1473,
+            "leafCount": 737,
+            "accuracy": 0.817754,
+            "macroF1": 0.806786,
+            "confusionMatrix": [
+              [
+                13742,
+                4797,
+                1
+              ],
+              [
+                3715,
+                50164,
+                6549
+              ],
+              [
+                0,
+                6216,
+                31570
+              ]
+            ],
+            "perClass": {
+              "challenge_executor": {
+                "precision": 0.787191,
+                "recall": 0.741208,
+                "f1": 0.763508,
+                "support": 18540
+              },
+              "cautious_explorer": {
+                "precision": 0.819981,
+                "recall": 0.830145,
+                "f1": 0.825032,
+                "support": 60428
+              },
+              "stable_planner": {
+                "precision": 0.828174,
+                "recall": 0.835495,
+                "f1": 0.831818,
+                "support": 37786
+              }
+            }
+          }
+        ]
+      },
+      "agreementWithKmeans": {
+        "adjustedRandIndex": 0.151669,
+        "normalizedMutualInformation": 0.293792
+      }
+    }
+  }
+}
