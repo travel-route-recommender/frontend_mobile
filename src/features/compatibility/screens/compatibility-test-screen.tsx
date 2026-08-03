@@ -23,11 +23,11 @@ export function CompatibilityTestScreen() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   if (loading) return <Screen scroll={false}><LoadingState label="친구들과의 여행 궁합을 계산하고 있어요" /></Screen>;
-  if (sessionKind !== "member" || !userId) return <Screen><AppHeader title="궁합 테스트" onBack={() => router.back()} /><ErrorState message="궁합 테스트는 회원 계정에서 이용할 수 있어요." onRetry={() => router.replace("/(auth)/login")} /></Screen>;
-  if (!requesterResult) return <Screen><AppHeader title="궁합 테스트" onBack={() => router.back()} /><EmptyState title="먼저 마이테스트를 완료해 주세요" description="궁합 점수를 계산하려면 7단계 상세 여행 성향 결과가 필요해요." ctaLabel="마이테스트 시작" onPress={() => router.replace("/tests/personal")} /></Screen>;
+  if (sessionKind !== "member" || !userId) return <Screen><AppHeader title="궁합도" onBack={() => router.back()} /><ErrorState message="궁합도는 회원 계정에서 이용할 수 있어요." onRetry={() => router.replace("/(auth)/login")} /></Screen>;
+  if (!requesterResult) return <Screen><AppHeader title="궁합도" onBack={() => router.back()} /><EmptyState title="먼저 마이테스트를 완료해 주세요" description="궁합 점수를 계산하려면 7단계 상세 여행 성향 결과가 필요해요." ctaLabel="마이테스트 시작" onPress={() => router.replace("/tests/personal")} /></Screen>;
 
   const availableFriendIds = savedFriendIds.filter((friendId) => Boolean(getMockTravelPreferenceResult(friendId)));
-  if (!availableFriendIds.length) return <Screen><AppHeader title="궁합 테스트" onBack={() => router.back()} /><EmptyState title="저장한 친구가 없어요" description="친구 관리에서 궁합을 확인할 가상 친구를 한 명 이상 저장해 주세요." ctaLabel="친구 관리" onPress={() => router.push("/friends")} /></Screen>;
+  if (!availableFriendIds.length) return <Screen><AppHeader title="궁합도" onBack={() => router.back()} /><EmptyState title="저장한 친구가 없어요" description="친구 관리에서 궁합을 확인할 가상 친구를 한 명 이상 저장해 주세요." ctaLabel="친구 관리" onPress={() => router.push("/friends")} /></Screen>;
 
   const toggleSelected = (friendId: string) => setSelectedIds((current) => current.includes(friendId) ? current.filter((id) => id !== friendId) : [...current, friendId]);
   const start = async () => {
@@ -49,7 +49,7 @@ export function CompatibilityTestScreen() {
   };
 
   return <Screen testID="compatibility-test">
-    <AppHeader title="궁합 테스트" subtitle="함께 여행할 친구를 한 명 이상 선택해 주세요." onBack={() => router.back()} />
+    <AppHeader title="궁합도" subtitle="함께 여행할 친구를 한 명 이상 선택해 주세요." onBack={() => router.back()} />
     <View style={styles.selectionSummary}><Text style={styles.selectionValue}>{selectedIds.length}명 선택</Text><Text style={styles.selectionHint}>여러 명을 선택하면 나와 친구들 전체의 평균 궁합을 계산해요.</Text></View>
     <View style={styles.friendList}>{availableFriendIds.map((friendId) => {
       const friend = mockFriendProfiles[friendId as keyof typeof mockFriendProfiles];
@@ -63,7 +63,7 @@ export function CompatibilityTestScreen() {
       </Pressable>;
     })}</View>
     {errorMessage ? <View accessibilityLiveRegion="assertive" style={styles.errorBanner}><Text selectable style={styles.errorText}>{errorMessage}</Text></View> : null}
-    <View style={styles.actions}><PrimaryButton label="궁합 테스트 시작" disabled={!selectedIds.length} onPress={start} /><SecondaryButton label="친구 관리" onPress={() => router.push("/friends")} /></View>
+    <View style={styles.actions}><PrimaryButton label="궁합도 확인하기" disabled={!selectedIds.length} onPress={start} /><SecondaryButton label="친구 관리" onPress={() => router.push("/friends")} /></View>
   </Screen>;
 }
 

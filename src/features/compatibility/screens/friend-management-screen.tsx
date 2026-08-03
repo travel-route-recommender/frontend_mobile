@@ -31,7 +31,7 @@ export function FriendManagementScreen() {
         </Card>
       </Pressable>;
     })}</View>
-    <Text style={styles.notice}>현재 친구 목록은 궁합 테스트 확인을 위한 mock 데이터예요. 백엔드 친구 API가 연결되면 같은 저장 목록 자리에 실제 친구가 표시돼요.</Text>
+    <Text style={styles.notice}>현재 친구 목록은 궁합도 확인을 위한 mock 데이터예요. 백엔드 친구 API가 연결되면 같은 저장 목록 자리에 실제 친구가 표시돼요.</Text>
   </Screen>;
 }
 

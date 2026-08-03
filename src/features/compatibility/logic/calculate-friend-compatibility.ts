@@ -9,7 +9,7 @@ import type {
   FriendCompatibilityResult,
 } from "../types";
 
-export const FRIEND_COMPATIBILITY_ALGORITHM_VERSION = 4;
+export const FRIEND_COMPATIBILITY_ALGORITHM_VERSION = 6;
 
 const clampScore = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
 const similarity = (left: number, right: number) => clampScore(100 - Math.abs(left - right));
@@ -25,17 +25,6 @@ const median = (values: number[]) => {
 const robustConsensus = (values: number[]) => {
   if (!values.length) return 0;
   return median(values) * 0.7 + Math.min(...values) * 0.3;
-};
-
-const geometricMean = (values: number[]) => {
-  if (!values.length || values.some((value) => value <= 0)) return 0;
-  return values.reduce((product, value) => product * value, 1) ** (1 / values.length);
-};
-
-const weightedHarmonicMean = (entries: { score: number; weight: number }[]) => {
-  if (!entries.length || entries.some((entry) => entry.score <= 0)) return 0;
-  const totalWeight = entries.reduce((total, entry) => total + entry.weight, 0);
-  return totalWeight / entries.reduce((total, entry) => total + entry.weight / entry.score, 0);
 };
 
 // 차이가 없거나 극단적이면 0, 적당한 차이에서 1이 되는 보완 곡선이다.
@@ -87,10 +76,11 @@ function accommodationCompatibility(left: TravelPreferenceSurveyResult, right: T
 }
 
 function budgetCompatibility(left: TravelPreferenceSurveyResult, right: TravelPreferenceSurveyResult) {
-  const absoluteDifference = budgetCategories.reduce((total, category) => total + Math.abs(
-    left.spendingAllocation.allocation[category.id] - right.spendingAllocation.allocation[category.id],
+  const rankDifference = budgetCategories.reduce((total, category) => total + Math.abs(
+    left.spendingPriority.ranking.indexOf(category.id) - right.spendingPriority.ranking.indexOf(category.id),
   ), 0);
-  return clampScore(100 - absoluteDifference / 2);
+  const maximumRankDifference = Math.floor((budgetCategories.length ** 2) / 2);
+  return clampScore(100 - (rankDifference / maximumRankDifference) * 100);
 }
 
 function discoveryCompatibility(left: TravelPreferenceSurveyResult, right: TravelPreferenceSurveyResult): PairCategoryAssessment {
@@ -180,7 +170,7 @@ const categoryPresentation: Record<CompatibilityCategoryId, { label: string; des
   budget: {
     label: "예산 소비",
     descriptions: {
-      ALIGNED: "숙소·맛집·체험·쇼핑·이동에 돈을 쓰는 우선순위가 비슷해요.",
+      ALIGNED: "숙소·맛집·체험·쇼핑·이동에 예산을 쓰는 우선순위가 비슷해요.",
       COMPLEMENTARY: "공동 지출은 보완보다 예산 기준을 맞추는 게 중요해요.",
       ADJUSTABLE: "투자하고 싶은 항목이 일부 달라 공동·개별 지출을 나누면 좋아요.",
       NEEDS_COORDINATION: "지출 우선순위 차이가 커서 공용 예산과 개인 예산을 먼저 나눠야 해요.",
@@ -204,12 +194,16 @@ const categoryStatusLabels: Record<CompatibilityCategoryStatus, string> = {
   NEEDS_COORDINATION: "사전 조율",
 };
 
-const coreCategoryWeights = [
-  { id: "schedule", weight: 0.3 },
-  { id: "stamina", weight: 0.25 },
-  { id: "accommodation", weight: 0.25 },
-  { id: "budget", weight: 0.2 },
+const categoryWeights = [
+  { id: "schedule", weight: 0.24 },
+  { id: "stamina", weight: 0.2 },
+  { id: "accommodation", weight: 0.2 },
+  { id: "budget", weight: 0.16 },
+  { id: "challenge", weight: 0.1 },
+  { id: "discovery", weight: 0.1 },
 ] as const;
+const sharedConstraintCategoryIds = ["schedule", "stamina", "accommodation"] as const;
+const criticalConditionCategoryIds = ["schedule", "stamina", "accommodation", "budget"] as const;
 const tasteCategoryIds = ["challenge", "discovery"] as const;
 
 function createParticipantPairs(participants: TravelPreferenceSurveyResult[]) {
@@ -234,7 +228,9 @@ function createDynamics(categories: CompatibilityCategoryScore[]): Compatibility
   const coordinationCategoryIds = categories
     .filter((category) => category.status === "NEEDS_COORDINATION")
     .map((category) => category.id);
-  const criticalCoordinationIds = coordinationCategoryIds.filter((id) => coreCategoryWeights.some((category) => category.id === id));
+  const criticalCoordinationIds = coordinationCategoryIds.filter((id) => (
+    criticalConditionCategoryIds.some((categoryId) => categoryId === id)
+  ));
 
   if (criticalCoordinationIds.length) {
     return {
@@ -302,14 +298,14 @@ export function calculateFriendCompatibility(
     };
   });
   const scoreByCategory = Object.fromEntries(categories.map((category) => [category.id, category.score])) as Record<CompatibilityCategoryId, number>;
-  const coreScore = weightedHarmonicMean(coreCategoryWeights.map(({ id, weight }) => ({ score: scoreByCategory[id], weight })));
-  const tasteScore = geometricMean(tasteCategoryIds.map((id) => scoreByCategory[id]));
-  const weakestCoreScore = Math.min(...coreCategoryWeights.map(({ id }) => scoreByCategory[id]));
+  const unboundedScore = clampScore(categoryWeights.reduce((total, { id, weight }) => (
+    total + scoreByCategory[id] * weight
+  ), 0));
+  const weakestSharedConstraintScore = Math.min(...sharedConstraintCategoryIds.map((id) => scoreByCategory[id]));
   const weakestTasteScore = Math.min(...tasteCategoryIds.map((id) => scoreByCategory[id]));
-  const unboundedScore = clampScore(coreScore * 0.8 + tasteScore * 0.2);
-  const score = weakestCoreScore < 25
+  const score = weakestSharedConstraintScore < 25
     ? Math.min(unboundedScore, 39)
-    : weakestCoreScore < 40
+    : weakestSharedConstraintScore < 40
       ? Math.min(unboundedScore, 59)
       : weakestTasteScore < 25
         ? Math.min(unboundedScore, 79)

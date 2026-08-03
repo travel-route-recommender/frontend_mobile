@@ -71,8 +71,8 @@ export function MyPageScreen() {
       <Text style={styles.profileType}>{result?.profileType ?? "아직 결과가 없어요"}</Text>
       <Text style={styles.description}>{result ? result.traits.join(" · ") : "간단한 테스트로 여행할 때 중요하게 생각하는 점을 알아보세요."}</Text>
       {result ? <View style={styles.tags}>{result.preferredTags.map((tag) => <View key={tag} style={styles.tag}><Text style={styles.tagText}>#{tag}</Text></View>)}</View> : null}
-      {result ? <><PrimaryButton label="결과 자세히 보기" onPress={() => router.push("/tests/personal/result")} /><SecondaryButton label="테스트 다시 하기" onPress={() => router.push({ pathname: "/tests/personal/result", params: { retest: "1" } })} />{sessionKind === "member" ? <SecondaryButton label="친구와 궁합 테스트" onPress={() => router.push("/tests/compatibility")} /> : null}</> : <PrimaryButton label="내 여행 성향 알아보기" onPress={() => router.push("/tests/personal")} />}
-      {sessionKind === "member" && result && !detailedResult ? <Text style={styles.guestCopy}>궁합 테스트에는 상세 여행 성향 결과가 필요해요.</Text> : null}
+      {result ? <><PrimaryButton label="결과 자세히 보기" onPress={() => router.push("/tests/personal/result")} /><SecondaryButton label="테스트 다시 하기" onPress={() => router.push({ pathname: "/tests/personal/result", params: { retest: "1" } })} />{sessionKind === "member" ? <SecondaryButton label="친구와 궁합도 보기" onPress={() => router.push("/tests/compatibility")} /> : null}</> : <PrimaryButton label="내 여행 성향 알아보기" onPress={() => router.push("/tests/personal")} />}
+      {sessionKind === "member" && result && !detailedResult ? <Text style={styles.guestCopy}>궁합도에는 상세 여행 성향 결과가 필요해요.</Text> : null}
       {sessionKind === "guest" ? <Text style={styles.guestCopy}>게스트 계정은 초대받은 여행방에만 접근하며, 회원 전용 API 권한은 서버에서도 제한돼요.</Text> : null}
     </Card>
     {sessionKind === "member" ? <>

@@ -8,7 +8,11 @@ import { challengeStyleQuestions } from "../src/features/preferences/config/chal
 import { itineraryMessageQuestions } from "../src/features/preferences/config/itinerary-message-questions";
 import { preferenceSteps } from "../src/features/preferences/config/travel-preference-test-config";
 import { deriveScheduleStylePreference } from "../src/features/preferences/logic/derive-schedule-style";
-import { isPreferenceStepComplete } from "../src/features/preferences/logic/travel-preference-survey";
+import {
+  getBudgetRanking,
+  isPreferenceStepComplete,
+  normalizeTravelPreferenceSurveyAnswers,
+} from "../src/features/preferences/logic/travel-preference-survey";
 import type { ItineraryMessageAnswers, TravelPreferenceSurveyResult } from "../src/features/preferences/types";
 import {
   FRIEND_COMPATIBILITY_ALGORITHM_VERSION,
@@ -33,7 +37,23 @@ assert(
     && mockFriendProfiles["user-minjae"].name === "민석",
   "1. 윤지·민석·현호·수현의 프로필과 상세 결과가 준비되어야 한다",
 );
-assert(soomin.spendingAllocation.totalCoins === 100, "2. 예산 합계는 100이어야 한다");
+assert(
+  soomin.spendingPriority.ranking.join(",") === "food,stay,activity,mobility,shopping"
+    && soomin.spendingAllocation.totalCoins === 100,
+  "2. 예산은 순위로 저장되고 기존 결과 호환용 점수 합계는 100이어야 한다",
+);
+const normalizedLegacyBudget = normalizeTravelPreferenceSurveyAnswers({
+  budgetAllocation: { stay: 20, food: 30, activity: 20, shopping: 10, mobility: 20 },
+});
+assert(
+  getBudgetRanking(normalizedLegacyBudget).join(",") === "food,stay,activity,mobility,shopping",
+  "2-1. 기존 코인 응답은 금액이 큰 순서의 예산 우선순위로 변환되어야 한다",
+);
+assert(
+  !isPreferenceStepComplete("budget", { budgetRanking: ["food", "stay", "activity", "shopping"] })
+    && isPreferenceStepComplete("budget", { budgetRanking: ["food", "stay", "activity", "shopping", "mobility"] }),
+  "2-2. 다섯 예산 카테고리의 순위를 모두 골라야 예산 단계가 완료되어야 한다",
+);
 assert(soomin.scheduleFeatures.scheduledMinutes === 300, "3. 일정 블록 시간이 분 단위 특징값으로 계산되어야 한다");
 assert(soomin.scheduleFeatures.restMinutes === 60 && soomin.scheduleFeatures.activityMinutes === 240, "4. 활동과 휴식 시간이 분리되어야 한다");
 assert(soomin.discoveryPreference.localInterest === 100, "5. 4단계 최고값은 100점이어야 한다");
@@ -54,6 +74,19 @@ assert(
     && oneFriend.categories.length === 6
     && !oneFriend.categories.map((category) => String(category.id)).includes("mobility"),
   "10. 한 명 궁합은 이동수단을 제외한 6개 카테고리와 0~100 점수를 반환해야 한다",
+);
+const reverseBudget = calculateFriendCompatibility(soomin, [{
+  ...soomin,
+  userId: "reverse-budget",
+  spendingPriority: { ranking: [...soomin.spendingPriority.ranking].reverse() },
+}]);
+const reverseBudgetCategory = reverseBudget.categories.find((category) => category.id === "budget");
+assert(
+  reverseBudgetCategory?.score === 0
+    && reverseBudgetCategory.status === "NEEDS_COORDINATION"
+    && reverseBudget.score === 84
+    && reverseBudget.dynamics.coordinationCategoryIds.includes("budget"),
+  "10-1. 반대 예산 순위는 예산만 0점이고 전체에서는 16%만 감점하되 사전 조율 안내를 유지해야 한다",
 );
 const group = calculateFriendCompatibility(soomin, [yunji, minseok], "2026-07-22T00:00:00.000Z");
 assert(group.friendUserIds.length === 2 && group.score >= 0 && group.score <= 100, "11. 여러 친구는 모든 참여자 쌍을 반영한 하나의 그룹 결과를 반환해야 한다");
@@ -114,11 +147,11 @@ function withScheduleComponents(
 }
 
 assert(
-  FRIEND_COMPATIBILITY_ALGORITHM_VERSION === 4
-    && identical.algorithmVersion === 4
+  FRIEND_COMPATIBILITY_ALGORITHM_VERSION === 6
+    && identical.algorithmVersion === 6
     && identical.dynamics.id === "ALIGNED"
     && identical.categories.every((category) => category.status === "ALIGNED"),
-  "19. 궁합 v4는 전체 관계 유형과 카테고리별 판정을 함께 반환해야 한다",
+  "19. 궁합 v6는 가중 산술평균과 선택적 하드캡 및 순위형 예산 비교를 함께 반환해야 한다",
 );
 
 const complementaryChallengeLeft = withChallengeScores(soomin, "challenge-left", 70, 35);
@@ -135,7 +168,7 @@ const extremeChallengeRight = withChallengeScores(soomin, "extreme-right", 0, 10
 const extremeChallenge = calculateFriendCompatibility(extremeChallengeLeft, [extremeChallengeRight]);
 assert(
   extremeChallenge.categories.find((category) => category.id === "challenge")?.status === "NEEDS_COORDINATION"
-    && extremeChallenge.score < 80,
+    && extremeChallenge.score === 79,
   "21. 도전 성향이 극단적으로 엇갈리면 시너지로 포장하지 않고 최고 등급을 제한해야 한다",
 );
 
@@ -152,14 +185,15 @@ const relaxedSchedule = withScheduleComponents(soomin, "schedule-low", 0, 0);
 const packedSchedule = withScheduleComponents(soomin, "schedule-high", 100, 100);
 const allPairGroup = calculateFriendCompatibility(midpointSchedule, [relaxedSchedule, packedSchedule]);
 assert(
-  allPairGroup.categories.find((category) => category.id === "schedule")?.score === 35,
+  allPairGroup.categories.find((category) => category.id === "schedule")?.score === 35
+    && allPairGroup.score === 59,
   "23. 세 명 이상 궁합은 신청자-친구뿐 아니라 친구-친구를 포함한 모든 참여자 쌍의 최저 관계를 반영해야 한다",
 );
 
 const criticalMismatch = calculateFriendCompatibility(relaxedSchedule, [packedSchedule]);
 assert(
   criticalMismatch.dynamics.id === "NEEDS_COORDINATION"
-    && criticalMismatch.score <= 39,
+    && criticalMismatch.score === 39,
   "24. 핵심 조건이 극단적으로 다르면 다른 항목이 잘 맞아도 전체 궁합을 낙관적으로 표시하지 않아야 한다",
 );
 
@@ -230,4 +264,4 @@ assert(
   "33. 예전 도전 문항이 없으면 6문항 모델의 탐색 점수로 호환 필드를 채워야 한다",
 );
 
-console.log("Preference and compatibility verification passed: 33 assertions");
+console.log("Preference and compatibility verification passed: 36 assertions");

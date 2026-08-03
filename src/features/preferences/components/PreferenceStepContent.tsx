@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import {
@@ -13,7 +13,7 @@ import {
 } from "../config/travel-preference-test-config";
 import { challengeStyleQuestions } from "../config/challenge-style-questions";
 import { itineraryMessageQuestions } from "../config/itinerary-message-questions";
-import { getBudgetTotal } from "../logic/travel-preference-survey";
+import { getBudgetRanking } from "../logic/travel-preference-survey";
 import type {
   AccommodationScaleValue,
   BudgetCategory,
@@ -185,52 +185,84 @@ function StaminaStep({ answers, onChange }: Omit<Props, "stepId">) {
   </View>;
 }
 
-function RepeatPressButton({ label, disabled, onStep, symbol }: { label: string; disabled: boolean; onStep: () => void; symbol: string }) {
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const repeatedRef = useRef(false);
-  const stopRepeating = () => {
-    if (intervalRef.current) clearInterval(intervalRef.current);
-    intervalRef.current = null;
-  };
-  const startRepeating = () => {
-    if (disabled) return;
-    repeatedRef.current = true;
-    onStep();
-    intervalRef.current = setInterval(onStep, 90);
-  };
-  useEffect(() => () => stopRepeating(), []);
-  return <Pressable
-    accessibilityLabel={label}
-    accessibilityRole="button"
-    delayLongPress={350}
-    disabled={disabled}
-    onLongPress={startRepeating}
-    onPress={() => { if (repeatedRef.current) { repeatedRef.current = false; return; } onStep(); }}
-    onPressOut={stopRepeating}
-    style={({ pressed }) => [styles.coinButton, disabled && styles.disabled, pressed && !disabled && styles.pressed]}
-  ><Text style={styles.coinButtonText}>{symbol}</Text></Pressable>;
-}
-
 function BudgetStep({ answers, onChange }: Omit<Props, "stepId">) {
-  const total = getBudgetTotal(answers);
-  const remaining = 100 - total;
-  const allocationRef = useRef(Object.fromEntries(budgetCategories.map((category) => [category.id, answers.budgetAllocation?.[category.id] ?? 0])) as Record<BudgetCategory, number>);
-  useEffect(() => {
-    allocationRef.current = Object.fromEntries(budgetCategories.map((category) => [category.id, answers.budgetAllocation?.[category.id] ?? 0])) as Record<BudgetCategory, number>;
-  }, [answers.budgetAllocation]);
-  const adjust = (id: BudgetCategory, delta: number) => {
-    const currentAllocation = allocationRef.current;
-    const current = currentAllocation[id];
-    const currentTotal = budgetCategories.reduce((sum, category) => sum + currentAllocation[category.id], 0);
-    if (current + delta < 0 || currentTotal + delta > 100) return;
-    const nextAllocation = { ...currentAllocation, [id]: current + delta };
-    allocationRef.current = nextAllocation;
-    onChange({ budgetAllocation: nextAllocation });
-  };
-  return <View style={styles.sectionGap}><SceneBanner icon="👛" title="여행 지갑에는 코인 100개가 있어요" description="정답은 없어요. 더 좋은 기억으로 남기고 싶은 곳에 마음 가는 만큼 나눠보세요." /><View accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 100, now: total }} style={[styles.coinBanner, total === 100 && styles.coinBannerComplete]}><View><Text style={styles.metricLabel}>지갑에 남은 코인</Text><Text selectable style={[styles.coinValue, total === 100 && styles.coinValueComplete]}>{remaining}개</Text></View><Text style={styles.coinTotal}>{total} / 100</Text></View><View style={styles.budgetList}>{budgetCategories.map((category) => {
-    const amount = answers.budgetAllocation?.[category.id] ?? 0;
-    return <View key={category.id} style={styles.budgetRow}><Text style={styles.budgetIcon}>{category.icon}</Text><View style={styles.budgetCopy}><Text style={styles.budgetTitle}>{category.label}</Text><Text style={styles.budgetParent}>{category.parent}</Text></View><RepeatPressButton label={`${category.label} 코인 5개 빼기. 길게 누르면 연속 감소`} disabled={amount === 0} onStep={() => adjust(category.id, -5)} symbol="−" /><Text selectable style={styles.budgetAmount}>{amount}</Text><RepeatPressButton label={`${category.label} 코인 5개 더하기. 길게 누르면 연속 증가`} disabled={remaining === 0} onStep={() => adjust(category.id, 5)} symbol="＋" /></View>;
-  })}</View><Text style={styles.footnote}>코인은 5개 단위로 움직여요. 길게 누르면 빠르게 담거나 뺄 수 있어요.</Text></View>;
+  const ranking = getBudgetRanking(answers);
+  const remainingCategories = budgetCategories.filter((category) => !ranking.includes(category.id));
+  const complete = ranking.length === budgetCategories.length;
+  const rankPrompts = [
+    "가장 예산을 많이 쓰고 싶은 항목은?",
+    "그다음으로 예산을 쓰고 싶은 항목은?",
+    "세 번째로 중요하게 쓰고 싶은 항목은?",
+    "네 번째 우선순위를 골라주세요",
+    "마지막으로 남길 예산 항목을 골라주세요",
+  ] as const;
+  const choose = (categoryId: BudgetCategory) => onChange({
+    budgetRanking: [...ranking, categoryId],
+    budgetAllocation: undefined,
+  });
+  const undoLast = () => onChange({ budgetRanking: ranking.slice(0, -1), budgetAllocation: undefined });
+  const resetRanking = () => onChange({ budgetRanking: [], budgetAllocation: undefined });
+
+  return <View style={styles.sectionGap}>
+    <SceneBanner icon="👛" title="여행 예산의 순서를 정해요" description="많이 쓰고 싶은 항목부터 하나씩 고르면, 선택한 항목을 제외하고 다음 순위를 이어서 물어볼게요." />
+    <View
+      accessibilityLabel={`예산 우선순위 ${budgetCategories.length}개 중 ${ranking.length}개 선택`}
+      accessibilityRole="progressbar"
+      accessibilityValue={{ min: 0, max: budgetCategories.length, now: ranking.length }}
+      style={styles.budgetProgress}
+    >
+      <View style={styles.budgetProgressCopy}>
+        <Text style={styles.budgetProgressLabel}>우선순위 정하는 중</Text>
+        <Text selectable style={styles.budgetProgressValue}>{ranking.length} / {budgetCategories.length}</Text>
+      </View>
+      <View style={styles.budgetProgressTrack}>
+        <View style={[styles.budgetProgressFill, { width: `${(ranking.length / budgetCategories.length) * 100}%` }]} />
+      </View>
+    </View>
+
+    {!complete ? <View style={styles.budgetQuestion}>
+      <Text style={styles.budgetQuestionRank}>{ranking.length + 1}순위 선택</Text>
+      <Text accessibilityRole="header" selectable style={styles.budgetQuestionTitle}>{rankPrompts[ranking.length]}</Text>
+      <View accessibilityLabel={`${ranking.length + 1}순위 예산 항목`} accessibilityRole="radiogroup" style={styles.budgetList}>
+        {remainingCategories.map((category) => <Pressable
+          key={category.id}
+          accessibilityLabel={`${ranking.length + 1}순위로 ${category.label} 선택`}
+          accessibilityRole="radio"
+          accessibilityState={{ selected: false }}
+          onPress={() => choose(category.id)}
+          style={({ pressed }) => [styles.budgetChoice, pressed && styles.pressed]}
+        >
+          <Text style={styles.budgetIcon}>{category.icon}</Text>
+          <View style={styles.budgetCopy}>
+            <Text selectable style={styles.budgetTitle}>{category.label}</Text>
+            <Text style={styles.budgetParent}>{category.parent}</Text>
+          </View>
+          <Text style={styles.budgetChoose}>선택 ›</Text>
+        </Pressable>)}
+      </View>
+    </View> : <View accessibilityLiveRegion="polite" style={styles.budgetComplete}>
+      <Text style={styles.budgetCompleteTitle}>예산 우선순위를 모두 정했어요</Text>
+      <Text style={styles.budgetCompleteDescription}>아래 순서가 실제 여행에서 돈을 쓰고 싶은 방향과 맞는지 확인해 주세요.</Text>
+    </View>}
+
+    {ranking.length ? <View style={styles.rankingSection}>
+      <Text style={styles.rankingTitle}>지금까지 정한 순서</Text>
+      <View style={styles.rankingList}>{ranking.map((categoryId, index) => {
+        const category = budgetCategories.find((entry) => entry.id === categoryId);
+        if (!category) return null;
+        return <View key={category.id} style={styles.rankingRow}>
+          <View style={styles.rankNumber}><Text selectable style={styles.rankNumberText}>{index + 1}</Text></View>
+          <Text style={styles.rankingIcon}>{category.icon}</Text>
+          <Text selectable style={styles.rankingLabel}>{category.label}</Text>
+          <Text style={styles.rankingParent}>{category.parent}</Text>
+        </View>;
+      })}</View>
+      <View style={styles.rankingActions}>
+        <Pressable accessibilityRole="button" onPress={undoLast} style={({ pressed }) => [styles.rankingAction, pressed && styles.pressed]}><Text style={styles.rankingActionText}>직전 선택 취소</Text></Pressable>
+        {ranking.length > 1 ? <Pressable accessibilityRole="button" onPress={resetRanking} style={({ pressed }) => [styles.rankingAction, pressed && styles.pressed]}><Text style={styles.rankingActionText}>처음부터 다시</Text></Pressable> : null}
+      </View>
+    </View> : null}
+  </View>;
 }
 
 function DiscoveryStep({ answers, onChange }: Omit<Props, "stepId">) {
@@ -252,10 +284,41 @@ function DiscoveryStep({ answers, onChange }: Omit<Props, "stepId">) {
 }
 
 const styles = StyleSheet.create({
-  sectionGap: { gap: spacing.md }, metricLabel: { ...typography.caption, color: colors.textSecondary },
+  sectionGap: { gap: spacing.md },
   footnote: { ...typography.caption, color: colors.textMuted }, optionList: { gap: spacing.sm }, multiOption: { minHeight: 78, flexDirection: "row", alignItems: "center", gap: spacing.md, borderWidth: 2, borderColor: colors.border, borderRadius: radius.lg, backgroundColor: colors.surface, padding: spacing.md }, multiOptionSelected: { borderColor: colors.primary, backgroundColor: colors.primarySoft }, pressed: { opacity: 0.84, transform: [{ scale: 0.99 }] }, optionIcon: { fontSize: 30 }, optionCopy: { flex: 1, minWidth: 0 }, optionTitle: { ...typography.bodyStrong, color: colors.text }, optionDescription: { ...typography.caption, color: colors.textSecondary, marginTop: spacing.xxs }, selectedText: { color: colors.primary },
   mobilitySection: { borderWidth: 2, borderColor: colors.border, borderRadius: radius.lg, backgroundColor: colors.surface, overflow: "hidden" }, mobilityHeader: { minHeight: 78, flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md }, disclosure: { ...typography.subtitle, color: colors.primary }, mobilityChoices: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs, borderTopWidth: 1, borderTopColor: colors.border, padding: spacing.md, paddingTop: spacing.sm }, mobilityChoice: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: spacing.xs, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.surface, paddingHorizontal: spacing.sm }, mobilityChoiceSelected: { borderColor: colors.primary, backgroundColor: colors.primarySoft }, checkbox: { width: 24, height: 24, borderRadius: radius.sm, borderWidth: 2, borderColor: colors.borderStrong, alignItems: "center", justifyContent: "center" }, checkboxSelected: { borderColor: colors.primary, backgroundColor: colors.primary }, checkmark: { color: colors.white, fontWeight: "900" },
   scaleWrap: { gap: spacing.sm }, scaleLabels: { flexDirection: "row", justifyContent: "space-between", gap: spacing.md }, scaleLabel: { ...typography.caption, color: colors.text, flex: 1 }, scaleLabelLarge: { fontSize: 16, lineHeight: 22, fontWeight: "700" }, scaleLabelRight: { textAlign: "right" }, scaleButtons: { flexDirection: "row", gap: spacing.xxs }, scaleButton: { flex: 1, minWidth: 0, minHeight: 44, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center" }, scaleButtonSelected: { borderWidth: 2, borderColor: colors.primary, backgroundColor: colors.primary }, scaleNumber: { fontSize: 13, lineHeight: 18, fontWeight: "700", color: colors.textSecondary, fontVariant: ["tabular-nums"] }, scaleNumberSelected: { color: colors.white },
   axisList: { gap: spacing.md }, axisCard: { gap: spacing.sm, borderRadius: radius.md, backgroundColor: colors.surfaceMuted, padding: spacing.md }, axisHelper: { ...typography.caption, color: colors.textSecondary }, sceneBanner: { flexDirection: "row", alignItems: "center", gap: spacing.md, borderRadius: radius.md, backgroundColor: colors.background, padding: spacing.md }, sceneIcon: { fontSize: 34 }, sceneCopy: { flex: 1, minWidth: 0, gap: spacing.xxs }, sceneTitle: { ...typography.bodyStrong, color: colors.text }, sceneDescription: { ...typography.caption, color: colors.textSecondary }, pairedCards: { flexDirection: "row", gap: spacing.sm }, endpointCard: { flex: 1, minWidth: 0, gap: spacing.xs, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.surface, padding: spacing.sm }, endpointLabel: { ...typography.caption, color: colors.primary }, endpointTitle: { ...typography.bodyStrong, color: colors.text }, endpointNote: { ...typography.caption, color: colors.textMuted }, degreePrompt: { ...typography.caption, color: colors.textSecondary, textAlign: "center" }, illustration: { flexDirection: "row", alignItems: "center", gap: spacing.md, borderRadius: radius.md, backgroundColor: colors.background, padding: spacing.md }, illustrationIcon: { fontSize: 32 }, illustrationText: { ...typography.body, color: colors.textSecondary, flex: 1 }, scaleCaption: { flexDirection: "row", justifyContent: "space-between", gap: spacing.md }, captionText: { ...typography.caption, color: colors.textMuted }, subsectionTitle: { ...typography.bodyStrong, color: colors.text }, choiceChipText: { ...typography.bodyStrong, color: colors.textSecondary }, staminaOption: { minHeight: 72, flexDirection: "row", alignItems: "center", gap: spacing.sm, borderWidth: 2, borderColor: colors.border, borderRadius: radius.lg, padding: spacing.md }, radio: { width: 24, height: 24, borderRadius: radius.pill, borderWidth: 2, borderColor: colors.borderStrong, alignItems: "center", justifyContent: "center" }, radioSelected: { borderColor: colors.primary }, radioDot: { width: 12, height: 12, borderRadius: radius.pill, backgroundColor: colors.primary },
-  coinBanner: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderRadius: radius.md, backgroundColor: colors.warningSoft, padding: spacing.md }, coinBannerComplete: { backgroundColor: colors.successSoft }, coinValue: { ...typography.title, color: colors.warning, fontVariant: ["tabular-nums"], marginTop: spacing.xxs }, coinValueComplete: { color: colors.success }, coinTotal: { ...typography.subtitle, color: colors.text, fontVariant: ["tabular-nums"] }, budgetList: { gap: spacing.xs }, budgetRow: { minHeight: 70, flexDirection: "row", alignItems: "center", gap: spacing.xs, borderRadius: radius.md, backgroundColor: colors.surfaceMuted, padding: spacing.sm }, budgetIcon: { fontSize: 24 }, budgetCopy: { flex: 1, minWidth: 70 }, budgetTitle: { ...typography.bodyStrong, color: colors.text }, budgetParent: { ...typography.caption, color: colors.textMuted }, coinButton: { width: 40, height: 40, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.primary, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center" }, coinButtonText: { color: colors.primary, fontSize: 20, fontWeight: "700" }, budgetAmount: { width: 32, ...typography.bodyStrong, color: colors.text, textAlign: "center", fontVariant: ["tabular-nums"] }, disabled: { opacity: 0.35 }, discoveryIcon: { fontSize: 30 },
+  budgetProgress: { gap: spacing.sm, borderRadius: radius.md, backgroundColor: colors.primarySoft, padding: spacing.md },
+  budgetProgressCopy: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm },
+  budgetProgressLabel: { ...typography.caption, color: colors.textSecondary },
+  budgetProgressValue: { ...typography.subtitle, color: colors.primary, fontVariant: ["tabular-nums"] },
+  budgetProgressTrack: { height: 8, overflow: "hidden", borderRadius: radius.pill, backgroundColor: colors.surface },
+  budgetProgressFill: { height: "100%", borderRadius: radius.pill, backgroundColor: colors.primary },
+  budgetQuestion: { gap: spacing.sm },
+  budgetQuestionRank: { ...typography.caption, color: colors.primary },
+  budgetQuestionTitle: { ...typography.subtitle, color: colors.text },
+  budgetList: { gap: spacing.xs },
+  budgetChoice: { minHeight: 70, flexDirection: "row", alignItems: "center", gap: spacing.sm, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.surfaceMuted, padding: spacing.sm },
+  budgetIcon: { fontSize: 24 },
+  budgetCopy: { flex: 1, minWidth: 70 },
+  budgetTitle: { ...typography.bodyStrong, color: colors.text },
+  budgetParent: { ...typography.caption, color: colors.textMuted },
+  budgetChoose: { ...typography.caption, color: colors.primary },
+  budgetComplete: { gap: spacing.xs, borderRadius: radius.md, backgroundColor: colors.successSoft, padding: spacing.md },
+  budgetCompleteTitle: { ...typography.bodyStrong, color: colors.success },
+  budgetCompleteDescription: { ...typography.caption, color: colors.textSecondary },
+  rankingSection: { gap: spacing.sm },
+  rankingTitle: { ...typography.bodyStrong, color: colors.text },
+  rankingList: { overflow: "hidden", borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.surface },
+  rankingRow: { minHeight: 54, flexDirection: "row", alignItems: "center", gap: spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
+  rankNumber: { width: 28, height: 28, alignItems: "center", justifyContent: "center", borderRadius: radius.pill, backgroundColor: colors.primarySoft },
+  rankNumberText: { ...typography.caption, color: colors.primary, fontVariant: ["tabular-nums"] },
+  rankingIcon: { fontSize: 21 },
+  rankingLabel: { ...typography.bodyStrong, flex: 1, color: colors.text },
+  rankingParent: { ...typography.caption, color: colors.textMuted },
+  rankingActions: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs },
+  rankingAction: { minHeight: 44, justifyContent: "center", borderRadius: radius.md, backgroundColor: colors.surfaceMuted, paddingHorizontal: spacing.sm },
+  rankingActionText: { ...typography.caption, color: colors.textSecondary },
+  discoveryIcon: { fontSize: 30 },
 });

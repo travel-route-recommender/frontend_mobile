@@ -19,13 +19,16 @@ import type {
 } from "../types";
 import {
   deriveLegacyPreferenceAnswers,
+  getBudgetRanking,
   normalizeTravelPreferenceSurveyAnswers,
   validateTravelPreferenceSurvey,
 } from "./travel-preference-survey";
 import { classifyChallengeStyle } from "./classify-challenge-style";
 import { deriveScheduleStylePreference } from "./derive-schedule-style";
 
-export const TRAVEL_PREFERENCE_ALGORITHM_VERSION = 5;
+export const TRAVEL_PREFERENCE_ALGORITHM_VERSION = 6;
+
+const budgetPriorityWeights = [33, 27, 20, 13, 7] as const;
 
 const clampScore = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
 const scaleFourPoint = (value: FourPointScaleValue | undefined) => clampScore((((value ?? 1) - 1) / 3) * 100);
@@ -38,7 +41,11 @@ function staminaLevel(level: StaminaLevel | undefined) {
 }
 
 function buildAllocation(answers: PersonalPreferenceDraftAnswers) {
-  return Object.fromEntries(budgetCategories.map((category) => [category.id, answers.budgetAllocation?.[category.id] ?? 0])) as Record<BudgetCategory, number>;
+  const ranking = getBudgetRanking(answers);
+  return Object.fromEntries(budgetCategories.map((category) => {
+    const rankIndex = ranking.indexOf(category.id);
+    return [category.id, rankIndex >= 0 ? budgetPriorityWeights[rankIndex] : 0];
+  })) as Record<BudgetCategory, number>;
 }
 
 function buildItineraryMessagePreference(
@@ -95,6 +102,7 @@ export function calculateTravelPreferenceSurveyResult(
     ? scaleFourPoint(answers.adventure)
     : challengeStylePreference.scores.exploration;
   const allocation = buildAllocation(answers);
+  const budgetRanking = getBudgetRanking(answers);
   const staminaPreference = staminaLevel(answers.stamina);
   const scheduleStylePreference = deriveScheduleStylePreference({
     densityScore: itineraryMessagePreference.densityScore,
@@ -147,6 +155,7 @@ export function calculateTravelPreferenceSurveyResult(
       totalCoins: budgetCategories.reduce((total, category) => total + allocation[category.id], 0),
       allocation,
     },
+    spendingPriority: { ranking: budgetRanking },
     discoveryPreference: { landmarkImportance, localInterest },
   };
 }

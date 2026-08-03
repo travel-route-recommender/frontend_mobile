@@ -31,7 +31,7 @@ class LocalCompatibilityCalculationService implements CompatibilityCalculationSe
 
 class UnavailableCompatibilityCalculationService implements CompatibilityCalculationService {
   async calculate(): Promise<CompatibilityCalculationOutcome> {
-    return { status: "error", code: "contract-unavailable", message: "백엔드 궁합 테스트 계약 연결 전입니다. 선택한 친구 정보는 기기에 그대로 있어요." };
+    return { status: "error", code: "contract-unavailable", message: "백엔드 궁합도 계산 계약 연결 전입니다. 선택한 친구 정보는 기기에 그대로 있어요." };
   }
 }
 

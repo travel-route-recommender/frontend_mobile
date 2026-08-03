@@ -58,6 +58,8 @@ export type PersonalPreferenceDraftAnswers = {
   accommodation?: Partial<Record<AccommodationAxis, AccommodationScaleValue>>;
   adventure?: FourPointScaleValue;
   stamina?: StaminaLevel;
+  budgetRanking?: BudgetCategory[];
+  /** @deprecated 이전 코인 분배 응답을 읽기 위한 호환 필드 */
   budgetAllocation?: Partial<Record<BudgetCategory, number>>;
   landmarkImportance?: FourPointScaleValue;
   localInterest?: FourPointScaleValue;
@@ -130,6 +132,9 @@ export type TravelPreferenceSurveyResult = {
   spendingAllocation: {
     totalCoins: number;
     allocation: Record<BudgetCategory, number>;
+  };
+  spendingPriority: {
+    ranking: BudgetCategory[];
   };
   discoveryPreference: {
     landmarkImportance: number;

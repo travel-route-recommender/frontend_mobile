@@ -16,6 +16,7 @@ export type PreferenceQuestionPresentation =
     location: string;
     title: string;
     description: string;
+    showPromptLabel?: boolean;
   };
 
 export type ItineraryMessageQuestion = {
@@ -63,6 +64,7 @@ export const itineraryMessageQuestions: readonly ItineraryMessageQuestion[] = [
       location: "오후 3:20 · 많이 걸은 뒤",
       title: "분위기 좋은 공간 앞에 멈췄어요",
       description: "친구들은 잠깐 쉬어갈지 다음 장소로 바로 갈지 기다리고 있어요.",
+      showPromptLabel: false,
     },
     message: "한참 걷다 보니 분위기 좋은 카페가 보여. 카페에 머무는 시간도 여행 코스로 담을까?",
     options: [
@@ -144,7 +146,7 @@ export const itineraryMessageQuestions: readonly ItineraryMessageQuestion[] = [
     categoryLabel: "자연",
     ...sender,
     presentation: { kind: "chat" },
-    message: "도심 밖으로 조금 나가면 바다와 공원이 있대. 이동 시간을 써서라도 자연을 보러 갈까?",
+    message: "시간이 좀 걸리는데 그래도 한 번 보러 갈래?",
     options: [
       { id: "like", meaning: "선호", label: "응, 시간이 걸려도 자연 풍경을 보는 일정은 꼭 넣고 싶어." },
       { id: "neutral", meaning: "중간", label: "가까운 곳에 좋은 자연 명소가 있으면 들러보자." },
@@ -161,8 +163,9 @@ export const itineraryMessageQuestions: readonly ItineraryMessageQuestion[] = [
       location: "해 질 무렵 · 숙소 근처",
       title: "아직 남은 저녁 시간을 바라봐요",
       description: "숙소로 돌아가는 길과 한 곳을 더 둘러보는 길이 앞에 있어요.",
+      showPromptLabel: false,
     },
-    message: "오후가 길어졌어. 숙소에 들어가 쉬거나 아무것도 하지 않는 빈칸도 남겨둘까?",
+    message: "시간이 조금 남았는데 그냥 숙소에 들어가서 쉴래? 아니면 밖에서 좀 더 둘러볼래?",
     options: [
       { id: "like", meaning: "선호", label: "응, 쉬는 시간이 충분해야 여행을 더 즐길 수 있어." },
       { id: "neutral", meaning: "중간", label: "일정 사이에 잠깐씩 쉬는 정도면 괜찮을 것 같아." },
@@ -180,7 +183,7 @@ export const itineraryMessageQuestions: readonly ItineraryMessageQuestion[] = [
       title: "친구들과 하루의 속도를 맞춰요",
       description: "가고 싶은 곳을 모두 펼쳐두고 내일 일정을 어느 정도 채울지 정하는 중이에요.",
     },
-    message: "이제 하루 지도를 거의 다 채웠어. 우리 일정은 어느 정도 속도로 흘러가면 좋을까?",
+    message: "이제 지역은 정했는데 일정을 얼마나 빡빡하게 채워야 할까?",
     options: [
       { id: "like", meaning: "선호", label: "아침부터 저녁까지 여러 곳을 알차게 다니고 싶어." },
       { id: "neutral", meaning: "중간", label: "핵심 일정 두세 개에 여유 시간을 섞는 게 좋아." },

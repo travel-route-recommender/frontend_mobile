@@ -37,6 +37,7 @@ const activityIds = new Set<ActivityTagId>(activityBlocks.map((block) => block.i
 const itineraryHourIds = new Set<ItineraryHourSlot>(itineraryHourSlots);
 const mobilityIds = new Set<MobilityMode>(mobilityOptions.map((option) => option.id));
 const staminaIds = new Set<StaminaLevel>(staminaOptions.map((option) => option.id));
+const budgetCategoryIds = new Set<BudgetCategory>(budgetCategories.map((category) => category.id));
 const itineraryMessageQuestionIds = new Set(itineraryMessageQuestions.map((question) => question.id));
 const itineraryPreferenceLevels = new Set<ItineraryPreferenceLevel>(["like", "neutral", "dislike"]);
 const challengeStyleQuestionIds = new Set<ChallengeStyleQuestionId>(challengeStyleQuestions.map((question) => question.id));
@@ -139,6 +140,13 @@ export function normalizeTravelPreferenceSurveyAnswers(value: unknown): Personal
   if (isFourPointScaleValue(value.adventure)) answers.adventure = value.adventure;
   if (typeof value.stamina === "string" && staminaIds.has(value.stamina as StaminaLevel)) answers.stamina = value.stamina as StaminaLevel;
 
+  if (Array.isArray(value.budgetRanking)) {
+    const budgetRanking = [...new Set(value.budgetRanking.filter((category): category is BudgetCategory => (
+      typeof category === "string" && budgetCategoryIds.has(category as BudgetCategory)
+    )))];
+    if (budgetRanking.length) answers.budgetRanking = budgetRanking;
+  }
+
   if (isRecord(value.budgetAllocation)) {
     const source = value.budgetAllocation;
     const budgetAllocation = Object.fromEntries(budgetCategories.map((category) => {
@@ -149,6 +157,9 @@ export function normalizeTravelPreferenceSurveyAnswers(value: unknown): Personal
       return [category.id, amount];
     })) as Record<BudgetCategory, number>;
     answers.budgetAllocation = budgetAllocation;
+    if (!answers.budgetRanking && Object.values(budgetAllocation).reduce((total, amount) => total + amount, 0) === 100) {
+      answers.budgetRanking = deriveBudgetRankingFromAllocation(budgetAllocation);
+    }
   }
 
   if (isFourPointScaleValue(value.landmarkImportance)) answers.landmarkImportance = value.landmarkImportance;
@@ -180,6 +191,25 @@ export function getBudgetTotal(answers: PersonalPreferenceDraftAnswers) {
   return budgetCategories.reduce((total, category) => total + (answers.budgetAllocation?.[category.id] ?? 0), 0);
 }
 
+function deriveBudgetRankingFromAllocation(allocation: Partial<Record<BudgetCategory, number>>) {
+  return budgetCategories
+    .map((category, index) => ({ id: category.id, index, amount: allocation[category.id] ?? 0 }))
+    .sort((left, right) => right.amount - left.amount || left.index - right.index)
+    .map((entry) => entry.id);
+}
+
+export function getBudgetRanking(answers: PersonalPreferenceDraftAnswers) {
+  const ranking = [...new Set((answers.budgetRanking ?? []).filter((category) => budgetCategoryIds.has(category)))];
+  if (ranking.length) return ranking;
+  return getBudgetTotal(answers) === 100
+    ? deriveBudgetRankingFromAllocation(answers.budgetAllocation ?? {})
+    : [];
+}
+
+export function isBudgetRankingComplete(answers: PersonalPreferenceDraftAnswers) {
+  return getBudgetRanking(answers).length === budgetCategories.length;
+}
+
 export function isPreferenceStepComplete(stepId: PreferenceStepId, answers: PersonalPreferenceDraftAnswers) {
   switch (stepId) {
     case "challengeStyle": return isChallengeStyleSurveyComplete(answers) && (isItineraryMessageSurveyComplete(answers) || getFilledItineraryCount(answers) > 0);
@@ -188,7 +218,7 @@ export function isPreferenceStepComplete(stepId: PreferenceStepId, answers: Pers
     case "accommodation": return accommodationAxes.every((axis) => isAccommodationScaleValue(answers.accommodation?.[axis.id]));
     case "adventure": return isFourPointScaleValue(answers.adventure);
     case "stamina": return Boolean(answers.stamina);
-    case "budget": return getBudgetTotal(answers) === 100;
+    case "budget": return isBudgetRankingComplete(answers);
     case "discovery": return isFourPointScaleValue(answers.landmarkImportance) && isFourPointScaleValue(answers.localInterest);
   }
 }
@@ -210,7 +240,7 @@ export function validateTravelPreferenceSurvey(answers: PersonalPreferenceDraftA
     : step.id === "itinerary"
     ? `여행 활동과 일정 밀도 대화에 모두 답해 주세요. 현재 ${getItineraryMessageAnswerCount(answers)} / ${itineraryMessageQuestions.length}개에 답했어요.`
     : step.id === "budget"
-    ? `여행 코인을 100개 모두 배분해 주세요. 현재 ${getBudgetTotal(answers)}개를 배분했어요.`
+    ? `여행 예산의 우선순위를 모두 정해 주세요. 현재 ${getBudgetRanking(answers).length} / ${budgetCategories.length}개를 골랐어요.`
     : `${step.title} 항목의 응답을 완료해 주세요.`;
   return { valid: false, message, firstInvalidStepIndex };
 }
@@ -237,8 +267,8 @@ export function deriveLegacyPreferenceAnswers(answers: PersonalPreferenceDraftAn
     : answers.mobilityModes.some((mode) => drivingModes.includes(mode))
       ? 2
       : answers.mobilityModes.some((mode) => transitModes.includes(mode)) ? 1 : 0;
-  const foodCoins = answers.budgetAllocation?.food ?? 0;
-  const mealScore = foodCoins <= 10 ? 0 : foodCoins >= 30 ? 2 : 1;
+  const foodRank = getBudgetRanking(answers).indexOf("food");
+  const mealScore = foodRank < 0 ? 1 : foodRank === 0 ? 2 : foodRank <= 2 ? 1 : 0;
   const planningScore = answers.adventure === 1 ? 0 : answers.adventure === 4 ? 2 : 1;
 
   return {
@@ -274,11 +304,12 @@ export function formatPreferenceStepAnswer(stepId: PreferenceStepId, answers: Pe
     case "adventure": return scaleText(answers.adventure, 4);
     case "stamina": return staminaOptions.find((option) => option.id === answers.stamina)?.label ?? "미응답";
     case "budget": {
-      const top = [...budgetCategories]
-        .sort((left, right) => (answers.budgetAllocation?.[right.id] ?? 0) - (answers.budgetAllocation?.[left.id] ?? 0))
-        .slice(0, 2)
-        .map((category) => `${category.label} ${answers.budgetAllocation?.[category.id] ?? 0}`);
-      return getBudgetTotal(answers) === 100 ? top.join(" · ") : `${getBudgetTotal(answers)} / 100개 배분`;
+      const ranking = getBudgetRanking(answers);
+      const top = ranking.slice(0, 2).map((categoryId, index) => {
+        const category = budgetCategories.find((entry) => entry.id === categoryId);
+        return `${index + 1}순위 ${category?.label ?? categoryId}`;
+      });
+      return isBudgetRankingComplete(answers) ? top.join(" · ") : `${ranking.length} / ${budgetCategories.length}개 순위 선택`;
     }
     case "discovery": return `명소 ${scaleText(answers.landmarkImportance, 4)} · 로컬 ${scaleText(answers.localInterest, 4)}`;
   }

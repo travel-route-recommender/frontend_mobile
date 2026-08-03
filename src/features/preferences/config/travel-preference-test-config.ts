@@ -20,7 +20,7 @@ export const preferenceSteps: readonly {
   { id: "challengeStyle", title: "여행 메이트와 취향을 맞춰볼까요?", description: "메신저와 여행 현장에 나타나는 여러 장면에서 지금의 나와 가까운 선택을 골라 주세요." },
   { id: "accommodation", title: "오늘 밤 머물 숙소를 골라볼까요?", description: "두 숙소 카드 사이에서 마음이 기우는 정도를 표시해 주세요." },
   { id: "stamina", title: "아직 보고 싶은 곳이 하나 남았어요", description: "아침부터 여행한 지금, 내 실제 체력과 가장 가까운 행동을 골라 주세요." },
-  { id: "budget", title: "여행 코인 100개를 어디에 쓸까요?", description: "더 기억에 남기고 싶은 곳에 코인을 나눠 담아 주세요." },
+  { id: "budget", title: "여행 예산의 우선순위를 정해볼까요?", description: "가장 많이 쓰고 싶은 항목부터 하나씩 골라 순서를 완성해 주세요." },
   { id: "discovery", title: "이번 여행을 완성할 두 장면을 골라볼까요?", description: "대표 명소와 로컬 동네는 반대 선택이 아니에요. 각각 끌리는 정도를 알려 주세요." },
 ];
 
@@ -81,10 +81,10 @@ export const accommodationAxes: readonly { id: AccommodationAxis; icon: string; 
   { id: "comfortPrice", icon: "💳", sceneTitle: "예산과 편안함 사이에서", left: "비싸도 편안한 숙소", right: "실속 있는 합리적 숙소", leftNote: "좋은 침구와 넓은 공간을 우선해요", rightNote: "숙박비를 아껴 다른 경험에 써요", helper: "더 편안한 숙소와 비용 절약 사이의 기준" },
 ];
 
-export const staminaOptions: readonly { id: StaminaLevel; label: string; description: string }[] = [
-  { id: "low", label: "오늘은 여기까지가 좋아", description: "숙소로 돌아가 충분히 쉬어야 내일도 즐거워요" },
-  { id: "medium", label: "잠깐 쉬고 한 곳 더 갈래", description: "카페나 벤치에서 충전하면 저녁 일정도 괜찮아요" },
-  { id: "high", label: "아직 더 둘러볼 수 있어", description: "오래 걷고 여러 곳을 다녀도 에너지가 남는 편이에요" },
+export const staminaOptions: readonly { id: StaminaLevel; label: string; resultLabel: string; description: string }[] = [
+  { id: "low", label: "오늘은 여기까지가 좋아", resultLabel: "낮은 편", description: "숙소로 돌아가 충분히 쉬어야 내일도 즐거워요" },
+  { id: "medium", label: "잠깐 쉬고 한 곳 더 갈래", resultLabel: "보통", description: "카페나 벤치에서 충전하면 저녁 일정도 괜찮아요" },
+  { id: "high", label: "아직 더 둘러볼 수 있어", resultLabel: "높은 편", description: "오래 걷고 여러 곳을 다녀도 에너지가 남는 편이에요" },
 ];
 
 export const budgetCategories: readonly { id: BudgetCategory; icon: string; label: string; parent: string }[] = [

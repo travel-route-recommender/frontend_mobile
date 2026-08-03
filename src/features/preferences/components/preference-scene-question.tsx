@@ -65,7 +65,9 @@ export function PreferenceSceneQuestion<OptionId extends string | number>({
       </View>
 
       <View style={styles.promptCard}>
-        <Text style={styles.promptLabel}>{groupChoice ? "친구들이 당신에게 물어요" : "지금 이 장면에서"}</Text>
+        {presentation.showPromptLabel !== false ? (
+          <Text style={styles.promptLabel}>{groupChoice ? "친구들이 당신에게 물어요" : "지금 이 장면에서"}</Text>
+        ) : null}
         <Text selectable style={styles.prompt}>{message}</Text>
       </View>
 

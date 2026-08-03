@@ -76,6 +76,7 @@ export const challengeStyleQuestions: readonly ChallengeStyleQuestion[] = [
       location: "여행지 광장 · 오후 2:20",
       title: "처음 보는 체험 부스 앞에 섰어요",
       description: "조금 긴장되지만 재미있어 보이는 체험을 친구들과 발견했어요.",
+      showPromptLabel: false,
     },
     message: "여행 중에 조금 두근거리는 체험이 보이면 어때? 짜릿한 것도 꽤 좋아하는 편이야?",
     options: [
@@ -98,6 +99,7 @@ export const challengeStyleQuestions: readonly ChallengeStyleQuestion[] = [
       location: "다음 장소로 이동하는 길",
       title: "계획에 없던 갈림길이 나타났어요",
       description: "원래 경로 옆으로 흥미로워 보이는 길이 이어지고 있어요.",
+      showPromptLabel: false,
     },
     message: "일정에 없더라도 ‘이건 작은 모험인데?’ 싶은 게 보이면 일부러 해보러 가는 편이야?",
     options: [

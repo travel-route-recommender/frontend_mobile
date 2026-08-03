@@ -20,11 +20,11 @@ export function CompatibilityResultScreen() {
   const usersById = useDuriStore((state) => state.usersById);
   const [detailsVisible, setDetailsVisible] = useState(false);
 
-  if (!result) return <Screen><AppHeader title="궁합 테스트 결과" onBack={() => router.back()} /><EmptyState title="아직 계산한 궁합 결과가 없어요" description="함께 여행할 친구를 선택하면 궁합 점수를 확인할 수 있어요." ctaLabel="친구 선택하기" onPress={() => router.replace("/tests/compatibility")} /></Screen>;
+  if (!result) return <Screen><AppHeader title="궁합도 결과" onBack={() => router.back()} /><EmptyState title="아직 계산한 궁합 결과가 없어요" description="함께 여행할 친구를 선택하면 궁합 점수를 확인할 수 있어요." ctaLabel="친구 선택하기" onPress={() => router.replace("/tests/compatibility")} /></Screen>;
   const friendNames = result.friendUserIds.map((friendId) => usersById[friendId]?.name).filter(Boolean).join(", ");
 
   return <Screen testID="compatibility-result">
-    <AppHeader title="궁합 테스트 결과" subtitle={`${friendNames || "선택한 친구"}와의 여행 궁합`} onBack={() => router.replace("/tests/compatibility")} />
+    <AppHeader title="궁합도 결과" subtitle={`${friendNames || "선택한 친구"}와의 여행 궁합`} onBack={() => router.replace("/tests/compatibility")} />
     <Card style={styles.hero}>
       <Text style={styles.sparkle}>✦</Text>
       <Text style={styles.eyebrow}>여행 궁합 점수</Text>

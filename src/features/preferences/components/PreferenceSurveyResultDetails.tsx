@@ -34,8 +34,7 @@ export function PreferenceSurveyResultDetails({ result }: { result: TravelPrefer
   const { answers, challengeStylePreference } = result;
   const itineraryDays = getItineraryDays(answers);
   const hasMessageAnswers = getItineraryMessageAnswerCount(answers) > 0;
-  const stamina = staminaOptions.find((option) => option.id === answers.stamina)?.label ?? "미응답";
-  const maxBudget = Math.max(...budgetCategories.map((category) => answers.budgetAllocation?.[category.id] ?? 0), 1);
+  const stamina = staminaOptions.find((option) => option.id === answers.stamina)?.resultLabel ?? "미응답";
 
   return <View style={styles.sections}>
     <Text style={styles.sectionTitle}>새로운 경험 접근 점수</Text>
@@ -92,10 +91,11 @@ export function PreferenceSurveyResultDetails({ result }: { result: TravelPrefer
       <View style={styles.heading}><Text style={styles.dimension}>로컬 탐방 관심도</Text><Text selectable style={styles.value}>{answers.localInterest ?? 0} / 4</Text></View><ScaleBar value={answers.localInterest} label="로컬 탐방 관심도" max={4} />
     </Card>
 
-    <Text style={styles.sectionTitle}>여행 코인 사용 방향</Text>
-    <Card style={styles.cardGap}>{[...budgetCategories].sort((left, right) => (answers.budgetAllocation?.[right.id] ?? 0) - (answers.budgetAllocation?.[left.id] ?? 0)).map((category) => {
-      const amount = answers.budgetAllocation?.[category.id] ?? 0;
-      return <View key={category.id} style={styles.budgetRow}><Text style={styles.budgetIcon}>{category.icon}</Text><Text style={styles.budgetLabel}>{category.label}</Text><View style={styles.budgetTrack}><View style={[styles.budgetFill, { width: `${(amount / maxBudget) * 100}%` }]} /></View><Text selectable style={styles.budgetAmount}>{amount}</Text></View>;
+    <Text style={styles.sectionTitle}>여행 예산 우선순위</Text>
+    <Card style={styles.cardGap}>{result.spendingPriority.ranking.map((categoryId, index) => {
+      const category = budgetCategories.find((entry) => entry.id === categoryId);
+      if (!category) return null;
+      return <View key={category.id} style={styles.budgetRow}><View style={styles.budgetRank}><Text selectable style={styles.budgetRankText}>{index + 1}</Text></View><Text style={styles.budgetIcon}>{category.icon}</Text><Text selectable style={styles.budgetLabel}>{category.label}</Text><Text style={styles.budgetParent}>{category.parent}</Text></View>;
     })}</Card>
   </View>;
 }
@@ -106,5 +106,5 @@ const styles = StyleSheet.create({
   dayResult: { gap: spacing.xs, borderRadius: radius.md, backgroundColor: colors.surfaceMuted, padding: spacing.sm }, dayTitle: { ...typography.caption, color: colors.primary }, itinerary: { gap: spacing.xs }, itineraryRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm }, time: { width: 42, ...typography.caption, color: colors.textMuted, fontVariant: ["tabular-nums"] }, dot: { width: 8, height: 8, borderRadius: radius.pill, backgroundColor: colors.primary }, itineraryTitle: { ...typography.body, color: colors.text, flex: 1 }, emptyDay: { ...typography.caption, color: colors.textMuted },
   scoreResult: { gap: spacing.xs }, percentTrack: { height: 10, overflow: "hidden", borderRadius: radius.pill, backgroundColor: colors.border }, percentFill: { height: "100%", borderRadius: radius.pill, backgroundColor: colors.primary }, modelNotice: { ...typography.caption, color: colors.textMuted },
   axisResult: { gap: spacing.xs }, axisLabels: { flexDirection: "row", justifyContent: "space-between", gap: spacing.md }, axisLabel: { ...typography.caption, color: colors.text, flex: 1 }, axisLabelRight: { ...typography.caption, color: colors.text, flex: 1, textAlign: "right" }, scale: { flexDirection: "row", gap: spacing.xs }, scaleSegment: { flex: 1, height: 8, borderRadius: radius.pill, backgroundColor: colors.border }, scaleSegmentActive: { backgroundColor: colors.primary }, axisCaption: { ...typography.caption, color: colors.textMuted }, axisCaptionRight: { ...typography.caption, color: colors.textMuted, textAlign: "right" }, divider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border },
-  budgetRow: { flexDirection: "row", alignItems: "center", gap: spacing.xs }, budgetIcon: { fontSize: 20 }, budgetLabel: { width: 42, ...typography.caption, color: colors.text }, budgetTrack: { flex: 1, height: 10, borderRadius: radius.pill, backgroundColor: colors.border, overflow: "hidden" }, budgetFill: { height: "100%", borderRadius: radius.pill, backgroundColor: colors.primary }, budgetAmount: { width: 28, ...typography.caption, color: colors.text, textAlign: "right", fontVariant: ["tabular-nums"] },
+  budgetRow: { minHeight: 42, flexDirection: "row", alignItems: "center", gap: spacing.xs }, budgetRank: { width: 26, height: 26, alignItems: "center", justifyContent: "center", borderRadius: radius.pill, backgroundColor: colors.primarySoft }, budgetRankText: { ...typography.caption, color: colors.primary, fontVariant: ["tabular-nums"] }, budgetIcon: { fontSize: 20 }, budgetLabel: { ...typography.bodyStrong, color: colors.text, flex: 1 }, budgetParent: { ...typography.caption, color: colors.textMuted },
 });
