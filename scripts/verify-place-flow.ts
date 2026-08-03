@@ -7,6 +7,11 @@ import {
   buildTripExploreReturnHref,
   resolveTripExploreContext,
 } from "../src/features/explore/logic/exploreNavigation";
+import {
+  createMapSheetSnapPoints,
+  projectMapSheetHeight,
+  resolveMapSheetPosition,
+} from "../src/features/explore/logic/mapSheetLayout";
 import { canAddPlaceCandidate, canSavePlace } from "../src/features/places/logic/placeCapabilities";
 import { buildPlaceLocationOptions, getPlaceLocationDisplayLabel, getPlaceLocationValue, getPlaceProvinceSortOrder } from "../src/features/places/logic/placeFilterOptions";
 import { enrichPlaceClassificationTags } from "../src/features/places/logic/placeClassification";
@@ -117,5 +122,19 @@ assert(roomExplore && buildTripExploreReturnHref(roomExplore).pathname === "/tri
 assert(workspaceExplore && buildTripExploreReturnHref(workspaceExplore).pathname === "/trips/[tripId]/workspace", "28. 워크스페이스 탐색은 일정표로 복귀해야 한다");
 assert(buildExploreListHref() === "/(tabs)/explore" && roomExplore && typeof buildExploreListHref(roomExplore) === "object", "29. 하단 탐색과 여행방 탐색 목록 route를 분리해야 한다");
 assert(roomExplore && typeof buildExploreMapHref(roomExplore) === "object" && buildPlaceDetailHref("cafe", roomExplore).params.origin === "room", "30. 지도와 장소 상세에 여행방 문맥을 전달해야 한다");
+
+const mapSnapPoints = createMapSheetSnapPoints(720, 160);
+assert(
+  Object.values(mapSnapPoints).join() === "112,360,560",
+  "31. 지도 시트 스냅 지점은 실제 지도 컨테이너 높이에서 계산해야 한다",
+);
+assert(
+  resolveMapSheetPosition(projectMapSheetHeight(360, -120, -1000, mapSnapPoints), mapSnapPoints) === "expanded",
+  "32. 위쪽 플릭은 이동 거리와 속도를 함께 반영해 확장 상태로 스냅해야 한다",
+);
+assert(
+  resolveMapSheetPosition(projectMapSheetHeight(360, 150, 900, mapSnapPoints), mapSnapPoints) === "collapsed",
+  "33. 아래쪽 플릭은 접힌 상태로 스냅해야 한다",
+);
 
 console.log("Place flow verification passed: search, region, classification, sorting, scheduled, and alias assertions");

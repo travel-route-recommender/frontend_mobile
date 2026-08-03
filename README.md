@@ -155,6 +155,8 @@ npm run web
 | `EXPO_PUBLIC_DATA_SOURCE` | `mock`, `api`, `hybrid` | `mock` | `mock`만 전체 로컬 흐름 제공. 나머지는 계약 대기 상태 표시 |
 | `EXPO_PUBLIC_API_BASE_URL` | API base URL | `http://localhost:3000/api/v1` | 향후 API client가 사용할 주소. 현재 endpoint 미구현 |
 | `EXPO_PUBLIC_DURI_ENGINE` | `local`, `server` | `local` | `local` 분석 사용. `server`는 계약 대기 상태 표시 |
+| `EXPO_PUBLIC_KAKAO_MAP_JAVASCRIPT_KEY` | Kakao JavaScript key | 빈 값 | 탐색 지도 WebView에서 Kakao 지도 SDK를 로드 |
+| `EXPO_PUBLIC_KAKAO_MAP_BASE_URL` | Kakao 플랫폼 등록 도메인 | `http://localhost:3000` | WebView inline HTML의 base URL |
 
 기본 예시:
 
@@ -162,6 +164,8 @@ npm run web
 EXPO_PUBLIC_DATA_SOURCE=mock
 EXPO_PUBLIC_API_BASE_URL=http://localhost:3000/api/v1
 EXPO_PUBLIC_DURI_ENGINE=local
+EXPO_PUBLIC_KAKAO_MAP_JAVASCRIPT_KEY=
+EXPO_PUBLIC_KAKAO_MAP_BASE_URL=http://localhost:3000
 ```
 
 `EXPO_PUBLIC_*` 값은 앱 번들에 포함될 수 있으므로 비밀번호, API secret, private key, refresh token을 넣으면 안 됩니다. 환경 변수를 바꾼 뒤에는 Expo 개발 서버를 다시 시작하세요.

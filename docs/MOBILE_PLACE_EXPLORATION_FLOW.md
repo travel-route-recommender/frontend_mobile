@@ -4,7 +4,7 @@
 
 웹 기준의 `Place`, `Region`, `TripCandidate`, `TripRoom`, `ItineraryItem`을 그대로 사용한다. Place 원본은 `placesById`, 지역은 `regionsById`, 개인 저장은 `savedPlaceIdsByUserId[userId]`, 여행 후보는 `candidatesByTripId[tripId]`, 일정 배치는 `itineraryByTripId[tripId]`에서 placeId로 연결한다. 저장과 후보는 서로 다른 관계이며 어느 한쪽의 mutation이 다른 관계를 변경하지 않는다. 카드·후보·일정에 Place 객체 전체를 복제하지 않는다.
 
-현재 Place에는 이름, regionId, imageUrl, category, tags, rating, distanceLabel, address, summary가 있고 좌표나 source는 없다. 따라서 출처, 전화번호, 운영시간, 리뷰 수, 가격, 지도 좌표를 생성하거나 표시하지 않는다.
+현재 Place에는 이름, regionId, imageUrl, category, tags, rating, distanceLabel, address, summary와 백엔드 TourAPI에서 온 latitude/longitude가 있을 수 있다. 좌표가 검증되는 장소만 지도에 표시하고, 좌표가 없으면 임의 marker를 만들지 않는다.
 
 ## 검색·필터·정렬
 
@@ -20,7 +20,11 @@
 
 `ExploreScreen`은 FlatList로 결과를 표시하고 상단에 검색, 활성 여행방, 지역/카테고리, 정렬, 목록/지도 전환을 둔다. `TripHome` 또는 Workspace에서 진입하면 activeTripId와 여행방 regionId를 탐색 초기값으로 설정한다. 사용자는 이후 지역을 바꿀 수 있다.
 
-`react-native-maps`는 설치하지 않았다. 현재 Place 타입에 좌표가 없으므로 임의 marker 좌표를 만들 수 없기 때문이다. `ExploreMapScreen`은 실제 지도가 아님을 명시하는 지역별 장소 보드로 구현했으며 목록과 동일한 검색 모델을 사용한다. 지역별 실제 결과 수, 장소 선택, 상세·저장·후보 CTA를 제공한다. 향후 Place DTO에 검증 가능한 latitude/longitude가 추가되면 `parsePlaceCoordinate`를 통과한 장소만 native marker로 전환한다.
+`react-native-maps` 대신 `react-native-webview` 안에서 Kakao 지도 JavaScript SDK를 로드한다. 탐색 화면은 목록과 동일한 검색/필터 결과 중 `parsePlaceCoordinate`를 통과한 장소만 Kakao marker로 넘기며, marker 선택 시 기존 장소 상세 route로 이어진다.
+
+지도 결과 시트의 `collapsed`, `half`, `expanded` 위치는 실제 지도 컨테이너 높이에서 계산한다. 시트는 최대 높이로 한 번 배치한 뒤 Reanimated shared value 하나로 `translateY`만 변경한다. 카카오 WebView는 화면 전체에 고정하므로 드래그와 스냅 중 크기나 HTML source가 바뀌지 않는다. 스냅이 끝나면 같은 시트 상태에서 계산한 상단 검색 영역과 하단 시트 inset만 WebView bridge로 전달해 marker 중심과 줌 컨트롤 위치를 보정한다.
+
+손잡이 드래그는 이동 거리와 속도를 함께 반영해 가장 가까운 위치로 스냅한다. 손잡이 탭으로도 세 위치를 순환할 수 있으며, 취소된 gesture도 현재 높이에서 가장 가까운 위치로 복구한다.
 
 ## PlaceCard ViewModel과 상세
 
