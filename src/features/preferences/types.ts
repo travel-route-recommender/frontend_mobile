@@ -1,10 +1,41 @@
 import type { UserPreferenceResult } from "../../domain";
 
-export type PreferenceStepId = "itinerary" | "mobility" | "accommodation" | "adventure" | "stamina" | "budget" | "discovery";
+export type PreferenceStepId = "challengeStyle" | "itinerary" | "mobility" | "accommodation" | "adventure" | "stamina" | "budget" | "discovery";
 export type ActivityTagId = "restaurant" | "cafe" | "shopping" | "attraction" | "local" | "experience" | "nature" | "rest";
 export type ItineraryMessageQuestionId = ActivityTagId | "density";
 export type ItineraryPreferenceLevel = "like" | "neutral" | "dislike";
 export type ItineraryMessageAnswers = Partial<Record<ItineraryMessageQuestionId, ItineraryPreferenceLevel>>;
+export type ChallengeStyleQuestionId = "i18" | "i48" | "i22" | "i52" | "i90" | "i120";
+export type FivePointScaleValue = 1 | 2 | 3 | 4 | 5;
+export type ChallengeStyleAnswers = Partial<Record<ChallengeStyleQuestionId, FivePointScaleValue>>;
+export type ChallengeStyleType = "challenge_executor" | "cautious_explorer" | "stable_planner";
+export type ChallengeStylePreference = {
+  questionnaireVersion: string;
+  modelVersion: string;
+  type: ChallengeStyleType;
+  label: string;
+  probabilities: Record<ChallengeStyleType, number>;
+  confidence: number;
+  scores: {
+    opennessToVariety: number;
+    excitementSeeking: number;
+    cautiousness: number;
+    exploration: number;
+  };
+};
+export type ScheduleStyleType = "relaxed" | "packed";
+export type ScheduleStylePreference = {
+  algorithmVersion: number;
+  type: ScheduleStyleType;
+  modifier: "여유로운" | "알찬";
+  label: "여유로운 일정" | "알찬 일정";
+  score: number;
+  components: {
+    density: number;
+    activeRestPreference: number;
+    stamina: number;
+  };
+};
 export type ItineraryHourSlot = "08:00" | "09:00" | "10:00" | "11:00" | "12:00" | "13:00" | "14:00" | "15:00" | "16:00" | "17:00" | "18:00" | "19:00" | "20:00" | "21:00" | "22:00" | "23:00";
 export type ItineraryBlock = { id: string; activityId: ActivityTagId; startSlot: ItineraryHourSlot; durationHours: number };
 export type ItineraryDay = { id: string; blocks: ItineraryBlock[] };
@@ -20,6 +51,7 @@ export type PreferenceDraftOwner =
   | { kind: "user"; userId: string };
 
 export type PersonalPreferenceDraftAnswers = {
+  challengeStyleAnswers?: ChallengeStyleAnswers;
   itineraryMessageAnswers?: ItineraryMessageAnswers;
   itineraryDays?: ItineraryDay[];
   mobilityModes?: MobilityMode[];
@@ -54,6 +86,8 @@ export type TravelPreferenceSurveyResult = {
   algorithmVersion: number;
   completedAt: string;
   answers: PersonalPreferenceDraftAnswers;
+  challengeStylePreference: ChallengeStylePreference;
+  scheduleStylePreference: ScheduleStylePreference;
   itineraryMessagePreference: {
     categoryScores: Record<ActivityTagId, number>;
     densityScore: number;
@@ -80,7 +114,6 @@ export type TravelPreferenceSurveyResult = {
     landmarkImportance: number;
     localInterest: number;
   };
-  transportPreferences: Record<MobilityMode, number>;
   accommodationPreference: {
     stayImportance: number;
     facilityOverLocation: number;

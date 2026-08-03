@@ -7,14 +7,12 @@ import {
   activityBlocks,
   budgetCategories,
   itineraryHourSlots,
-  mobilityOptions,
 } from "../config/travel-preference-test-config";
 import type {
   AccommodationScaleValue,
   ActivityTagId,
   BudgetCategory,
   FourPointScaleValue,
-  MobilityMode,
   PersonalPreferenceDraftAnswers,
   StaminaLevel,
   TravelPreferenceSurveyResult,
@@ -24,8 +22,10 @@ import {
   normalizeTravelPreferenceSurveyAnswers,
   validateTravelPreferenceSurvey,
 } from "./travel-preference-survey";
+import { classifyChallengeStyle } from "./classify-challenge-style";
+import { deriveScheduleStylePreference } from "./derive-schedule-style";
 
-export const TRAVEL_PREFERENCE_ALGORITHM_VERSION = 2;
+export const TRAVEL_PREFERENCE_ALGORITHM_VERSION = 5;
 
 const clampScore = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
 const scaleFourPoint = (value: FourPointScaleValue | undefined) => clampScore((((value ?? 1) - 1) / 3) * 100);
@@ -39,10 +39,6 @@ function staminaLevel(level: StaminaLevel | undefined) {
 
 function buildAllocation(answers: PersonalPreferenceDraftAnswers) {
   return Object.fromEntries(budgetCategories.map((category) => [category.id, answers.budgetAllocation?.[category.id] ?? 0])) as Record<BudgetCategory, number>;
-}
-
-function buildTransportPreferences(answers: PersonalPreferenceDraftAnswers) {
-  return Object.fromEntries(mobilityOptions.map((mode) => [mode.id, answers.mobilityModes?.includes(mode.id) ? 100 : 0])) as Record<MobilityMode, number>;
 }
 
 function buildItineraryMessagePreference(
@@ -94,14 +90,25 @@ export function calculateTravelPreferenceSurveyResult(
   const placeBlocks = blocks.filter((block) => block.activityId !== "rest");
   const landmarkImportance = scaleFourPoint(answers.landmarkImportance);
   const localInterest = scaleFourPoint(answers.localInterest);
-  const challengeScore = scaleFourPoint(answers.adventure);
+  const challengeStylePreference = classifyChallengeStyle(answers.challengeStyleAnswers);
+  const challengeScore = answers.adventure
+    ? scaleFourPoint(answers.adventure)
+    : challengeStylePreference.scores.exploration;
   const allocation = buildAllocation(answers);
+  const staminaPreference = staminaLevel(answers.stamina);
+  const scheduleStylePreference = deriveScheduleStylePreference({
+    densityScore: itineraryMessagePreference.densityScore,
+    restPreferenceScore: itineraryMessagePreference.categoryScores.rest,
+    staminaScore: staminaPreference.score,
+  });
   return {
     userId,
     surveyVersion: PERSONAL_SURVEY_DRAFT_VERSION,
     algorithmVersion: TRAVEL_PREFERENCE_ALGORITHM_VERSION,
     completedAt,
     answers,
+    challengeStylePreference,
+    scheduleStylePreference,
     itineraryMessagePreference,
     scheduleFeatures: {
       dayCount: days.length,
@@ -125,7 +132,6 @@ export function calculateTravelPreferenceSurveyResult(
       landmarkImportance,
       localInterest,
     },
-    transportPreferences: buildTransportPreferences(answers),
     accommodationPreference: {
       stayImportance: scaleEightPoint(answers.accommodation?.stayMeaning),
       facilityOverLocation: scaleEightPoint(answers.accommodation?.locationFacility),
@@ -136,7 +142,7 @@ export function calculateTravelPreferenceSurveyResult(
       score: challengeScore,
       label: challengeScore >= 50 ? "LESS_VALIDATED" : "VALIDATED",
     },
-    staminaPreference: staminaLevel(answers.stamina),
+    staminaPreference,
     spendingAllocation: {
       totalCoins: budgetCategories.reduce((total, category) => total + allocation[category.id], 0),
       allocation,

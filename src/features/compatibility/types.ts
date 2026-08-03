@@ -1,4 +1,4 @@
-export type CompatibilityCategoryId = "schedule" | "mobility" | "accommodation" | "challenge" | "stamina" | "budget" | "discovery";
+export type CompatibilityCategoryId = "schedule" | "accommodation" | "challenge" | "stamina" | "budget" | "discovery";
 
 export type CompatibilityCategoryScore = {
   id: CompatibilityCategoryId;

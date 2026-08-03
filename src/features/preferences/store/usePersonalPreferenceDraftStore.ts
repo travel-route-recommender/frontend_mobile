@@ -10,7 +10,7 @@ import type {
   PreferenceDraftOwner,
 } from "../types";
 
-export const PREFERENCE_DRAFT_STORAGE_VERSION = 6;
+export const PREFERENCE_DRAFT_STORAGE_VERSION = 8;
 export const PREFERENCE_DRAFT_STORAGE_KEY = "duri-personal-preference-draft";
 
 type UnknownRecord = Record<string, unknown>;

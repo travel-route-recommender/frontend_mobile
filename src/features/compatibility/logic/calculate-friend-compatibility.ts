@@ -1,4 +1,4 @@
-import { budgetCategories, mobilityOptions } from "../../preferences/config/travel-preference-test-config";
+import { budgetCategories } from "../../preferences/config/travel-preference-test-config";
 import type { TravelPreferenceSurveyResult } from "../../preferences/types";
 import type {
   CompatibilityCategoryScore,
@@ -6,7 +6,7 @@ import type {
   FriendCompatibilityResult,
 } from "../types";
 
-export const FRIEND_COMPATIBILITY_ALGORITHM_VERSION = 1;
+export const FRIEND_COMPATIBILITY_ALGORITHM_VERSION = 3;
 
 const clampScore = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
 const similarity = (left: number, right: number) => clampScore(100 - Math.abs(left - right));
@@ -18,15 +18,6 @@ export function getCompatibilityType(score: number): CompatibilityType {
   if (score < 60) return { id: "BALANCED_MATCH", label: "적당히 맞춰가는 사이", description: "맞는 부분과 다른 부분이 고르게 있어요. 중요한 일정부터 함께 정하면 좋아요." };
   if (score < 80) return { id: "GOOD_MATCH", label: "꽤 잘 맞는 여행 메이트", description: "대부분의 여행 기준이 잘 맞아요. 몇 가지 차이만 조율하면 편안한 여행이 될 거예요." };
   return { id: "PERFECT_MATCH", label: "찰떡 여행 메이트", description: "여행 속도와 취향이 아주 잘 맞아요. 함께 계획하는 과정도 즐거울 가능성이 높아요." };
-}
-
-function mobilitySimilarity(left: TravelPreferenceSurveyResult, right: TravelPreferenceSurveyResult) {
-  const leftModes = new Set(mobilityOptions.filter((mode) => left.transportPreferences[mode.id] > 0).map((mode) => mode.id));
-  const rightModes = new Set(mobilityOptions.filter((mode) => right.transportPreferences[mode.id] > 0).map((mode) => mode.id));
-  const union = new Set([...leftModes, ...rightModes]);
-  if (!union.size) return 100;
-  const intersection = [...leftModes].filter((mode) => rightModes.has(mode)).length;
-  return clampScore((intersection / union.size) * 100);
 }
 
 function accommodationSimilarity(left: TravelPreferenceSurveyResult, right: TravelPreferenceSurveyResult) {
@@ -51,12 +42,18 @@ function discoverySimilarity(left: TravelPreferenceSurveyResult, right: TravelPr
   ]);
 }
 
+function challengeStyleSimilarity(left: TravelPreferenceSurveyResult, right: TravelPreferenceSurveyResult) {
+  return average([
+    similarity(left.challengeStylePreference.scores.exploration, right.challengeStylePreference.scores.exploration),
+    similarity(left.challengeStylePreference.scores.cautiousness, right.challengeStylePreference.scores.cautiousness),
+  ]);
+}
+
 function comparePair(left: TravelPreferenceSurveyResult, right: TravelPreferenceSurveyResult) {
   return {
-    schedule: similarity(left.scheduleFeatures.densityScore, right.scheduleFeatures.densityScore),
-    mobility: mobilitySimilarity(left, right),
+    schedule: similarity(left.scheduleStylePreference.score, right.scheduleStylePreference.score),
     accommodation: accommodationSimilarity(left, right),
-    challenge: similarity(left.challengePreference.score, right.challengePreference.score),
+    challenge: challengeStyleSimilarity(left, right),
     stamina: similarity(left.staminaPreference.score, right.staminaPreference.score),
     budget: budgetSimilarity(left, right),
     discovery: discoverySimilarity(left, right),
@@ -64,10 +61,9 @@ function comparePair(left: TravelPreferenceSurveyResult, right: TravelPreference
 }
 
 const categoryPresentation: Record<keyof ReturnType<typeof comparePair>, { label: string; description: string }> = {
-  schedule: { label: "일정 밀도", description: "하루를 채우는 속도와 자유시간 선호" },
-  mobility: { label: "이동 방식", description: "함께 이용하고 싶은 교통수단의 공통점" },
+  schedule: { label: "일정 밀도", description: "일정 밀도·휴식 선호·체력을 합친 여행 속도" },
   accommodation: { label: "숙소 스타일", description: "숙소 경험·위치·시설·가격 기준" },
-  challenge: { label: "도전 성향", description: "검증된 장소와 새로운 장소 사이의 선택" },
+  challenge: { label: "새로운 경험 접근", description: "탐색 욕구와 결정 전 신중성의 공통점" },
   stamina: { label: "체력 수준", description: "걷기와 활동량을 소화하는 정도" },
   budget: { label: "예산 소비", description: "숙소·맛집·체험·쇼핑·이동의 투자 방향" },
   discovery: { label: "여행지 탐색", description: "유명 명소와 로컬 경험에 대한 관심" },

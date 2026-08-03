@@ -10,7 +10,7 @@ import type {
   StaminaLevel,
 } from "../types";
 
-export const PERSONAL_SURVEY_DRAFT_VERSION = 6;
+export const PERSONAL_SURVEY_DRAFT_VERSION = 8;
 
 export const preferenceSteps: readonly {
   id: PreferenceStepId;
@@ -18,13 +18,12 @@ export const preferenceSteps: readonly {
   title: string;
   description: string;
 }[] = [
-  { id: "itinerary", eyebrow: "여행 활동과 일정 밀도", title: "여행 동반자와 9개의 대화를 나눠보세요", description: "하고 싶은 활동 8가지와 하루 일정의 빡빡한 정도를 자연스러운 답장으로 알려 주세요." },
-  { id: "mobility", eyebrow: "이동 방식", title: "여행지에서 이용하고 싶은 이동 방식은 무엇인가요?", description: "자차와 대중교통을 열어 세부 수단을 고를 수 있어요. 필요한 수단을 모두 선택해 주세요." },
-  { id: "accommodation", eyebrow: "숙소 스타일", title: "숙소를 고를 때 어느 쪽에 더 마음이 가나요?", description: "가운데 선택지가 없는 8단계 중 각 기준에서 지금의 취향과 가까운 지점을 선택해 주세요." },
-  { id: "adventure", eyebrow: "도전 성향", title: "새로운 장소를 선택할 때 나는 어떤 편인가요?", description: "리뷰가 충분한 검증된 장소와 새롭게 알려지는 장소 사이에서 가까운 쪽을 골라 주세요." },
-  { id: "stamina", eyebrow: "체력 수준", title: "여행할 때의 체력 수준을 알려 주세요", description: "스스로 느끼는 체력을 바탕으로 추천 일정의 활동 강도와 휴식 간격을 조절할 수 있어요." },
-  { id: "budget", eyebrow: "예산 소비 방향", title: "여행 코인 100개를 나눠보세요", description: "여행에서 더 투자하고 싶은 분야에 코인을 배분해 주세요. 합계가 100개가 되면 완료돼요." },
-  { id: "discovery", eyebrow: "여행지 탐색", title: "명소와 로컬 경험에 대한 마음을 각각 알려 주세요", description: "둘 중 하나만 고르지 않아도 돼요. 두 기준을 각각 4단계로 측정해요." },
+  { id: "challengeStyle", eyebrow: "CHAPTER 1–3 · 계획표 밖의 선택", title: "계획표 밖에서 만나는 진짜 여행 성향", description: "예상하지 못한 여섯 장면에서 지금의 나와 가까운 답장을 골라 주세요." },
+  { id: "itinerary", eyebrow: "CHAPTER 4 · 오늘의 여행 가방", title: "이번 여행에는 어떤 장면을 담아볼까요?", description: "하고 싶은 활동 8가지와 하루의 속도를 여행 메이트와 맞춰봐요." },
+  { id: "accommodation", eyebrow: "CHAPTER 5 · 체크인할 시간", title: "오늘 밤 머물 숙소를 골라볼까요?", description: "두 숙소 카드 사이에서 마음이 기우는 정도를 표시해 주세요." },
+  { id: "stamina", eyebrow: "CHAPTER 6 · 오후 5시의 배터리", title: "아직 보고 싶은 곳이 하나 남았어요", description: "아침부터 여행한 지금, 내 실제 체력과 가장 가까운 행동을 골라 주세요." },
+  { id: "budget", eyebrow: "CHAPTER 7 · 여행 지갑", title: "여행 코인 100개를 어디에 쓸까요?", description: "더 기억에 남기고 싶은 곳에 코인을 나눠 담아 주세요." },
+  { id: "discovery", eyebrow: "CHAPTER 8 · 마지막 두 장면", title: "이번 여행을 완성할 두 장면을 골라볼까요?", description: "대표 명소와 로컬 동네는 반대 선택이 아니에요. 각각 끌리는 정도를 알려 주세요." },
 ];
 
 export const activityBlocks: readonly { id: ActivityTagId; icon: string; label: string; color: string; softColor: string }[] = [
@@ -78,16 +77,16 @@ export const mobilityOptions: readonly { id: MobilityMode; icon: string; label: 
 export const accommodationScaleValues: readonly AccommodationScaleValue[] = [1, 2, 3, 4, 5, 6, 7, 8];
 export const fourPointScaleValues: readonly FourPointScaleValue[] = [1, 2, 3, 4];
 
-export const accommodationAxes: readonly { id: AccommodationAxis; left: string; right: string; helper: string }[] = [
-  { id: "stayMeaning", left: "잠만 자는 곳", right: "여행의 일부", helper: "숙소 자체의 경험을 얼마나 중요하게 보는지" },
-  { id: "locationFacility", left: "좋은 위치", right: "좋은 시설", helper: "동선의 편리함과 숙소 시설 중 더 끌리는 쪽" },
-  { id: "comfortPrice", left: "편안함", right: "합리적 가격", helper: "더 편안한 숙소와 비용 절약 사이의 기준" },
+export const accommodationAxes: readonly { id: AccommodationAxis; icon: string; sceneTitle: string; left: string; right: string; leftNote: string; rightNote: string; helper: string }[] = [
+  { id: "stayMeaning", icon: "🗝️", sceneTitle: "숙소 문을 열었어요", left: "잠만 편히 자면 충분해", right: "머무는 시간도 여행이야", leftNote: "동선과 잠자리가 기본이면 좋아요", rightNote: "공간의 분위기와 경험도 중요해요", helper: "숙소 자체의 경험을 얼마나 중요하게 보는지" },
+  { id: "locationFacility", icon: "🗺️", sceneTitle: "두 숙소가 마지막까지 남았어요", left: "작아도 이동이 편한 숙소", right: "조금 멀어도 시설 좋은 숙소", leftNote: "주요 장소와 가까워 시간을 아껴요", rightNote: "수영장·라운지 등 머무는 즐거움이 있어요", helper: "동선의 편리함과 숙소 시설 중 더 끌리는 쪽" },
+  { id: "comfortPrice", icon: "💳", sceneTitle: "예산과 편안함 사이에서", left: "비싸도 편안한 숙소", right: "실속 있는 합리적 숙소", leftNote: "좋은 침구와 넓은 공간을 우선해요", rightNote: "숙박비를 아껴 다른 경험에 써요", helper: "더 편안한 숙소와 비용 절약 사이의 기준" },
 ];
 
 export const staminaOptions: readonly { id: StaminaLevel; label: string; description: string }[] = [
-  { id: "low", label: "낮음", description: "중간중간 긴 휴식이 필요해요" },
-  { id: "medium", label: "보통", description: "관광과 휴식을 적당히 섞으면 좋아요" },
-  { id: "high", label: "좋음", description: "오래 걷거나 여러 일정을 소화할 수 있어요" },
+  { id: "low", label: "오늘은 여기까지가 좋아", description: "숙소로 돌아가 충분히 쉬어야 내일도 즐거워요" },
+  { id: "medium", label: "잠깐 쉬고 한 곳 더 갈래", description: "카페나 벤치에서 충전하면 저녁 일정도 괜찮아요" },
+  { id: "high", label: "아직 더 둘러볼 수 있어", description: "오래 걷고 여러 곳을 다녀도 에너지가 남는 편이에요" },
 ];
 
 export const budgetCategories: readonly { id: BudgetCategory; icon: string; label: string; parent: string }[] = [
@@ -96,6 +95,18 @@ export const budgetCategories: readonly { id: BudgetCategory; icon: string; labe
   { id: "activity", icon: "🎟️", label: "체험", parent: "즐길 거리" },
   { id: "shopping", icon: "🛍️", label: "쇼핑", parent: "기념과 소비" },
   { id: "mobility", icon: "🚕", label: "이동", parent: "편한 동선" },
+];
+
+export const discoveryScenes: readonly {
+  id: "landmarkImportance" | "localInterest";
+  icon: string;
+  sceneTitle: string;
+  description: string;
+  left: string;
+  right: string;
+}[] = [
+  { id: "landmarkImportance", icon: "🏛️", sceneTitle: "도시의 대표 장면", description: "사진에서 보던 대표 명소가 가까이에 있어요. 이번 여행에 꼭 담고 싶은가요?", left: "시간이 맞으면", right: "꼭 담고 싶어" },
+  { id: "localInterest", icon: "🪴", sceneTitle: "관광지 뒤편의 동네", description: "현지인의 일상이 보이는 시장과 골목이 있어요. 얼마나 궁금한가요?", left: "가볍게 궁금해", right: "깊이 걸어보고 싶어" },
 ];
 
 export const preferenceStepLabels: Record<PreferenceStepId, string> = Object.fromEntries(

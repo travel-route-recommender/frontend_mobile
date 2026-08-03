@@ -62,7 +62,7 @@ export function PersonalTestScreen() {
   if (!step) return <Screen><ErrorState message="현재 항목을 찾을 수 없어요. 테스트를 처음부터 다시 시작해 주세요." onRetry={() => startTest(owner)} /></Screen>;
   const isLast = draft.currentQuestionIndex === preferenceSteps.length - 1;
   const stepComplete = isPreferenceStepComplete(step.id, draft.answers);
-  const isMessageStep = step.id === "itinerary";
+  const isMessageStep = step.id === "challengeStyle" || step.id === "itinerary";
 
   const restart = () => { startTest(owner); setResumeAccepted(true); setRestartVisible(false); };
   const moveNext = () => {
@@ -110,7 +110,7 @@ export function PersonalTestScreen() {
     <View style={styles.navigation}>
       {!editingFromReview ? <SecondaryButton label="이전" disabled={draft.currentQuestionIndex === 0} onPress={goPrevious} /> : null}
       <PrimaryButton label={editingFromReview ? "답변 검토로 돌아가기" : isLast ? "답변 확인" : "다음"} disabled={!stepComplete} onPress={moveNext} />
-      {!stepComplete ? <Text style={styles.completionHint}>{isMessageStep ? "9개의 대화 질문에 모두 답하면 다음 항목으로 이동할 수 있어요." : "이 항목의 응답을 완료하면 다음으로 이동할 수 있어요."}</Text> : null}
+      {!stepComplete ? <Text style={styles.completionHint}>{step.id === "challengeStyle" ? "여행 메이트의 6개 질문에 답하면 다음 장면으로 넘어갈 수 있어요." : step.id === "itinerary" ? "여행 가방의 9개 장면에 답하면 체크인하러 갈 수 있어요." : "이 장면의 선택을 마치면 다음 이야기로 이동할 수 있어요."}</Text> : null}
     </View>
     <PreferenceExitModal visible={exitVisible} onExit={exitTest} onContinue={() => setExitVisible(false)} />
   </Screen>;

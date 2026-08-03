@@ -1,4 +1,5 @@
 import type { PersonalPreferenceAnswers, PreferenceScore } from "../../../domain";
+import { challengeStyleQuestions } from "../config/challenge-style-questions";
 import { itineraryMessageQuestions } from "../config/itinerary-message-questions";
 import {
   accommodationAxes,
@@ -13,6 +14,8 @@ import type {
   AccommodationScaleValue,
   ActivityTagId,
   BudgetCategory,
+  ChallengeStyleQuestionId,
+  FivePointScaleValue,
   FourPointScaleValue,
   ItineraryBlock,
   ItineraryDay,
@@ -29,12 +32,14 @@ type UnknownRecord = Record<string, unknown>;
 const isRecord = (value: unknown): value is UnknownRecord => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const isAccommodationScaleValue = (value: unknown): value is AccommodationScaleValue => typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 8;
 const isFourPointScaleValue = (value: unknown): value is FourPointScaleValue => value === 1 || value === 2 || value === 3 || value === 4;
+const isFivePointScaleValue = (value: unknown): value is FivePointScaleValue => value === 1 || value === 2 || value === 3 || value === 4 || value === 5;
 const activityIds = new Set<ActivityTagId>(activityBlocks.map((block) => block.id));
 const itineraryHourIds = new Set<ItineraryHourSlot>(itineraryHourSlots);
 const mobilityIds = new Set<MobilityMode>(mobilityOptions.map((option) => option.id));
 const staminaIds = new Set<StaminaLevel>(staminaOptions.map((option) => option.id));
 const itineraryMessageQuestionIds = new Set(itineraryMessageQuestions.map((question) => question.id));
 const itineraryPreferenceLevels = new Set<ItineraryPreferenceLevel>(["like", "neutral", "dislike"]);
+const challengeStyleQuestionIds = new Set<ChallengeStyleQuestionId>(challengeStyleQuestions.map((question) => question.id));
 
 export function createEmptyItineraryDay(index: number): ItineraryDay {
   return { id: `day-${index}`, blocks: [] };
@@ -64,6 +69,16 @@ export function canPlaceItineraryBlock(day: ItineraryDay, startIndex: number, du
 export function normalizeTravelPreferenceSurveyAnswers(value: unknown): PersonalPreferenceDraftAnswers {
   if (!isRecord(value)) return {};
   const answers: PersonalPreferenceDraftAnswers = {};
+
+  if (isRecord(value.challengeStyleAnswers)) {
+    const challengeStyleAnswers = Object.fromEntries(
+      Object.entries(value.challengeStyleAnswers).filter(([questionId, response]) => (
+        challengeStyleQuestionIds.has(questionId as ChallengeStyleQuestionId)
+        && isFivePointScaleValue(response)
+      )),
+    ) as Partial<Record<ChallengeStyleQuestionId, FivePointScaleValue>>;
+    if (Object.keys(challengeStyleAnswers).length) answers.challengeStyleAnswers = challengeStyleAnswers;
+  }
 
   if (Array.isArray(value.itineraryDays)) {
     const seenIds = new Set<string>();
@@ -149,6 +164,14 @@ export function getItineraryMessageAnswerCount(answers: PersonalPreferenceDraftA
   return itineraryMessageQuestions.filter((question) => answers.itineraryMessageAnswers?.[question.id]).length;
 }
 
+export function getChallengeStyleAnswerCount(answers: PersonalPreferenceDraftAnswers) {
+  return challengeStyleQuestions.filter((question) => answers.challengeStyleAnswers?.[question.id]).length;
+}
+
+export function isChallengeStyleSurveyComplete(answers: PersonalPreferenceDraftAnswers) {
+  return getChallengeStyleAnswerCount(answers) === challengeStyleQuestions.length;
+}
+
 export function isItineraryMessageSurveyComplete(answers: PersonalPreferenceDraftAnswers) {
   return getItineraryMessageAnswerCount(answers) === itineraryMessageQuestions.length;
 }
@@ -159,6 +182,7 @@ export function getBudgetTotal(answers: PersonalPreferenceDraftAnswers) {
 
 export function isPreferenceStepComplete(stepId: PreferenceStepId, answers: PersonalPreferenceDraftAnswers) {
   switch (stepId) {
+    case "challengeStyle": return isChallengeStyleSurveyComplete(answers);
     case "itinerary": return isItineraryMessageSurveyComplete(answers) || getFilledItineraryCount(answers) > 0;
     case "mobility": return Boolean(answers.mobilityModes?.length);
     case "accommodation": return accommodationAxes.every((axis) => isAccommodationScaleValue(answers.accommodation?.[axis.id]));
@@ -181,7 +205,9 @@ export function validateTravelPreferenceSurvey(answers: PersonalPreferenceDraftA
   const firstInvalidStepIndex = preferenceSteps.findIndex((step) => !isPreferenceStepComplete(step.id, answers));
   if (firstInvalidStepIndex < 0) return { valid: true, answers };
   const step = preferenceSteps[firstInvalidStepIndex];
-  const message = step.id === "itinerary"
+  const message = step.id === "challengeStyle"
+    ? `여행 메이트의 가벼운 질문에 모두 답해 주세요. 현재 ${getChallengeStyleAnswerCount(answers)} / ${challengeStyleQuestions.length}개에 답했어요.`
+    : step.id === "itinerary"
     ? `여행 활동과 일정 밀도 대화에 모두 답해 주세요. 현재 ${getItineraryMessageAnswerCount(answers)} / ${itineraryMessageQuestions.length}개에 답했어요.`
     : step.id === "budget"
     ? `여행 코인을 100개 모두 배분해 주세요. 현재 ${getBudgetTotal(answers)}개를 배분했어요.`
@@ -206,9 +232,11 @@ export function deriveLegacyPreferenceAnswers(answers: PersonalPreferenceDraftAn
   const staminaScore = answers.stamina === "low" ? 0 : answers.stamina === "high" ? 2 : 1;
   const drivingModes: MobilityMode[] = ["ownCar", "rentalCar"];
   const transitModes: MobilityMode[] = ["bus", "subway", "train", "taxi"];
-  const mobilityScore = answers.mobilityModes?.some((mode) => drivingModes.includes(mode))
-    ? 2
-    : answers.mobilityModes?.some((mode) => transitModes.includes(mode)) ? 1 : 0;
+  const mobilityScore = !answers.mobilityModes?.length
+    ? 1
+    : answers.mobilityModes.some((mode) => drivingModes.includes(mode))
+      ? 2
+      : answers.mobilityModes.some((mode) => transitModes.includes(mode)) ? 1 : 0;
   const foodCoins = answers.budgetAllocation?.food ?? 0;
   const mealScore = foodCoins <= 10 ? 0 : foodCoins >= 30 ? 2 : 1;
   const planningScore = answers.adventure === 1 ? 0 : answers.adventure === 4 ? 2 : 1;
@@ -227,6 +255,7 @@ const scaleText = (value: number | undefined, max: number) => value ? `${value} 
 
 export function formatPreferenceStepAnswer(stepId: PreferenceStepId, answers: PersonalPreferenceDraftAnswers) {
   switch (stepId) {
+    case "challengeStyle": return `${getChallengeStyleAnswerCount(answers)} / ${challengeStyleQuestions.length}개 대화 응답`;
     case "itinerary": {
       const messageAnswerCount = getItineraryMessageAnswerCount(answers);
       return messageAnswerCount

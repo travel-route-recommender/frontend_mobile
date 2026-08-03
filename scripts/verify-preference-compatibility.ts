@@ -4,7 +4,10 @@ import {
   calculateLegacyPreferenceProjection,
   calculateTravelPreferenceSurveyResult,
 } from "../src/features/preferences/logic/calculate-travel-preference-result";
+import { challengeStyleQuestions } from "../src/features/preferences/config/challenge-style-questions";
 import { itineraryMessageQuestions } from "../src/features/preferences/config/itinerary-message-questions";
+import { preferenceSteps } from "../src/features/preferences/config/travel-preference-test-config";
+import { deriveScheduleStylePreference } from "../src/features/preferences/logic/derive-schedule-style";
 import { isPreferenceStepComplete } from "../src/features/preferences/logic/travel-preference-survey";
 import type { ItineraryMessageAnswers } from "../src/features/preferences/types";
 import {
@@ -27,7 +30,7 @@ assert(
     && MOCK_FRIEND_IDS.length === 4
     && mockFriendProfiles["user-jiyoon"].name === "윤지"
     && mockFriendProfiles["user-minjae"].name === "민석",
-  "1. 윤지·민석·현호·수현의 프로필과 7단계 결과가 준비되어야 한다",
+  "1. 윤지·민석·현호·수현의 프로필과 상세 결과가 준비되어야 한다",
 );
 assert(soomin.spendingAllocation.totalCoins === 100, "2. 예산 합계는 100이어야 한다");
 assert(soomin.scheduleFeatures.scheduledMinutes === 300, "3. 일정 블록 시간이 분 단위 특징값으로 계산되어야 한다");
@@ -44,7 +47,13 @@ const identical = calculateFriendCompatibility(soomin, [{ ...soomin, userId: "id
 assert(identical.score === 100 && identical.categories.every((category) => category.score === 100), "9. 동일한 성향은 전체와 모든 카테고리에서 100점이어야 한다");
 
 const oneFriend = calculateFriendCompatibility(soomin, [yunji], "2026-07-22T00:00:00.000Z");
-assert(oneFriend.score >= 0 && oneFriend.score <= 100 && oneFriend.categories.length === 7, "10. 한 명 궁합은 7개 카테고리와 0~100 점수를 반환해야 한다");
+assert(
+  oneFriend.score >= 0
+    && oneFriend.score <= 100
+    && oneFriend.categories.length === 6
+    && !oneFriend.categories.map((category) => String(category.id)).includes("mobility"),
+  "10. 한 명 궁합은 이동수단을 제외한 6개 카테고리와 0~100 점수를 반환해야 한다",
+);
 const group = calculateFriendCompatibility(soomin, [yunji, minseok], "2026-07-22T00:00:00.000Z");
 assert(group.friendUserIds.length === 2 && group.score >= 0 && group.score <= 100, "11. 여러 친구는 하나의 그룹 평균 결과를 반환해야 한다");
 
@@ -86,4 +95,42 @@ assert(
   "21. 대화 응답은 일정 블록을 만들지 않고 카테고리와 밀도 점수로 계산되어야 한다",
 );
 
-console.log("Preference and compatibility verification passed: 21 assertions");
+assert(
+  challengeStyleQuestions.length === 6
+    && new Set(challengeStyleQuestions.map((question) => question.id)).size === 6
+    && challengeStyleQuestions.every((question) => question.options.length === 5)
+    && challengeStyleQuestions.every((question) => question.options.map((option) => option.id).join(",") === "1,2,3,4,5")
+    && new Set(challengeStyleQuestions.map((question) => question.options)).size === 6
+    && challengeStyleQuestions.filter((question) => question.modelDirection === "reverse").length === 3,
+  "22. 도전·안정 모델에는 문항별 답장이 있는 고유한 6개 문항, 순서가 보존된 5점 척도, 3개 역채점 문항이 있어야 한다",
+);
+assert(
+  isPreferenceStepComplete("challengeStyle", soomin.answers)
+    && ["challenge_executor", "cautious_explorer", "stable_planner"].includes(soomin.challengeStylePreference.type)
+    && soomin.challengeStylePreference.modelVersion === "challenge-style-dt-v1",
+  "23. 6개 응답은 앱 모델의 세 유형 중 하나와 모델 버전을 생성해야 한다",
+);
+assert(
+  deriveScheduleStylePreference({ densityScore: 0, restPreferenceScore: 100, staminaScore: 0 }).modifier === "여유로운"
+    && deriveScheduleStylePreference({ densityScore: 100, restPreferenceScore: 0, staminaScore: 100 }).modifier === "알찬",
+  "24. 일정 밀도·휴식·체력의 양 극단은 여유로운·알찬 일정으로 구분되어야 한다",
+);
+assert(
+  ["여유로운", "알찬"].includes(soomin.scheduleStylePreference.modifier)
+    && soomin.scheduleStylePreference.score >= 0
+    && soomin.scheduleStylePreference.score <= 100,
+  "25. 완료 결과에는 이진 일정 수식어와 0~100점 일정 속도가 포함되어야 한다",
+);
+assert(
+  preferenceSteps.map((step) => step.id).join(",") === "challengeStyle,itinerary,accommodation,stamina,budget,discovery"
+    && !preferenceSteps.some((step) => step.id === "mobility" || step.id === "adventure"),
+  "26. 스토리 테스트는 이동수단과 중복 도전 문항 없이 6개 챕터로 이어져야 한다",
+);
+const withoutLegacyAdventure = { ...soomin.answers, adventure: undefined };
+const derivedChallengeResult = calculateTravelPreferenceSurveyResult("derived-challenge", withoutLegacyAdventure, "2026-08-03T00:00:00.000Z");
+assert(
+  derivedChallengeResult.challengePreference.score === derivedChallengeResult.challengeStylePreference.scores.exploration,
+  "27. 예전 도전 문항이 없으면 6문항 모델의 탐색 점수로 호환 필드를 채워야 한다",
+);
+
+console.log("Preference and compatibility verification passed: 27 assertions");

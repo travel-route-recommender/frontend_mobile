@@ -5,6 +5,7 @@ const fixtures: Record<string, { completedAt: string; answers: PersonalPreferenc
   "user-soomin": {
     completedAt: "2026-07-01T09:00:00.000Z",
     answers: {
+      challengeStyleAnswers: { i18: 5, i48: 1, i22: 3, i52: 3, i90: 1, i120: 1 },
       itineraryDays: [{ id: "day-1", blocks: [
         { id: "soomin-1", activityId: "cafe", startSlot: "10:00", durationHours: 2 },
         { id: "soomin-2", activityId: "local", startSlot: "14:00", durationHours: 2 },
@@ -22,6 +23,7 @@ const fixtures: Record<string, { completedAt: string; answers: PersonalPreferenc
   "user-jiyoon": {
     completedAt: "2026-07-02T09:00:00.000Z",
     answers: {
+      challengeStyleAnswers: { i18: 5, i48: 1, i22: 3, i52: 3, i90: 1, i120: 1 },
       itineraryDays: [{ id: "day-1", blocks: [
         { id: "jiyoon-1", activityId: "cafe", startSlot: "09:00", durationHours: 2 },
         { id: "jiyoon-2", activityId: "local", startSlot: "13:00", durationHours: 2 },
@@ -39,6 +41,7 @@ const fixtures: Record<string, { completedAt: string; answers: PersonalPreferenc
   "user-minjae": {
     completedAt: "2026-07-03T09:00:00.000Z",
     answers: {
+      challengeStyleAnswers: { i18: 2, i48: 4, i22: 2, i52: 2, i90: 1, i120: 1 },
       itineraryDays: [{ id: "day-1", blocks: [
         { id: "minjae-1", activityId: "attraction", startSlot: "08:00", durationHours: 3 },
         { id: "minjae-2", activityId: "experience", startSlot: "12:00", durationHours: 3 },
@@ -57,6 +60,7 @@ const fixtures: Record<string, { completedAt: string; answers: PersonalPreferenc
   "user-hyunho": {
     completedAt: "2026-07-04T09:00:00.000Z",
     answers: {
+      challengeStyleAnswers: { i18: 5, i48: 1, i22: 5, i52: 5, i90: 5, i120: 5 },
       itineraryDays: [{ id: "day-1", blocks: [
         { id: "hyunho-1", activityId: "nature", startSlot: "08:00", durationHours: 2 },
         { id: "hyunho-2", activityId: "experience", startSlot: "11:00", durationHours: 3 },
@@ -75,6 +79,7 @@ const fixtures: Record<string, { completedAt: string; answers: PersonalPreferenc
   "user-suhyeon": {
     completedAt: "2026-07-05T09:00:00.000Z",
     answers: {
+      challengeStyleAnswers: { i18: 2, i48: 5, i22: 2, i52: 2, i90: 1, i120: 1 },
       itineraryDays: [{ id: "day-1", blocks: [
         { id: "suhyeon-1", activityId: "restaurant", startSlot: "10:00", durationHours: 2 },
         { id: "suhyeon-2", activityId: "cafe", startSlot: "13:00", durationHours: 2 },

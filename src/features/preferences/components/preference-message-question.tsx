@@ -1,18 +1,24 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
-import type { ItineraryMessageQuestion } from "../config/itinerary-message-questions";
-import type { ItineraryPreferenceLevel } from "../types";
+import type { PreferenceMessageOption } from "../config/itinerary-message-questions";
 
-type Props = Omit<ItineraryMessageQuestion, "id"> & {
+type Props<OptionId extends string | number> = {
+  senderName: string;
+  senderStatus: string;
+  message: string;
+  options: readonly PreferenceMessageOption<OptionId>[];
+  categoryIcon: string;
+  categoryLabel: string;
   current: number;
   total: number;
-  selectedOptionId?: ItineraryPreferenceLevel;
-  onSelect: (optionId: ItineraryPreferenceLevel) => void;
+  selectedOptionId?: OptionId;
+  onSelect: (optionId: OptionId) => void;
   onPrevious?: () => void;
   onNext?: () => void;
+  completionMessage?: string;
 };
 
-export function PreferenceMessageQuestion({
+export function PreferenceMessageQuestion<OptionId extends string | number>({
   senderName,
   senderStatus,
   message,
@@ -25,7 +31,8 @@ export function PreferenceMessageQuestion({
   onSelect,
   onPrevious,
   onNext,
-}: Props) {
+  completionMessage,
+}: Props<OptionId>) {
   const selectedOption = options.find((option) => option.id === selectedOptionId);
   const senderInitial = senderName.trim().slice(0, 1) || "?";
 
@@ -139,7 +146,7 @@ export function PreferenceMessageQuestion({
         </View>
         {selectedOption && !onNext ? (
           <Text accessibilityLiveRegion="polite" style={styles.completedHelper}>
-            9개의 대화에 모두 답했어요. 아래의 ‘다음’을 눌러 계속해 주세요.
+            {completionMessage ?? `${total}개의 대화에 모두 답했어요. 아래의 ‘다음’을 눌러 계속해 주세요.`}
           </Text>
         ) : null}
       </View>

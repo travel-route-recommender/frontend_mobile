@@ -1,19 +1,27 @@
 import { StyleSheet, Text, View } from "react-native";
 import { Card, Chip } from "../../../components/common";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
-import { getPreferenceTypePresentation } from "../logic/formatPreferenceResult";
-import type { PreferencePreviewResult } from "../types";
+import {
+  getChallengeStylePresentation,
+  getPreferenceTypePresentation,
+} from "../logic/formatPreferenceResult";
+import type { ChallengeStylePreference, PreferencePreviewResult, ScheduleStylePreference } from "../types";
 
-export function PreferenceResultSummary({ result, userName, anonymous = false }: { result: PreferencePreviewResult; userName?: string; anonymous?: boolean }) {
-  const presentation = getPreferenceTypePresentation(result.profileType);
+export function PreferenceResultSummary({ result, challengeStyle, scheduleStyle, userName, anonymous = false }: { result: PreferencePreviewResult; challengeStyle?: ChallengeStylePreference; scheduleStyle?: ScheduleStylePreference; userName?: string; anonymous?: boolean }) {
+  const legacyPresentation = getPreferenceTypePresentation(result.profileType);
+  const challengePresentation = challengeStyle ? getChallengeStylePresentation(challengeStyle.type) : null;
+  const presentation = challengePresentation ?? legacyPresentation;
+  const title = scheduleStyle ? `${scheduleStyle.modifier} ${presentation.title}` : presentation.title;
+  const traits = challengePresentation?.traits ?? result.traits;
   return <>
     <Card style={styles.hero}>
       <Text style={styles.icon}>{presentation.icon}</Text>
       <Text style={styles.eyebrow}>두리 테스트 결과</Text>
       <Text style={styles.name}>{userName || "여행자"}님은</Text>
-      <Text style={styles.title}>“{presentation.title}”예요</Text>
+      <Text selectable style={styles.title}>“{title}”예요</Text>
       <Text style={styles.description}>{presentation.description}</Text>
-      <View accessibilityLabel={`주요 성향: ${result.traits.join(", ")}`} style={styles.traits}>{result.traits.map((trait) => <Chip key={trait} label={trait} selected />)}</View>
+      {challengeStyle ? <Text selectable style={styles.modelMeta}>분류 확률 {Math.round(challengeStyle.confidence * 100)}% · {challengeStyle.modelVersion}</Text> : null}
+      <View accessibilityLabel={`주요 성향: ${traits.join(", ")}`} style={styles.traits}>{traits.map((trait) => <Chip key={trait} label={trait} selected />)}</View>
     </Card>
     <Card style={styles.insight}>
       <Text style={styles.insightTitle}>여행할 때 중요하게 여기는 요소</Text>
@@ -29,6 +37,7 @@ const styles = StyleSheet.create({
   icon: { fontSize: 42 }, eyebrow: { ...typography.caption, color: colors.primary },
   name: { ...typography.subtitle, color: colors.text, marginTop: spacing.xs }, title: { ...typography.display, color: colors.primary, textAlign: "center" },
   description: { ...typography.body, color: colors.textSecondary, textAlign: "center", marginTop: spacing.xs },
+  modelMeta: { ...typography.caption, color: colors.textMuted, textAlign: "center" },
   traits: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: spacing.xs, marginTop: spacing.sm },
   insight: { gap: spacing.sm, marginTop: spacing.md }, insightTitle: { ...typography.subtitle, color: colors.text },
   tags: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs }, tag: { backgroundColor: colors.primarySoft, borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 6 }, tagText: { ...typography.caption, color: colors.primary },

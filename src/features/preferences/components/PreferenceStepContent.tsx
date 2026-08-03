@@ -5,16 +5,20 @@ import {
   accommodationAxes,
   accommodationScaleValues,
   budgetCategories,
+  discoveryScenes,
   fourPointScaleValues,
   mobilityOptions,
   mobilitySections,
   staminaOptions,
 } from "../config/travel-preference-test-config";
+import { challengeStyleQuestions } from "../config/challenge-style-questions";
 import { itineraryMessageQuestions } from "../config/itinerary-message-questions";
 import { getBudgetTotal } from "../logic/travel-preference-survey";
 import type {
   AccommodationScaleValue,
   BudgetCategory,
+  ChallengeStyleQuestionId,
+  FivePointScaleValue,
   FourPointScaleValue,
   ItineraryPreferenceLevel,
   MobilityMode,
@@ -31,6 +35,7 @@ type Props = {
 
 export function PreferenceStepContent({ stepId, answers, onChange }: Props) {
   switch (stepId) {
+    case "challengeStyle": return <ChallengeStyleMessageStep answers={answers} onChange={onChange} />;
     case "itinerary": return <ItineraryMessageStep answers={answers} onChange={onChange} />;
     case "mobility": return <MobilityStep answers={answers} onChange={onChange} />;
     case "accommodation": return <AccommodationStep answers={answers} onChange={onChange} />;
@@ -39,6 +44,44 @@ export function PreferenceStepContent({ stepId, answers, onChange }: Props) {
     case "budget": return <BudgetStep answers={answers} onChange={onChange} />;
     case "discovery": return <DiscoveryStep answers={answers} onChange={onChange} />;
   }
+}
+
+function getFirstUnansweredChallengeStyleIndex(answers: PersonalPreferenceDraftAnswers) {
+  const index = challengeStyleQuestions.findIndex((question) => !answers.challengeStyleAnswers?.[question.id]);
+  return index < 0 ? challengeStyleQuestions.length - 1 : index;
+}
+
+function ChallengeStyleMessageStep({ answers, onChange }: Omit<Props, "stepId">) {
+  const [questionIndex, setQuestionIndex] = useState(() => getFirstUnansweredChallengeStyleIndex(answers));
+  const question = challengeStyleQuestions[questionIndex];
+  const selectedOptionId = answers.challengeStyleAnswers?.[question.id];
+
+  const selectOption = (value: FivePointScaleValue) => {
+    onChange({
+      challengeStyleAnswers: {
+        ...answers.challengeStyleAnswers,
+        [question.id as ChallengeStyleQuestionId]: value,
+      },
+    });
+  };
+
+  return (
+    <PreferenceMessageQuestion
+      categoryIcon={question.categoryIcon}
+      categoryLabel={question.categoryLabel}
+      completionMessage="취향 토크 끝! 여섯 답장을 모두 보냈어요. 아래의 ‘다음’을 눌러 이어가 볼까요?"
+      current={questionIndex + 1}
+      message={question.message}
+      onNext={questionIndex < challengeStyleQuestions.length - 1 ? () => setQuestionIndex(questionIndex + 1) : undefined}
+      onPrevious={questionIndex > 0 ? () => setQuestionIndex(questionIndex - 1) : undefined}
+      onSelect={selectOption}
+      options={question.options}
+      selectedOptionId={selectedOptionId}
+      senderName={question.senderName}
+      senderStatus={question.senderStatus}
+      total={challengeStyleQuestions.length}
+    />
+  );
 }
 
 function getFirstUnansweredItineraryMessageIndex(answers: PersonalPreferenceDraftAnswers) {
@@ -117,8 +160,26 @@ function ScaleSelector({ values, value, onChange, left, right, accessibilityLabe
   </View>;
 }
 
+function SceneBanner({ icon, title, description }: { icon: string; title: string; description: string }) {
+  return <View style={styles.sceneBanner}>
+    <Text style={styles.sceneIcon}>{icon}</Text>
+    <View style={styles.sceneCopy}>
+      <Text style={styles.sceneTitle}>{title}</Text>
+      <Text style={styles.sceneDescription}>{description}</Text>
+    </View>
+  </View>;
+}
+
 function AccommodationStep({ answers, onChange }: Omit<Props, "stepId">) {
-  return <View style={styles.axisList}>{accommodationAxes.map((axis) => <View key={axis.id} style={styles.axisCard}><Text style={styles.axisHelper}>{axis.helper}</Text><ScaleSelector accessibilityLabel={axis.helper} largeLabels left={axis.left} right={axis.right} values={accommodationScaleValues} value={answers.accommodation?.[axis.id]} onChange={(value) => onChange({ accommodation: { ...answers.accommodation, [axis.id]: value as AccommodationScaleValue } })} /></View>)}</View>;
+  return <View style={styles.axisList}>{accommodationAxes.map((axis) => <View key={axis.id} style={styles.axisCard}>
+    <SceneBanner icon={axis.icon} title={axis.sceneTitle} description={axis.helper} />
+    <View style={styles.pairedCards}>
+      <View style={styles.endpointCard}><Text style={styles.endpointLabel}>A</Text><Text style={styles.endpointTitle}>{axis.left}</Text><Text style={styles.endpointNote}>{axis.leftNote}</Text></View>
+      <View style={styles.endpointCard}><Text style={styles.endpointLabel}>B</Text><Text style={styles.endpointTitle}>{axis.right}</Text><Text style={styles.endpointNote}>{axis.rightNote}</Text></View>
+    </View>
+    <Text style={styles.degreePrompt}>어느 쪽에 얼마나 가까운가요?</Text>
+    <ScaleSelector accessibilityLabel={axis.helper} left="A에 가까워요" right="B에 가까워요" values={accommodationScaleValues} value={answers.accommodation?.[axis.id]} onChange={(value) => onChange({ accommodation: { ...answers.accommodation, [axis.id]: value as AccommodationScaleValue } })} />
+  </View>)}</View>;
 }
 
 function AdventureStep({ answers, onChange }: Omit<Props, "stepId">) {
@@ -126,10 +187,13 @@ function AdventureStep({ answers, onChange }: Omit<Props, "stepId">) {
 }
 
 function StaminaStep({ answers, onChange }: Omit<Props, "stepId">) {
-  return <View accessibilityRole="radiogroup" style={styles.optionList}>{staminaOptions.map((option) => {
+  return <View style={styles.sectionGap}>
+    <SceneBanner icon="🌇" title="아침부터 도시를 걷고 어느새 오후 5시" description="저녁 전에 보고 싶은 장소가 하나 더 남아 있어요. 평소의 나라면 어떻게 할까요?" />
+    <View accessibilityRole="radiogroup" style={styles.optionList}>{staminaOptions.map((option) => {
     const selected = answers.stamina === option.id;
     return <Pressable key={option.id} accessibilityRole="radio" accessibilityState={{ selected }} onPress={() => onChange({ stamina: option.id })} style={({ pressed }) => [styles.staminaOption, selected && styles.multiOptionSelected, pressed && styles.pressed]}><View style={[styles.radio, selected && styles.radioSelected]}>{selected ? <View style={styles.radioDot} /> : null}</View><View style={styles.optionCopy}><Text style={[styles.optionTitle, selected && styles.selectedText]}>{option.label}</Text><Text style={styles.optionDescription}>{option.description}</Text></View></Pressable>;
-  })}</View>;
+    })}</View>
+  </View>;
 }
 
 function RepeatPressButton({ label, disabled, onStep, symbol }: { label: string; disabled: boolean; onStep: () => void; symbol: string }) {
@@ -174,14 +238,28 @@ function BudgetStep({ answers, onChange }: Omit<Props, "stepId">) {
     allocationRef.current = nextAllocation;
     onChange({ budgetAllocation: nextAllocation });
   };
-  return <View style={styles.sectionGap}><View accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 100, now: total }} style={[styles.coinBanner, total === 100 && styles.coinBannerComplete]}><View><Text style={styles.metricLabel}>남은 코인</Text><Text selectable style={[styles.coinValue, total === 100 && styles.coinValueComplete]}>{remaining}개</Text></View><Text style={styles.coinTotal}>{total} / 100</Text></View><View style={styles.budgetList}>{budgetCategories.map((category) => {
+  return <View style={styles.sectionGap}><SceneBanner icon="👛" title="여행 지갑에는 코인 100개가 있어요" description="정답은 없어요. 더 좋은 기억으로 남기고 싶은 곳에 마음 가는 만큼 나눠보세요." /><View accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 100, now: total }} style={[styles.coinBanner, total === 100 && styles.coinBannerComplete]}><View><Text style={styles.metricLabel}>지갑에 남은 코인</Text><Text selectable style={[styles.coinValue, total === 100 && styles.coinValueComplete]}>{remaining}개</Text></View><Text style={styles.coinTotal}>{total} / 100</Text></View><View style={styles.budgetList}>{budgetCategories.map((category) => {
     const amount = answers.budgetAllocation?.[category.id] ?? 0;
     return <View key={category.id} style={styles.budgetRow}><Text style={styles.budgetIcon}>{category.icon}</Text><View style={styles.budgetCopy}><Text style={styles.budgetTitle}>{category.label}</Text><Text style={styles.budgetParent}>{category.parent}</Text></View><RepeatPressButton label={`${category.label} 코인 5개 빼기. 길게 누르면 연속 감소`} disabled={amount === 0} onStep={() => adjust(category.id, -5)} symbol="−" /><Text selectable style={styles.budgetAmount}>{amount}</Text><RepeatPressButton label={`${category.label} 코인 5개 더하기. 길게 누르면 연속 증가`} disabled={remaining === 0} onStep={() => adjust(category.id, 5)} symbol="＋" /></View>;
-  })}</View><Text style={styles.footnote}>현재는 목적지가 정해지기 전 사용하는 대표 상위 태그예요. 코인은 5개 단위로 배분할 수 있어요.</Text></View>;
+  })}</View><Text style={styles.footnote}>코인은 5개 단위로 움직여요. 길게 누르면 빠르게 담거나 뺄 수 있어요.</Text></View>;
 }
 
 function DiscoveryStep({ answers, onChange }: Omit<Props, "stepId">) {
-  return <View style={styles.axisList}><View style={styles.axisCard}><Text style={styles.discoveryIcon}>🏛️</Text><Text style={styles.subsectionTitle}>유명 명소 필수도</Text><Text style={styles.axisHelper}>대표 명소를 일정에 꼭 포함하고 싶은 정도</Text><ScaleSelector accessibilityLabel="유명 명소 필수도" left="선택 사항" right="꼭 가고 싶어요" values={fourPointScaleValues} value={answers.landmarkImportance} onChange={(landmarkImportance) => onChange({ landmarkImportance: landmarkImportance as FourPointScaleValue })} /></View><View style={styles.axisCard}><Text style={styles.discoveryIcon}>🪴</Text><Text style={styles.subsectionTitle}>로컬 탐방 관심도</Text><Text style={styles.axisHelper}>관광지 밖 동네와 현지 문화를 경험하고 싶은 정도</Text><ScaleSelector accessibilityLabel="로컬 탐방 관심도" left="관심 적음" right="아주 궁금해요" values={fourPointScaleValues} value={answers.localInterest} onChange={(localInterest) => onChange({ localInterest: localInterest as FourPointScaleValue })} /></View></View>;
+  return <View style={styles.axisList}>
+    <SceneBanner icon="🧳" title="여행 가방에 두 칸이 남았어요" description="명소와 로컬은 서로 반대가 아니에요. 두 장면을 각각 얼마나 담고 싶은지 골라 주세요." />
+    {discoveryScenes.map((scene) => {
+      const value = scene.id === "landmarkImportance" ? answers.landmarkImportance : answers.localInterest;
+      const update = (score: number) => scene.id === "landmarkImportance"
+        ? onChange({ landmarkImportance: score as FourPointScaleValue })
+        : onChange({ localInterest: score as FourPointScaleValue });
+      return <View key={scene.id} style={styles.axisCard}>
+        <Text style={styles.discoveryIcon}>{scene.icon}</Text>
+        <Text style={styles.subsectionTitle}>{scene.sceneTitle}</Text>
+        <Text style={styles.axisHelper}>{scene.description}</Text>
+        <ScaleSelector accessibilityLabel={scene.sceneTitle} left={scene.left} right={scene.right} values={fourPointScaleValues} value={value} onChange={update} />
+      </View>;
+    })}
+  </View>;
 }
 
 const styles = StyleSheet.create({
@@ -189,6 +267,6 @@ const styles = StyleSheet.create({
   footnote: { ...typography.caption, color: colors.textMuted }, optionList: { gap: spacing.sm }, multiOption: { minHeight: 78, flexDirection: "row", alignItems: "center", gap: spacing.md, borderWidth: 2, borderColor: colors.border, borderRadius: radius.lg, backgroundColor: colors.surface, padding: spacing.md }, multiOptionSelected: { borderColor: colors.primary, backgroundColor: colors.primarySoft }, pressed: { opacity: 0.84, transform: [{ scale: 0.99 }] }, optionIcon: { fontSize: 30 }, optionCopy: { flex: 1, minWidth: 0 }, optionTitle: { ...typography.bodyStrong, color: colors.text }, optionDescription: { ...typography.caption, color: colors.textSecondary, marginTop: spacing.xxs }, selectedText: { color: colors.primary },
   mobilitySection: { borderWidth: 2, borderColor: colors.border, borderRadius: radius.lg, backgroundColor: colors.surface, overflow: "hidden" }, mobilityHeader: { minHeight: 78, flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md }, disclosure: { ...typography.subtitle, color: colors.primary }, mobilityChoices: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs, borderTopWidth: 1, borderTopColor: colors.border, padding: spacing.md, paddingTop: spacing.sm }, mobilityChoice: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: spacing.xs, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.surface, paddingHorizontal: spacing.sm }, mobilityChoiceSelected: { borderColor: colors.primary, backgroundColor: colors.primarySoft }, checkbox: { width: 24, height: 24, borderRadius: radius.sm, borderWidth: 2, borderColor: colors.borderStrong, alignItems: "center", justifyContent: "center" }, checkboxSelected: { borderColor: colors.primary, backgroundColor: colors.primary }, checkmark: { color: colors.white, fontWeight: "900" },
   scaleWrap: { gap: spacing.sm }, scaleLabels: { flexDirection: "row", justifyContent: "space-between", gap: spacing.md }, scaleLabel: { ...typography.caption, color: colors.text, flex: 1 }, scaleLabelLarge: { fontSize: 16, lineHeight: 22, fontWeight: "700" }, scaleLabelRight: { textAlign: "right" }, scaleButtons: { flexDirection: "row", gap: spacing.xxs }, scaleButton: { flex: 1, minWidth: 0, minHeight: 44, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center" }, scaleButtonSelected: { borderWidth: 2, borderColor: colors.primary, backgroundColor: colors.primary }, scaleNumber: { fontSize: 13, lineHeight: 18, fontWeight: "700", color: colors.textSecondary, fontVariant: ["tabular-nums"] }, scaleNumberSelected: { color: colors.white },
-  axisList: { gap: spacing.md }, axisCard: { gap: spacing.sm, borderRadius: radius.md, backgroundColor: colors.surfaceMuted, padding: spacing.md }, axisHelper: { ...typography.caption, color: colors.textSecondary }, illustration: { flexDirection: "row", alignItems: "center", gap: spacing.md, borderRadius: radius.md, backgroundColor: colors.background, padding: spacing.md }, illustrationIcon: { fontSize: 32 }, illustrationText: { ...typography.body, color: colors.textSecondary, flex: 1 }, scaleCaption: { flexDirection: "row", justifyContent: "space-between", gap: spacing.md }, captionText: { ...typography.caption, color: colors.textMuted }, subsectionTitle: { ...typography.bodyStrong, color: colors.text }, choiceChipText: { ...typography.bodyStrong, color: colors.textSecondary }, staminaOption: { minHeight: 72, flexDirection: "row", alignItems: "center", gap: spacing.sm, borderWidth: 2, borderColor: colors.border, borderRadius: radius.lg, padding: spacing.md }, radio: { width: 24, height: 24, borderRadius: radius.pill, borderWidth: 2, borderColor: colors.borderStrong, alignItems: "center", justifyContent: "center" }, radioSelected: { borderColor: colors.primary }, radioDot: { width: 12, height: 12, borderRadius: radius.pill, backgroundColor: colors.primary },
+  axisList: { gap: spacing.md }, axisCard: { gap: spacing.sm, borderRadius: radius.md, backgroundColor: colors.surfaceMuted, padding: spacing.md }, axisHelper: { ...typography.caption, color: colors.textSecondary }, sceneBanner: { flexDirection: "row", alignItems: "center", gap: spacing.md, borderRadius: radius.md, backgroundColor: colors.background, padding: spacing.md }, sceneIcon: { fontSize: 34 }, sceneCopy: { flex: 1, minWidth: 0, gap: spacing.xxs }, sceneTitle: { ...typography.bodyStrong, color: colors.text }, sceneDescription: { ...typography.caption, color: colors.textSecondary }, pairedCards: { flexDirection: "row", gap: spacing.sm }, endpointCard: { flex: 1, minWidth: 0, gap: spacing.xs, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.surface, padding: spacing.sm }, endpointLabel: { ...typography.caption, color: colors.primary }, endpointTitle: { ...typography.bodyStrong, color: colors.text }, endpointNote: { ...typography.caption, color: colors.textMuted }, degreePrompt: { ...typography.caption, color: colors.textSecondary, textAlign: "center" }, illustration: { flexDirection: "row", alignItems: "center", gap: spacing.md, borderRadius: radius.md, backgroundColor: colors.background, padding: spacing.md }, illustrationIcon: { fontSize: 32 }, illustrationText: { ...typography.body, color: colors.textSecondary, flex: 1 }, scaleCaption: { flexDirection: "row", justifyContent: "space-between", gap: spacing.md }, captionText: { ...typography.caption, color: colors.textMuted }, subsectionTitle: { ...typography.bodyStrong, color: colors.text }, choiceChipText: { ...typography.bodyStrong, color: colors.textSecondary }, staminaOption: { minHeight: 72, flexDirection: "row", alignItems: "center", gap: spacing.sm, borderWidth: 2, borderColor: colors.border, borderRadius: radius.lg, padding: spacing.md }, radio: { width: 24, height: 24, borderRadius: radius.pill, borderWidth: 2, borderColor: colors.borderStrong, alignItems: "center", justifyContent: "center" }, radioSelected: { borderColor: colors.primary }, radioDot: { width: 12, height: 12, borderRadius: radius.pill, backgroundColor: colors.primary },
   coinBanner: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderRadius: radius.md, backgroundColor: colors.warningSoft, padding: spacing.md }, coinBannerComplete: { backgroundColor: colors.successSoft }, coinValue: { ...typography.title, color: colors.warning, fontVariant: ["tabular-nums"], marginTop: spacing.xxs }, coinValueComplete: { color: colors.success }, coinTotal: { ...typography.subtitle, color: colors.text, fontVariant: ["tabular-nums"] }, budgetList: { gap: spacing.xs }, budgetRow: { minHeight: 70, flexDirection: "row", alignItems: "center", gap: spacing.xs, borderRadius: radius.md, backgroundColor: colors.surfaceMuted, padding: spacing.sm }, budgetIcon: { fontSize: 24 }, budgetCopy: { flex: 1, minWidth: 70 }, budgetTitle: { ...typography.bodyStrong, color: colors.text }, budgetParent: { ...typography.caption, color: colors.textMuted }, coinButton: { width: 40, height: 40, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.primary, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center" }, coinButtonText: { color: colors.primary, fontSize: 20, fontWeight: "700" }, budgetAmount: { width: 32, ...typography.bodyStrong, color: colors.text, textAlign: "center", fontVariant: ["tabular-nums"] }, disabled: { opacity: 0.35 }, discoveryIcon: { fontSize: 30 },
 });

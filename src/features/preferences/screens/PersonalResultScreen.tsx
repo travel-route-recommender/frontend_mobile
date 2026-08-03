@@ -58,9 +58,9 @@ export function PersonalResultScreen() {
 
   return <Screen testID="personal-preference-result">
     <AppHeader title="내 여행 성향 결과" subtitle={`개인 결과 · v${result.version}`} onBack={() => router.replace(sessionKind === "anonymous" ? "/(tabs)/home" : "/(tabs)/mypage")} />
-    <PreferenceResultSummary result={result} userName={sessionKind === "anonymous" ? undefined : user?.name} anonymous={sessionKind === "anonymous"} />
+    <PreferenceResultSummary result={result} challengeStyle={detailedResult?.challengeStylePreference} scheduleStyle={detailedResult?.scheduleStylePreference} userName={sessionKind === "anonymous" ? undefined : user?.name} anonymous={sessionKind === "anonymous"} />
     <Text style={styles.completed}>{formatPreferenceCompletedAt(result.completedAt)}</Text>
-    {detailedAnswers ? <PreferenceSurveyResultDetails answers={detailedAnswers} /> : <>
+    {detailedAnswers && detailedResult ? <PreferenceSurveyResultDetails result={detailedResult} /> : <>
       <Text style={styles.sectionTitle}>내가 선택한 여행 기준</Text>
       <View style={styles.responses}>{personalTestQuestions.map((question) => {
         const score = result.answers[question.dimension];
