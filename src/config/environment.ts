@@ -29,5 +29,7 @@ export const environment = {
   googleIosRedirectUri: process.env.EXPO_PUBLIC_GOOGLE_IOS_REDIRECT_URI,
   googleAndroidRedirectUri: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_REDIRECT_URI,
   kakaoRestApiKey: process.env.EXPO_PUBLIC_KAKAO_REST_API_KEY,
+  kakaoMapJavascriptKey: process.env.EXPO_PUBLIC_KAKAO_MAP_JAVASCRIPT_KEY,
+  kakaoMapBaseUrl: process.env.EXPO_PUBLIC_KAKAO_MAP_BASE_URL ?? "http://localhost:3000",
   kakaoRedirectUri: process.env.EXPO_PUBLIC_KAKAO_REDIRECT_URI,
 } as const;

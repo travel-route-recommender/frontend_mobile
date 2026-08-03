@@ -14,8 +14,9 @@ import { AddCandidateTripPickerModal, PlaceFeedbackBanner } from "../components/
 import { PlaceCard as RelatedPlaceCard } from "../components/PlaceCard";
 import { usePlaceActions } from "../hooks/usePlaceActions";
 import { findSimilarPlaces } from "../logic/placeSearch";
+import { buildClassificationLookup, enrichPlaceClassificationTags } from "../logic/placeClassification";
 import { buildPlaceCardViewModel } from "../selectors/placeSelectors";
-import { getBackendPlace } from "../services/placeApi";
+import { fetchBackendCategoryCodeTree, getBackendPlace } from "../services/placeApi";
 import { placeRepository } from "../services/placeDataPolicy";
 import {
   buildExploreListHref,
@@ -26,6 +27,19 @@ import {
 const HERO_MIN_HEIGHT = 284;
 const HERO_MAX_HEIGHT = 420;
 const BOTTOM_ACTION_SPACE = 128;
+const SUMMARY_COLLAPSED_LINES = 3;
+const SUMMARY_MORE_LABEL_RESERVE = 5;
+
+function getInlineSummaryPreview(text: string, screenWidth: number) {
+  const normalized = text.trim().replace(/\s+/g, " ");
+  const bodyFontSize = typeof typography.body.fontSize === "number" ? typography.body.fontSize : 15;
+  const textWidth = Math.max(240, screenWidth - spacing.lg * 4);
+  const charsPerLine = Math.max(16, Math.floor(textWidth / (bodyFontSize * 0.87)));
+  const maxChars = Math.max(42, charsPerLine * SUMMARY_COLLAPSED_LINES - SUMMARY_MORE_LABEL_RESERVE);
+  const chars = Array.from(normalized);
+  if (chars.length <= maxChars) return normalized;
+  return chars.slice(0, maxChars).join("").trim().replace(/[.,;:·\s]+$/, "");
+}
 
 export function PlaceDetailScreen() {
   const router = useRouter();
@@ -52,11 +66,25 @@ export function PlaceDetailScreen() {
     queryFn: ({ signal }) => getBackendPlace(placeId ?? "", signal),
     enabled: placeRepository.remoteEnabled && Boolean(placeId),
   });
+  const categoryCodeTreeQuery = useQuery({
+    queryKey: queryKeys.places.categoryCodes(),
+    queryFn: ({ signal }) => fetchBackendCategoryCodeTree(signal),
+    enabled: placeRepository.remoteEnabled && Boolean(placeId),
+    staleTime: 7 * 24 * 60 * 60 * 1000,
+  });
+  const classificationLookup = useMemo(
+    () => buildClassificationLookup(categoryCodeTreeQuery.data ?? []),
+    [categoryCodeTreeQuery.data],
+  );
+  const detailPlace = useMemo(
+    () => detailQuery.data ? enrichPlaceClassificationTags(detailQuery.data, classificationLookup) : undefined,
+    [classificationLookup, detailQuery.data],
+  );
   const source = useMemo(() => (
-    detailQuery.data
-      ? { ...actions.source, placesById: { ...actions.source.placesById, [detailQuery.data.id]: detailQuery.data } }
+    detailPlace
+      ? { ...actions.source, placesById: { ...actions.source.placesById, [detailPlace.id]: detailPlace } }
       : actions.source
-  ), [actions.source, detailQuery.data]);
+  ), [actions.source, detailPlace]);
   const place = placeId ? source.placesById[placeId] : undefined;
   const viewModel = useMemo(() => placeId ? buildPlaceCardViewModel(source, placeId) : null, [source, placeId]);
   const similar = useMemo(() => place ? findSimilarPlaces({ place, places: Object.values(source.placesById), limit: 3 }) : [], [source.placesById, place]);
@@ -70,8 +98,8 @@ export function PlaceDetailScreen() {
   const heroHeight = Math.min(HERO_MAX_HEIGHT, Math.max(HERO_MIN_HEIGHT, width * 0.76));
 
   useEffect(() => {
-    if (detailQuery.data) upsertPlaces([detailQuery.data]);
-  }, [detailQuery.data, upsertPlaces]);
+    if (detailPlace) upsertPlaces([detailPlace]);
+  }, [detailPlace, upsertPlaces]);
 
   if (!placeRepository.available) {
     return <DetailStatusScreen onBack={tripExploreContext ? backToExplore : () => router.back()}><ErrorState message={placeRepository.message ?? "장소 데이터를 사용할 수 없어요."} /></DetailStatusScreen>;
@@ -88,6 +116,7 @@ export function PlaceDetailScreen() {
   }
 
   const summaryText = viewModel.summary || (summaryLoading ? "소개를 불러오는 중이에요." : "아직 제공된 소개가 없어요.");
+  const summaryPreviewText = canExpandSummary && !summaryExpanded ? getInlineSummaryPreview(summaryText, width) : summaryText;
   const candidateLabel = viewModel.activeTripCandidateState === "not-added" ? "여행방 후보 추가" : "후보 확인";
 
   return <Screen scroll={false} padded={false} testID="place-detail-screen">
@@ -109,21 +138,30 @@ export function PlaceDetailScreen() {
         </View>
 
         <View style={styles.contentPanel}>
-          {viewModel.tags.length || viewModel.hiddenTagCount ? <View style={styles.tags}>
-            {viewModel.tags.map((tag) => <Chip key={tag} label={tag} />)}
-            {viewModel.hiddenTagCount ? <Chip label={`+${viewModel.hiddenTagCount}`} /> : null}
-          </View> : null}
-
-          <View style={styles.sectionCard}>
-            <Text style={styles.sectionTitle}>장소 소개</Text>
-            <Text numberOfLines={viewModel.summary && !summaryExpanded ? 2 : undefined} style={[styles.body, summaryLoading && styles.bodyMuted]}>{summaryText}</Text>
-            {canExpandSummary ? <Pressable accessibilityRole="button" accessibilityLabel={summaryExpanded ? "장소 소개 접기" : "장소 소개 더보기"} onPress={() => setExpandedSummaryPlaceId((current) => current === placeId ? undefined : placeId)} style={styles.moreButton}><Text style={styles.moreText}>{summaryExpanded ? "접기" : "더보기"}</Text></Pressable> : null}
-          </View>
+          {viewModel.tags.length ? <ScrollView horizontal directionalLockEnabled nestedScrollEnabled showsHorizontalScrollIndicator={false} style={styles.tags} contentContainerStyle={styles.tagsContent}>
+            {viewModel.tags.map((tag) => <View key={tag} style={styles.tagPill}><Text numberOfLines={1} style={styles.tagText}>{tag}</Text></View>)}
+          </ScrollView> : null}
 
           {place.address ? <View style={styles.sectionCard}>
             <Text style={styles.sectionTitle}>위치 정보</Text>
             <Text selectable style={styles.body}>{place.address}</Text>
           </View> : null}
+
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionTitle}>장소 정보</Text>
+            <View style={styles.infoList}>
+              {place.infoItems?.map((item) => <View key={`${item.label}:${item.value}`} style={styles.infoRow}>
+                <Text style={styles.infoLabel}>{item.label}</Text>
+                <Text selectable style={styles.infoValue}>{item.value}</Text>
+              </View>)}
+              <View style={styles.infoRow}>
+                <Text style={styles.infoLabel}>소개</Text>
+                <Text style={[styles.infoValue, summaryLoading && styles.bodyMuted]}>
+                  {canExpandSummary && !summaryExpanded ? <>{summaryPreviewText}...<Text accessibilityLabel="소개 더보기" onPress={() => setExpandedSummaryPlaceId(placeId)} suppressHighlighting style={styles.moreText}>더보기</Text></> : <>{summaryText}{canExpandSummary ? <Text accessibilityLabel="소개 접기" onPress={() => setExpandedSummaryPlaceId(undefined)} suppressHighlighting style={styles.moreText}> 접기</Text> : null}</>}
+                </Text>
+              </View>
+            </View>
+          </View>
 
           <View style={styles.sectionCard}>
             <View style={styles.reviewHeader}><Text style={styles.sectionTitle}>사용자 리뷰</Text><Chip label="0개" /></View>
@@ -202,13 +240,19 @@ const styles = StyleSheet.create({
   chevronRightTop: { right: 5, top: 6, transform: [{ rotate: "45deg" }] },
   chevronRightBottom: { right: 5, bottom: 6, transform: [{ rotate: "-45deg" }] },
   contentPanel: { gap: spacing.lg, paddingHorizontal: spacing.lg, paddingTop: spacing.xl },
-  tags: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs, paddingTop: spacing.xs, paddingBottom: spacing.md },
+  tags: { maxWidth: "100%", paddingTop: spacing.xs, paddingBottom: spacing.xs },
+  tagsContent: { gap: spacing.xs, paddingRight: spacing.lg },
+  tagPill: { minHeight: 28, justifyContent: "center", paddingHorizontal: spacing.sm, paddingVertical: 2, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceMuted },
+  tagText: { ...typography.caption, lineHeight: 17, color: colors.textSecondary },
   sectionCard: { gap: spacing.sm, padding: spacing.lg, borderRadius: radius.lg, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, ...shadows.card },
   sectionTitle: { ...typography.subtitle, color: colors.text },
   body: { ...typography.body, color: colors.textSecondary },
   bodyMuted: { color: colors.textMuted },
-  moreButton: { alignSelf: "flex-start", minHeight: 34, justifyContent: "center", paddingHorizontal: spacing.xs },
-  moreText: { ...typography.caption, color: colors.primary },
+  infoList: { gap: spacing.xs },
+  infoRow: { gap: spacing.xxs, paddingVertical: spacing.xs, borderTopWidth: 1, borderTopColor: colors.border },
+  infoLabel: { ...typography.caption, color: colors.primary },
+  infoValue: { ...typography.body, color: colors.textSecondary },
+  moreText: { ...typography.bodyStrong, color: colors.primary },
   reviewHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm },
   reviewEmpty: { minHeight: 64, justifyContent: "center", paddingVertical: spacing.sm },
   caption: { ...typography.caption, color: colors.textSecondary },

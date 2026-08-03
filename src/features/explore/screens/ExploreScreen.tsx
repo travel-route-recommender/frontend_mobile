@@ -1,21 +1,41 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BackHandler, FlatList, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { BackHandler, FlatList, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import mediumSymbolWeight from "expo-symbols/androidWeights/medium";
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { GestureDetector } from "react-native-gesture-handler";
+import Animated from "react-native-reanimated";
 import { EmptyState, ErrorState, LoadingState } from "../../../components/feedback";
 import { AppHeader, Screen } from "../../../components/common";
+import { environment } from "../../../config/environment";
 import { colors, radius, shadows, spacing, typography } from "../../../theme/tokens";
 import { queryKeys } from "../../../query/keys";
 import { useDuriStore } from "../../../store/useDuriStore";
-import type { Place } from "../../../domain";
+import type { Place, Region } from "../../../domain";
 import { placeRepository } from "../../places/services/placeDataPolicy";
-import { searchBackendFestivalPage, searchBackendPlacePage, TOUR_FESTIVAL_CATEGORY, TOUR_PLACE_CATEGORIES, type BackendPlacePageResult } from "../../places/services/placeApi";
+import {
+  fetchBackendCategoryCodeTree,
+  fetchBackendRegionCodeTree,
+  resolveAreaCodeForRegion,
+  resolveRegionIdForAreaCode,
+  searchBackendFestivalPage,
+  searchBackendRegionPlacePage,
+  type BackendPlacePageResult,
+  type BackendRegionCodeTree,
+} from "../../places/services/placeApi";
 import { buildPlaceCardViewModel, selectActiveCandidateTrip } from "../../places/selectors/placeSelectors";
-import { dedupePlacesForDisplay, getPlaceDistanceProximityLabel, normalizeSearchKeyword, searchPlaces } from "../../places/logic/placeSearch";
-import { buildPlaceLocationOptions } from "../../places/logic/placeFilterOptions";
+import { dedupePlacesForDisplay, filterPlaces, getPlaceDistanceProximityLabel, normalizeSearchKeyword, searchPlaces } from "../../places/logic/placeSearch";
+import {
+  FESTIVAL_CLASSIFICATION_CODE,
+  buildClassificationLookup,
+  enrichPlaceClassificationTags,
+  getPlaceClassificationSelectionValues,
+  type PlaceClassificationSelection,
+} from "../../places/logic/placeClassification";
+import { buildPlaceLocationOptions, getPlaceLocationDisplayLabel, getPlaceLocationValue, type PlaceLocationFilterOption } from "../../places/logic/placeFilterOptions";
 import { PlaceCard } from "../../places/components/PlaceCard";
+import { KakaoPlaceMap } from "../../places/components/KakaoPlaceMap";
 import {
   ActiveTripBanner,
   AddCandidateTripPickerModal,
@@ -23,6 +43,7 @@ import {
   EXPLORE_SORT_OPTIONS,
   PlaceFeedbackBanner,
   PlaceSearchInput,
+  RegionSelectionSheet,
 } from "../../places/components/PlaceExploreControls";
 import { usePlaceActions } from "../../places/hooks/usePlaceActions";
 import { useExploreSearchStore } from "../store/useExploreSearchStore";
@@ -33,9 +54,15 @@ import {
   buildTripExploreReturnHref,
   resolveTripExploreContext,
 } from "../logic/exploreNavigation";
+import { createMapSheetSnapPoints } from "../logic/mapSheetLayout";
+import { useExploreMapSheet } from "../hooks/useExploreMapSheet";
 
 const EXPLORE_RESULTS_PER_PAGE = 10;
+const EXPLORE_PAGE_BLOCK_SIZE = 5;
 const BACKEND_PLACE_PAGE_SIZE = 50;
+const NO_CATEGORY_FILTERS: string[] = [];
+// Keep the Catchtable-inspired map/list composition easy to roll back while we test the direction.
+const EXPLORE_MAP_LAYOUT_EXPERIMENT = true;
 type SearchSuggestion = {
   key: string;
   label: string;
@@ -43,6 +70,54 @@ type SearchSuggestion = {
   kind: "keyword" | "region";
   location?: PlaceLocationSelection;
 };
+
+type BackendRegionScope = {
+  key: string;
+  label: string;
+  regionId: string;
+  district: string;
+  regionQuery: string;
+  areaCode?: string;
+  sigunguCode?: string;
+};
+
+type ExploreFilterApplyInput = {
+  category: string | "all";
+  categories: string[];
+  classification?: PlaceClassificationSelection;
+  classifications: PlaceClassificationSelection[];
+  eventStartDate?: string;
+  eventEndDate?: string;
+  sort: PlaceSortOption;
+  tripId?: string;
+};
+
+function buildBackendRegionsById(regionCodeTree: readonly BackendRegionCodeTree[] = []) {
+  return Object.fromEntries(regionCodeTree.flatMap((region): [string, Region][] => {
+    const regionId = resolveRegionIdForAreaCode(region.code);
+    if (!regionId) return [];
+    return [[regionId, {
+      id: regionId,
+      name: region.name,
+      shortName: region.name.replace(/특별자치도|특별자치시|광역시|특별시/g, ""),
+      description: `${region.name} 여행지`,
+      spots: 0,
+      weather: "",
+      imageUrl: "",
+    }]];
+  }));
+}
+
+function locationSelectionFromOption(option: PlaceLocationFilterOption): PlaceLocationSelection {
+  return {
+    value: option.value,
+    label: getPlaceLocationDisplayLabel(option) || option.description,
+    regionId: option.regionId,
+    district: option.district,
+    ...(option.areaCode ? { areaCode: option.areaCode } : {}),
+    ...(option.sigunguCode ? { sigunguCode: option.sigunguCode } : {}),
+  };
+}
 
 export function ExploreScreen() {
   const router = useRouter();
@@ -59,14 +134,115 @@ export function ExploreScreen() {
   const syncActiveTripRegion = useExploreSearchStore((state) => state.syncActiveTripRegion);
   const upsertPlaces = useDuriStore((state) => state.upsertPlaces);
   const [filterOpen, setFilterOpen] = useState(false);
+  const [regionSheetOpen, setRegionSheetOpen] = useState(false);
+  const [regionSheetInitialQuery, setRegionSheetInitialQuery] = useState("");
   const [searchFocused, setSearchFocused] = useState(false);
   const [sortMenuOpen, setSortMenuOpen] = useState(false);
+  const [distanceBaseSheetOpen, setDistanceBaseSheetOpen] = useState(false);
   const [distanceBaseQuery, setDistanceBaseQuery] = useState("");
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
+  const [regionSearchAttempted, setRegionSearchAttempted] = useState(false);
   const [pageState, setPageState] = useState({ key: "", page: 1 });
+  const [selectedMapPlaceId, setSelectedMapPlaceId] = useState<string>();
   const blurTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const listRef = useRef<FlatList<Place>>(null);
-  const autoSelectedTripRef = useRef(false);
+  const { height: windowHeight } = useWindowDimensions();
+  const [mapViewportHeight, setMapViewportHeight] = useState(windowHeight);
+  const [mapFloatingControlsHeight, setMapFloatingControlsHeight] = useState(0);
+  const mapSheetExpandedTopGap = mapFloatingControlsHeight > 0
+    ? Math.max(0, mapFloatingControlsHeight - spacing.sm)
+    : tripExploreContext ? 136 : 80;
+  const mapSheetSnapPoints = useMemo(
+    () => createMapSheetSnapPoints(mapViewportHeight, mapSheetExpandedTopGap),
+    [mapSheetExpandedTopGap, mapViewportHeight],
+  );
+  const {
+    animatedSheetStyle: mapSheetAnimatedStyle,
+    bodyVisible: mapSheetBodyVisible,
+    committedHeight: mapSheetCommittedHeight,
+    dragGesture: mapSheetDragGesture,
+    position: mapSheetPosition,
+    snapTo: snapMapSheetTo,
+    targetPosition: mapSheetTargetPosition,
+  } = useExploreMapSheet(mapSheetSnapPoints);
+  const mapFocusTopInset = Math.max(
+    tripExploreContext ? 154 : 96,
+    mapFloatingControlsHeight + 12,
+  );
+  const mapFocusBottomInset = mapSheetCommittedHeight + 12;
+  // The sheet keeps its expanded height and slides down, so the hidden tail must become list padding.
+  const mapSheetHiddenTail = Math.max(0, mapSheetSnapPoints.expanded - mapSheetSnapPoints[mapSheetTargetPosition]);
+  const mapSheetListContentStyle = useMemo(
+    () => [styles.mapSheetListContent, { paddingBottom: spacing.lg + mapSheetHiddenTail }],
+    [mapSheetHiddenTail],
+  );
+  const mapFocusYRatio = 0.42;
+  const mapZoomControlBottomOffset = mapSheetCommittedHeight + 16;
+  const handleMapViewportLayout = useCallback((event: LayoutChangeEvent) => {
+    const nextHeight = Math.round(event.nativeEvent.layout.height);
+    if (nextHeight > 0) setMapViewportHeight((current) => current === nextHeight ? current : nextHeight);
+  }, []);
+  const handleMapFloatingControlsLayout = useCallback((event: LayoutChangeEvent) => {
+    const nextHeight = Math.round(event.nativeEvent.layout.height);
+    if (nextHeight > 0) setMapFloatingControlsHeight((current) => current === nextHeight ? current : nextHeight);
+  }, []);
+  const handleMapSheetListScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    if (mapSheetPosition !== "expanded") return;
+    if (event.nativeEvent.contentOffset.y < -28) {
+      snapMapSheetTo("half");
+    }
+  }, [mapSheetPosition, snapMapSheetTo]);
+  const handleMapSheetListScrollEndDrag = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    if (mapSheetPosition !== "expanded") return;
+    const velocityY = event.nativeEvent.velocity?.y ?? 0;
+    if (event.nativeEvent.contentOffset.y <= 0 && velocityY < -0.35) {
+      snapMapSheetTo("half");
+    }
+  }, [mapSheetPosition, snapMapSheetTo]);
+  const toggleMapSheetPosition = useCallback(() => {
+    const nextPosition = mapSheetTargetPosition === "collapsed"
+      ? "half"
+      : mapSheetTargetPosition === "half" ? "expanded" : "collapsed";
+    snapMapSheetTo(nextPosition);
+  }, [mapSheetTargetPosition, snapMapSheetTo]);
+  const mapSheetHandleLabel = mapSheetTargetPosition === "collapsed"
+    ? "검색 결과 시트 중간 높이로 펼치기"
+    : mapSheetTargetPosition === "half" ? "검색 결과 시트 펼치기" : "검색 결과 시트 접기";
+
+  const regionCodeTreeQuery = useQuery({
+    queryKey: queryKeys.places.regionCodes(),
+    queryFn: ({ signal }) => fetchBackendRegionCodeTree(signal),
+    enabled: placeRepository.remoteEnabled,
+    staleTime: 7 * 24 * 60 * 60 * 1000,
+  });
+  const categoryCodeTreeQuery = useQuery({
+    queryKey: queryKeys.places.categoryCodes(),
+    queryFn: ({ signal }) => fetchBackendCategoryCodeTree(signal),
+    enabled: placeRepository.remoteEnabled,
+    staleTime: 7 * 24 * 60 * 60 * 1000,
+  });
+  const classificationLookup = useMemo(
+    () => buildClassificationLookup(categoryCodeTreeQuery.data ?? []),
+    [categoryCodeTreeQuery.data],
+  );
+  const backendRegionsById = useMemo(
+    () => buildBackendRegionsById(regionCodeTreeQuery.data ?? []),
+    [regionCodeTreeQuery.data],
+  );
+  const regionAwareSource = useMemo(
+    () => placeRepository.remoteEnabled
+      ? { ...actions.source, regionsById: { ...backendRegionsById, ...actions.source.regionsById } }
+      : actions.source,
+    [actions.source, backendRegionsById],
+  );
+  const locationOptions = useMemo(
+    () => buildPlaceLocationOptions(
+      regionAwareSource.regionsById,
+      placeRepository.remoteEnabled ? [] : Object.values(regionAwareSource.placesById),
+      regionCodeTreeQuery.data ?? [],
+    ),
+    [regionAwareSource.placesById, regionAwareSource.regionsById, regionCodeTreeQuery.data],
+  );
 
   useFocusEffect(useCallback(() => {
     if (!tripExploreContext || Platform.OS !== "android") return undefined;
@@ -126,30 +302,65 @@ export function ExploreScreen() {
   const requestLocations = useMemo<PlaceLocationSelection[]>(() => {
     if (searchState.selectedLocations.length) return searchState.selectedLocations;
     if (searchState.selectedRegionId === "all") return [];
-    const value = `${searchState.selectedRegionId}::${searchState.selectedDistrict}`;
-    return [{ value, label: value, regionId: searchState.selectedRegionId, district: searchState.selectedDistrict }];
-  }, [searchState.selectedDistrict, searchState.selectedLocations, searchState.selectedRegionId]);
+    const value = getPlaceLocationValue(searchState.selectedRegionId, searchState.selectedDistrict);
+    const option = locationOptions.find((candidate) => candidate.value === value);
+    const areaCode = option?.areaCode ?? resolveAreaCodeForRegion(searchState.selectedRegionId);
+    return [{
+      value,
+      label: option?.description ?? option?.label ?? value,
+      regionId: searchState.selectedRegionId,
+      district: searchState.selectedDistrict,
+      ...(areaCode ? { areaCode } : {}),
+      ...(option?.sigunguCode ? { sigunguCode: option.sigunguCode } : {}),
+    }];
+  }, [locationOptions, searchState.selectedDistrict, searchState.selectedLocations, searchState.selectedRegionId]);
+  const activeLocations = useMemo(() => requestLocations.map((location) => {
+    const option = locationOptions.find((candidate) => candidate.value === location.value);
+    return option ? locationSelectionFromOption(option) : location;
+  }), [locationOptions, requestLocations]);
+  const hasRegionContext = activeLocations.some((location) => location.regionId !== "all");
+  const backendRegionScopes = useMemo<BackendRegionScope[]>(() => activeLocations.flatMap((location) => {
+    if (location.regionId === "all") return [];
+    const areaCode = location.areaCode ?? resolveAreaCodeForRegion(location.regionId);
+    const regionQuery = areaCode ?? location.regionId;
+    return [{
+      key: location.value,
+      label: location.label,
+      regionId: location.regionId,
+      district: location.district,
+      regionQuery,
+      ...(areaCode ? { areaCode } : {}),
+      ...(location.sigunguCode ? { sigunguCode: location.sigunguCode } : {}),
+    }];
+  }), [activeLocations]);
+  const normalizedDistanceBaseQuery = useMemo(() => normalizeSearchKeyword(distanceBaseQuery), [distanceBaseQuery]);
+  const selectedClassifications = searchState.selectedClassifications;
+  const selectedClassificationValues = selectedClassifications.map((selection) => selection.value).join("|");
+  const festivalClassificationSelected = selectedClassifications.some((selection) => selection.lclsSystm1 === FESTIVAL_CLASSIFICATION_CODE);
   const backendSearchParams = useMemo(() => ({
     keyword: searchState.submittedKeyword,
-    categories: searchState.selectedCategories,
-    locations: requestLocations.map((location) => ({ regionId: location.regionId, district: location.district, value: location.value })),
-    eventStartDate: searchState.selectedCategories.includes(TOUR_FESTIVAL_CATEGORY) ? searchState.eventStartDate : undefined,
-    eventEndDate: searchState.selectedCategories.includes(TOUR_FESTIVAL_CATEGORY) ? searchState.eventEndDate : undefined,
+    categories: NO_CATEGORY_FILTERS,
+    classifications: selectedClassifications,
+    regionScopes: backendRegionScopes.map((scope) => ({
+      key: scope.key,
+      regionQuery: scope.regionQuery,
+      areaCode: scope.areaCode,
+      sigunguCode: scope.sigunguCode,
+      regionId: scope.regionId,
+      district: scope.district,
+    })),
+    eventStartDate: festivalClassificationSelected ? searchState.eventStartDate : undefined,
+    eventEndDate: festivalClassificationSelected ? searchState.eventEndDate : undefined,
     limit: BACKEND_PLACE_PAGE_SIZE,
-  }), [requestLocations, searchState.eventEndDate, searchState.eventStartDate, searchState.selectedCategories, searchState.submittedKeyword]);
+  }), [backendRegionScopes, festivalClassificationSelected, searchState.eventEndDate, searchState.eventStartDate, searchState.submittedKeyword, selectedClassifications]);
   const backendPlacesQuery = useInfiniteQuery({
     queryKey: queryKeys.places.search(backendSearchParams),
     queryFn: async ({ signal, pageParam }) => {
       const page = Number(pageParam) || 1;
-      const regionIds = [...new Set(requestLocations.map((location) => location.regionId).filter((regionId): regionId is string => regionId !== "all"))];
-      const categoryFilters = backendSearchParams.categories.length ? backendSearchParams.categories : [undefined];
-      const regionFilters = regionIds.length ? regionIds : [undefined];
-      const groups = await Promise.all(regionFilters.flatMap((regionId) => categoryFilters.map((category) => {
-        if (category === TOUR_FESTIVAL_CATEGORY) {
-          return searchBackendFestivalPage({ keyword: searchState.submittedKeyword, category, regionId, eventStartDate: backendSearchParams.eventStartDate, eventEndDate: backendSearchParams.eventEndDate, page, limit: backendSearchParams.limit, signal });
-        }
-        return searchBackendPlacePage({ keyword: searchState.submittedKeyword, category, regionId, page, limit: backendSearchParams.limit, signal });
-      })));
+      const classificationFilters = backendSearchParams.classifications.length ? backendSearchParams.classifications : [undefined];
+      const groups = await Promise.all(backendRegionScopes.flatMap((scope) => classificationFilters.map((classification) => classification?.lclsSystm1 === FESTIVAL_CLASSIFICATION_CODE
+        ? searchBackendFestivalPage({ keyword: backendSearchParams.keyword, classification, regionId: scope.regionId, areaCode: scope.areaCode, sigunguCode: scope.sigunguCode, eventStartDate: backendSearchParams.eventStartDate, eventEndDate: backendSearchParams.eventEndDate, page, limit: backendSearchParams.limit, signal })
+        : searchBackendRegionPlacePage(scope.regionQuery, { keyword: backendSearchParams.keyword, classification, sigunguCode: scope.sigunguCode, page, limit: backendSearchParams.limit, signal }))));
       const merged = new Map(groups.flatMap((group) => group.places).map((place) => [place.id, place]));
       const totals = groups.map((group) => group.total).filter((total): total is number => typeof total === "number");
       return {
@@ -162,39 +373,66 @@ export function ExploreScreen() {
     },
     initialPageParam: 1,
     getNextPageParam: (lastPage) => lastPage.hasNextPage ? lastPage.page + 1 : undefined,
-    enabled: placeRepository.remoteEnabled,
+    enabled: placeRepository.remoteEnabled && hasRegionContext,
   });
-  const backendPlaces = useMemo(() => dedupePlacesForDisplay(backendPlacesQuery.data?.pages.flatMap((page) => page.places) ?? []), [backendPlacesQuery.data]);
+  const backendPlaces = useMemo(
+    () => dedupePlacesForDisplay(backendPlacesQuery.data?.pages.flatMap((page) => page.places) ?? [])
+      .map((place) => enrichPlaceClassificationTags(place, classificationLookup)),
+    [backendPlacesQuery.data, classificationLookup],
+  );
   const backendPlacesById = useMemo(
     () => Object.fromEntries(backendPlaces.map((place) => [place.id, place])),
     [backendPlaces],
   );
+  const backendDistanceBaseSearchParams = useMemo(() => ({
+    mode: "distance-base",
+    keyword: distanceBaseQuery.trim(),
+    regionScopes: backendRegionScopes.map((scope) => ({
+      key: scope.key,
+      regionQuery: scope.regionQuery,
+      sigunguCode: scope.sigunguCode,
+    })),
+    limit: 12,
+  }), [backendRegionScopes, distanceBaseQuery]);
+  const backendDistanceBaseSearchQuery = useQuery({
+    queryKey: queryKeys.places.search(backendDistanceBaseSearchParams),
+    queryFn: async ({ signal }) => {
+      const groups = await Promise.all(backendRegionScopes.map((scope) => searchBackendRegionPlacePage(scope.regionQuery, { keyword: backendDistanceBaseSearchParams.keyword, sigunguCode: scope.sigunguCode, page: 1, limit: backendDistanceBaseSearchParams.limit, signal })));
+      return dedupePlacesForDisplay(groups.flatMap((group) => group.places)).map((place) => enrichPlaceClassificationTags(place, classificationLookup));
+    },
+    enabled: placeRepository.remoteEnabled && distanceBaseSheetOpen && hasRegionContext && Boolean(normalizedDistanceBaseQuery),
+  });
+  const backendDistanceBasePlaces = useMemo(
+    () => backendDistanceBaseSearchQuery.data ?? [],
+    [backendDistanceBaseSearchQuery.data],
+  );
+  const backendDistanceBasePlacesById = useMemo(
+    () => Object.fromEntries(backendDistanceBasePlaces.map((place) => [place.id, place])),
+    [backendDistanceBasePlaces],
+  );
   const source = useMemo(() => (
     placeRepository.remoteEnabled
-      ? { ...actions.source, placesById: { ...actions.source.placesById, ...backendPlacesById } }
-      : actions.source
-  ), [actions.source, backendPlacesById]);
+      ? { ...regionAwareSource, placesById: { ...regionAwareSource.placesById, ...backendPlacesById, ...backendDistanceBasePlacesById } }
+      : regionAwareSource
+  ), [backendDistanceBasePlacesById, backendPlacesById, regionAwareSource]);
 
   useEffect(() => {
-    if (backendPlaces.length) upsertPlaces(backendPlaces);
-  }, [backendPlaces, upsertPlaces]);
+    const placesToUpsert = dedupePlacesForDisplay([...backendPlaces, ...backendDistanceBasePlaces]);
+    if (placesToUpsert.length) upsertPlaces(placesToUpsert);
+  }, [backendDistanceBasePlaces, backendPlaces, upsertPlaces]);
 
   const activeTrip = selectActiveCandidateTrip(source);
   const activeTripId = activeTrip?.id;
   const activeTripRegionId = activeTrip?.regionId;
   useEffect(() => {
-    if (activeTrip) {
-      autoSelectedTripRef.current = true;
-      return;
-    }
-    if (autoSelectedTripRef.current || !actions.eligibleTrips.length) return;
-    autoSelectedTripRef.current = true;
-    actions.setActiveTrip(actions.eligibleTrips[0].id);
-  }, [actions, activeTrip]);
+    if (!tripExploreContext || activeTripId === tripExploreContext.tripId) return;
+    const trip = source.tripsById[tripExploreContext.tripId];
+    if (trip?.members.some((member) => member.userId === source.currentUserId) && trip.status !== "completed") actions.setActiveTrip(trip.id);
+  }, [actions, activeTripId, source.currentUserId, source.tripsById, tripExploreContext]);
   useEffect(() => {
-    if (!activeTripId || !activeTripRegionId) return;
+    if (!tripExploreContext || !activeTripId || !activeTripRegionId) return;
     syncActiveTripRegion(activeTripId, activeTripRegionId);
-  }, [activeTripId, activeTripRegionId, syncActiveTripRegion]);
+  }, [activeTripId, activeTripRegionId, syncActiveTripRegion, tripExploreContext]);
 
   const places = useMemo(
     () => placeRepository.remoteEnabled ? backendPlaces : Object.values(source.placesById),
@@ -202,33 +440,43 @@ export function ExploreScreen() {
   );
   const distanceReferencePlaces = useMemo(() => Object.values(source.placesById), [source.placesById]);
   const distanceBasePlace = searchState.distanceBasePlaceId ? source.placesById[searchState.distanceBasePlaceId] : undefined;
+  const activeTripCandidatePlaces = useMemo(() => {
+    if (!activeTrip) return [];
+    const seen = new Set<string>();
+    return (source.candidatesByTripId[activeTrip.id] ?? []).flatMap((candidate) => {
+      if (seen.has(candidate.placeId)) return [];
+      const place = source.placesById[candidate.placeId];
+      if (!place) return [];
+      seen.add(candidate.placeId);
+      return [place];
+    });
+  }, [activeTrip, source.candidatesByTripId, source.placesById]);
   const sortablePlaces = useMemo(() => {
     if (!distanceBasePlace || places.some((place) => place.id === distanceBasePlace.id)) return places;
     return [...places, distanceBasePlace];
   }, [distanceBasePlace, places]);
   const savedIds = useMemo(() => new Set(source.savedPlaceIdsByUserId[source.currentUserId] ?? []), [source.currentUserId, source.savedPlaceIdsByUserId]);
-  const categories = useMemo(() => [...new Set(places.map((place) => place.category.trim() || "기타"))].sort((left, right) => left.localeCompare(right, "ko")), [places]);
-  const filterCategories = useMemo(() => [{ value: "all", label: "전체" }, ...[...new Set([...TOUR_PLACE_CATEGORIES, ...categories])].map((category) => ({ value: category, label: category }))], [categories]);
-  const selectedCategories = useMemo(() => searchState.selectedCategories.filter((selected) => filterCategories.some((category) => category.value === selected)), [filterCategories, searchState.selectedCategories]);
-  const selectedCategory = selectedCategories[0] ?? "all";
-  const locationOptions = useMemo(() => buildPlaceLocationOptions(source.regionsById, places), [places, source.regionsById]);
-  const activeLocations = useMemo(() => requestLocations.map((location) => {
-    const option = locationOptions.find((candidate) => candidate.value === location.value);
-    return option ? { value: option.value, label: option.description, regionId: option.regionId, district: option.district } : location;
-  }), [locationOptions, requestLocations]);
+  const classificationAvailabilityPlaces = useMemo(
+    () => filterPlaces(Object.values(source.placesById), { keyword: searchState.submittedKeyword, regionId: placeRepository.remoteEnabled ? "all" : searchState.selectedRegionId, district: placeRepository.remoteEnabled ? "all" : searchState.selectedDistrict, locations: activeLocations, category: "all", categories: NO_CATEGORY_FILTERS }, source.regionsById),
+    [activeLocations, source.placesById, source.regionsById, searchState.selectedDistrict, searchState.selectedRegionId, searchState.submittedKeyword],
+  );
+  const availableClassificationValues = useMemo(
+    () => new Set(classificationAvailabilityPlaces.flatMap(getPlaceClassificationSelectionValues)),
+    [classificationAvailabilityPlaces],
+  );
   const pageScopeKey = useMemo(() => [
     searchState.submittedKeyword,
     activeLocations.map((location) => location.value).join("|"),
-    selectedCategories.join("|"),
     searchState.eventStartDate ?? "",
     searchState.eventEndDate ?? "",
+    selectedClassificationValues,
     searchState.sortOption,
     searchState.distanceBasePlaceId ?? "",
     searchState.distanceBaseLocation?.value ?? "",
-  ].join("::"), [activeLocations, searchState.distanceBaseLocation?.value, searchState.distanceBasePlaceId, searchState.eventEndDate, searchState.eventStartDate, searchState.sortOption, searchState.submittedKeyword, selectedCategories]);
+  ].join("::"), [activeLocations, searchState.distanceBaseLocation?.value, searchState.distanceBasePlaceId, searchState.eventEndDate, searchState.eventStartDate, searchState.sortOption, searchState.submittedKeyword, selectedClassificationValues]);
   const sortedFilteredPlaces = useMemo(
-    () => searchPlaces(sortablePlaces, { keyword: searchState.submittedKeyword, regionId: searchState.selectedRegionId, district: searchState.selectedDistrict, locations: activeLocations, category: "all", categories: selectedCategories, eventStartDate: selectedCategories.includes(TOUR_FESTIVAL_CATEGORY) ? searchState.eventStartDate : undefined, eventEndDate: selectedCategories.includes(TOUR_FESTIVAL_CATEGORY) ? searchState.eventEndDate : undefined, sort: searchState.sortOption, distanceBasePlaceId: searchState.distanceBasePlaceId, distanceBaseLocation: searchState.distanceBaseLocation }, source.regionsById, savedIds),
-    [source.regionsById, sortablePlaces, savedIds, activeLocations, searchState.distanceBaseLocation, searchState.distanceBasePlaceId, searchState.eventEndDate, searchState.eventStartDate, searchState.selectedDistrict, searchState.selectedRegionId, searchState.sortOption, searchState.submittedKeyword, selectedCategories],
+    () => searchPlaces(sortablePlaces, { keyword: searchState.submittedKeyword, regionId: placeRepository.remoteEnabled ? "all" : searchState.selectedRegionId, district: placeRepository.remoteEnabled ? "all" : searchState.selectedDistrict, locations: placeRepository.remoteEnabled ? [] : activeLocations, category: "all", categories: NO_CATEGORY_FILTERS, classifications: selectedClassifications, eventStartDate: festivalClassificationSelected ? searchState.eventStartDate : undefined, eventEndDate: festivalClassificationSelected ? searchState.eventEndDate : undefined, sort: searchState.sortOption, distanceBasePlaceId: searchState.distanceBasePlaceId, distanceBaseLocation: searchState.distanceBaseLocation }, source.regionsById, savedIds),
+    [source.regionsById, sortablePlaces, savedIds, activeLocations, festivalClassificationSelected, searchState.distanceBaseLocation, searchState.distanceBasePlaceId, searchState.eventEndDate, searchState.eventStartDate, searchState.selectedDistrict, searchState.selectedRegionId, searchState.sortOption, searchState.submittedKeyword, selectedClassifications],
   );
   const filteredPlaces = useMemo(
     () => searchState.distanceBasePlaceId ? sortedFilteredPlaces.filter((place) => place.id !== searchState.distanceBasePlaceId) : sortedFilteredPlaces,
@@ -247,7 +495,6 @@ export function ExploreScreen() {
     if (!hasNextBackendPage || isFetchingNextBackendPage || !filteredPlaces.length) return;
     if (currentPage >= Math.max(1, loadedPageCount - 1)) void fetchNextBackendPage();
   }, [currentPage, fetchNextBackendPage, filteredPlaces.length, hasNextBackendPage, isFetchingNextBackendPage, loadedPageCount]);
-
   const resultCountText = useMemo(() => {
     const countLabel = hasNextBackendPage ? `${filteredPlaces.length}곳 이상` : `${filteredPlaces.length}곳`;
     return `검색 결과 ${countLabel}`;
@@ -255,16 +502,19 @@ export function ExploreScreen() {
   const distanceBaseLabel = searchState.sortOption === "distance"
     ? distanceBasePlace?.name ?? searchState.distanceBaseLocation?.label
     : undefined;
-  const normalizedDistanceBaseQuery = normalizeSearchKeyword(distanceBaseQuery);
   const distanceBaseMatches = useMemo(() => {
-    if (searchState.sortOption !== "distance" || !normalizedDistanceBaseQuery) return [];
-    return distanceReferencePlaces
+    if (!normalizedDistanceBaseQuery) return [];
+    return dedupePlacesForDisplay([...backendDistanceBasePlaces, ...distanceReferencePlaces])
       .filter((place) => place.id !== searchState.distanceBasePlaceId)
       .filter((place) => normalizeSearchKeyword(`${place.name} ${place.address} ${place.category} ${place.tags.join(" ")}`).includes(normalizedDistanceBaseQuery))
-      .slice(0, 6);
-  }, [distanceReferencePlaces, normalizedDistanceBaseQuery, searchState.distanceBasePlaceId, searchState.sortOption]);
+      .slice(0, 8);
+  }, [backendDistanceBasePlaces, distanceReferencePlaces, normalizedDistanceBaseQuery, searchState.distanceBasePlaceId]);
   const pageStart = (currentPage - 1) * EXPLORE_RESULTS_PER_PAGE;
   const pagedPlaces = useMemo(() => filteredPlaces.slice(pageStart, pageStart + EXPLORE_RESULTS_PER_PAGE), [filteredPlaces, pageStart]);
+  const selectedMapPlace = useMemo(
+    () => selectedMapPlaceId ? pagedPlaces.find((place) => place.id === selectedMapPlaceId) : undefined,
+    [pagedPlaces, selectedMapPlaceId],
+  );
   const cardsById = useMemo(() => Object.fromEntries(pagedPlaces.flatMap((place) => {
     const viewModel = buildPlaceCardViewModel(source, place.id);
     return viewModel ? [[place.id, viewModel]] : [];
@@ -276,7 +526,7 @@ export function ExploreScreen() {
       return label ? [[place.id, label]] : [];
     }));
   }, [distanceBasePlace, pagedPlaces, searchState.sortOption]);
-  const eventDateFilterActive = selectedCategories.includes(TOUR_FESTIVAL_CATEGORY) && Boolean(searchState.eventStartDate || searchState.eventEndDate);
+  const eventDateFilterActive = festivalClassificationSelected && Boolean(searchState.eventStartDate || searchState.eventEndDate);
   const eventDateFilterLabel = useMemo(() => {
     if (!eventDateFilterActive) return undefined;
     const format = (value?: string) => value?.replace(/^(\d{4})-(\d{2})-(\d{2})$/, "$1.$2.$3");
@@ -284,68 +534,102 @@ export function ExploreScreen() {
     const end = format(searchState.eventEndDate);
     return start && end && start !== end ? `행사일: ${start}~${end}` : `행사일: ${start ?? end}`;
   }, [eventDateFilterActive, searchState.eventEndDate, searchState.eventStartDate]);
-  const hasFilters = Boolean(searchState.submittedKeyword || activeLocations.length || selectedCategories.length || eventDateFilterActive || searchState.sortOption !== "popular");
+  const hasFilters = Boolean(searchState.submittedKeyword || selectedClassifications.length || eventDateFilterActive);
   const activeFilterBadges = useMemo(() => {
     const badges: string[] = [];
-    activeLocations.forEach((location) => badges.push(`지역: ${location.label}`));
+    selectedClassifications.forEach((selection) => badges.push(selection.label));
     if (eventDateFilterLabel) badges.push(eventDateFilterLabel);
     return badges;
-  }, [activeLocations, eventDateFilterLabel]);
+  }, [eventDateFilterLabel, selectedClassifications]);
 
   const goToPage = useCallback((page: number) => {
     const nextPage = Math.min(Math.max(page, 1), maxReachablePage);
     setPageState({ key: pageScopeKey, page: nextPage });
     listRef.current?.scrollToOffset({ offset: 0, animated: true });
   }, [maxReachablePage, pageScopeKey]);
-  const searchSuggestions = useMemo<SearchSuggestion[]>(() => {
-    const draft = normalizeSearchKeyword(searchState.keyword);
-    if (!draft) return [];
+  const draftKeyword = normalizeSearchKeyword(searchState.keyword);
+  const placeSuggestions = useMemo<SearchSuggestion[]>(() => {
+    if (!draftKeyword) return [];
     const submitted = normalizeSearchKeyword(searchState.submittedKeyword);
     const terms = new Map<string, SearchSuggestion>();
-    locationOptions.forEach((option) => {
-      if (option.regionId === "all") return;
-      const key = normalizeSearchKeyword(`${option.label} ${option.description}`);
-      if (key.includes(draft)) terms.set(`region:${option.value}`, { key: `region:${option.value}`, label: option.label, description: option.description, kind: "region", location: { value: option.value, label: option.description, regionId: option.regionId, district: option.district } });
-    });
     const add = (value?: string) => {
       const label = value?.trim();
       if (!label) return;
       const key = normalizeSearchKeyword(label);
-      if (key && key !== submitted && key.includes(draft) && !terms.has(`keyword:${key}`)) terms.set(`keyword:${key}`, { key: `keyword:${key}`, label, kind: "keyword" });
+      if (key && key !== submitted && key.includes(draftKeyword) && !terms.has(`keyword:${key}`)) terms.set(`keyword:${key}`, { key: `keyword:${key}`, label, kind: "keyword" });
     };
     places.forEach((place) => {
       add(place.name);
-      add(place.category);
-      place.tags.forEach(add);
     });
-    Object.values(source.regionsById).forEach((region) => {
-      add(region.name);
-      add(region.shortName);
-    });
-    categories.forEach(add);
     return [...terms.values()].slice(0, 8);
-  }, [categories, locationOptions, places, searchState.keyword, searchState.submittedKeyword, source.regionsById]);
-  const draftKeyword = normalizeSearchKeyword(searchState.keyword);
+  }, [draftKeyword, places, searchState.submittedKeyword]);
+  const searchSuggestions = hasRegionContext ? placeSuggestions : [];
   const recentSearchMatches = useMemo(() => {
-    if (!searchFocused) return [];
+    if (!searchFocused || !hasRegionContext) return [];
     if (!draftKeyword) return recentSearches.slice(0, 6);
     return recentSearches.filter((term) => normalizeSearchKeyword(term).includes(draftKeyword)).slice(0, 4);
-  }, [draftKeyword, recentSearches, searchFocused]);
+  }, [draftKeyword, hasRegionContext, recentSearches, searchFocused]);
   const showSearchDropdown = searchFocused && Boolean(recentSearchMatches.length || searchSuggestions.length);
-  const filterActive = hasFilters || searchState.keyword !== searchState.submittedKeyword;
+  const filterActive = hasRegionContext && (hasFilters || searchState.keyword !== searchState.submittedKeyword);
+  const openRegionSheet = (initialQuery = "") => {
+    setSearchFocused(false);
+    setSortMenuOpen(false);
+    setRegionSheetInitialQuery(initialQuery);
+    setRegionSheetOpen(true);
+  };
   const submitSearch = (keyword = searchState.keyword) => {
     const normalized = keyword.trim();
+    if (!hasRegionContext) {
+      setRegionSearchAttempted(Boolean(normalized));
+      openRegionSheet(normalized);
+      return;
+    }
     searchState.submitKeyword(normalized);
     rememberSearch(normalized);
+    setRegionSearchAttempted(false);
     setSearchFocused(false);
+    setPageState({ key: "", page: 1 });
+    listRef.current?.scrollToOffset({ offset: 0, animated: true });
+  };
+  const applyRegionSelection = (locations: PlaceLocationSelection[]) => {
+    const seenLocations = new Set<string>();
+    const normalizedLocations = locations.filter((location) => location.regionId !== "all").filter((location) => {
+      if (seenLocations.has(location.value)) return false;
+      seenLocations.add(location.value);
+      return true;
+    });
+    const primaryLocation = normalizedLocations[0];
+    searchState.applyFilters({
+      regionId: primaryLocation?.regionId ?? "all",
+      district: primaryLocation?.district ?? "all",
+      locations: normalizedLocations,
+      category: "all",
+      categories: NO_CATEGORY_FILTERS,
+      classification: selectedClassifications[0],
+      classifications: selectedClassifications,
+      eventStartDate: festivalClassificationSelected ? searchState.eventStartDate : undefined,
+      eventEndDate: festivalClassificationSelected ? searchState.eventEndDate : undefined,
+      sort: searchState.sortOption,
+      distanceBasePlaceId: searchState.distanceBasePlaceId,
+      distanceBaseLocation: searchState.distanceBaseLocation,
+    });
+    if (normalizedLocations.length && !tripExploreContext) {
+      actions.clearActiveTrip();
+      searchState.clearActiveTripContext();
+    }
+    searchState.submitKeyword("");
+    setRegionSearchAttempted(false);
+    setSearchFocused(false);
+    setRegionSheetOpen(false);
     setPageState({ key: "", page: 1 });
     listRef.current?.scrollToOffset({ offset: 0, animated: true });
   };
   const applySuggestion = (suggestion: SearchSuggestion) => {
     if (suggestion.kind === "region" && suggestion.location) {
-      searchState.applyFilters({ regionId: suggestion.location.regionId, district: suggestion.location.district, locations: [suggestion.location], category: selectedCategory, categories: selectedCategories, eventStartDate: selectedCategories.includes(TOUR_FESTIVAL_CATEGORY) ? searchState.eventStartDate : undefined, eventEndDate: selectedCategories.includes(TOUR_FESTIVAL_CATEGORY) ? searchState.eventEndDate : undefined, sort: searchState.sortOption, distanceBasePlaceId: searchState.distanceBasePlaceId, distanceBaseLocation: searchState.distanceBaseLocation });
+      searchState.applyFilters({ regionId: suggestion.location.regionId, district: suggestion.location.district, locations: [suggestion.location], category: "all", categories: NO_CATEGORY_FILTERS, classification: selectedClassifications[0], classifications: selectedClassifications, eventStartDate: festivalClassificationSelected ? searchState.eventStartDate : undefined, eventEndDate: festivalClassificationSelected ? searchState.eventEndDate : undefined, sort: searchState.sortOption, distanceBasePlaceId: searchState.distanceBasePlaceId, distanceBaseLocation: searchState.distanceBaseLocation });
       rememberSearch(suggestion.label);
       searchState.submitKeyword("");
+      setRegionSearchAttempted(false);
       setSearchFocused(false);
       setPageState({ key: "", page: 1 });
       return;
@@ -353,8 +637,21 @@ export function ExploreScreen() {
     submitSearch(suggestion.label);
   };
   const resetFilters = () => {
-    if (activeTrip) searchState.startTripExplore(activeTrip.regionId);
-    else searchState.resetFilters();
+    const primaryLocation = activeLocations[0];
+    searchState.applyFilters({
+      regionId: primaryLocation?.regionId ?? "all",
+      district: primaryLocation?.district ?? "all",
+      locations: activeLocations,
+      category: "all",
+      categories: [],
+      classification: undefined,
+      classifications: [],
+      sort: searchState.sortOption,
+      distanceBasePlaceId: searchState.distanceBasePlaceId,
+      distanceBaseLocation: searchState.distanceBaseLocation,
+    });
+    searchState.submitKeyword("");
+    setRegionSearchAttempted(false);
     setSearchFocused(false);
     setPageState({ key: "", page: 1 });
     listRef.current?.scrollToOffset({ offset: 0, animated: true });
@@ -362,21 +659,25 @@ export function ExploreScreen() {
   const clearActiveTripSelection = () => {
     actions.clearActiveTrip();
     searchState.clearActiveTripContext();
+    setRegionSearchAttempted(false);
     setSearchFocused(false);
     setSortMenuOpen(false);
     setPageState({ key: "", page: 1 });
     listRef.current?.scrollToOffset({ offset: 0, animated: true });
   };
-  const clearCategoryFilter = (category: string) => {
-    const nextCategories = selectedCategories.filter((selected) => selected !== category);
-    searchState.setCategories(nextCategories);
-    if (!nextCategories.includes(TOUR_FESTIVAL_CATEGORY)) searchState.setEventDateRange(undefined, undefined);
+  const openDistanceBaseSheet = () => {
     setSearchFocused(false);
-    setPageState({ key: "", page: 1 });
-    listRef.current?.scrollToOffset({ offset: 0, animated: true });
+    setSortMenuOpen(false);
+    setDistanceBaseQuery("");
+    setDistanceBaseSheetOpen(true);
   };
   const changeSort = (sort: PlaceSortOption) => {
     setSortMenuOpen(false);
+    if (sort === "distance") {
+      if (searchState.distanceBasePlaceId || searchState.distanceBaseLocation) searchState.setSort("distance");
+      openDistanceBaseSheet();
+      return;
+    }
     if (sort === searchState.sortOption) return;
     searchState.setSort(sort);
     setSearchFocused(false);
@@ -385,11 +686,22 @@ export function ExploreScreen() {
   };
   const selectDistanceBasePlace = (placeId: string) => {
     searchState.setDistanceBasePlace(placeId);
+    searchState.setSort("distance");
     setDistanceBaseQuery("");
     setSearchFocused(false);
     setSortMenuOpen(false);
+    setDistanceBaseSheetOpen(false);
     setPageState({ key: "", page: 1 });
     listRef.current?.scrollToOffset({ offset: 0, animated: true });
+  };
+  const openPlaceDetail = (placeId: string) => {
+    setSearchFocused(false);
+    router.push(buildPlaceDetailHref(placeId, tripExploreContext));
+  };
+  const changeDistanceBaseQuery = (value: string) => {
+    setDistanceBaseQuery(value);
+    setSearchFocused(false);
+    setSortMenuOpen(false);
   };
   const clearDistanceBase = () => {
     searchState.setDistanceBasePlace(undefined);
@@ -401,6 +713,7 @@ export function ExploreScreen() {
   const changeKeyword = (value: string) => {
     handleSearchFocus();
     setSortMenuOpen(false);
+    setRegionSearchAttempted(false);
     searchState.setKeyword(value);
   };
   const openFilterSheet = () => {
@@ -408,18 +721,67 @@ export function ExploreScreen() {
     setSortMenuOpen(false);
     setFilterOpen(true);
   };
+  const applyExploreFilters = (input: ExploreFilterApplyInput) => {
+    const selectedTrip = input.tripId ? source.tripsById[input.tripId] : undefined;
+    const tripLocations = selectedTrip
+      ? locationOptions
+        .filter((option) => option.level === "province" && option.regionId === selectedTrip.regionId)
+        .slice(0, 1)
+        .map(locationSelectionFromOption)
+      : undefined;
+    const nextLocations = tripLocations?.length ? tripLocations : activeLocations;
+    const primaryLocation = nextLocations[0];
+    searchState.applyFilters({
+      regionId: primaryLocation?.regionId ?? "all",
+      district: primaryLocation?.district ?? "all",
+      locations: nextLocations,
+      category: input.category,
+      categories: input.categories,
+      classification: input.classification,
+      classifications: input.classifications,
+      eventStartDate: input.eventStartDate,
+      eventEndDate: input.eventEndDate,
+      sort: input.sort,
+      distanceBasePlaceId: searchState.distanceBasePlaceId,
+      distanceBaseLocation: searchState.distanceBaseLocation,
+    });
+    if (input.tripId) actions.setActiveTrip(input.tripId);
+    else {
+      actions.clearActiveTrip();
+      searchState.clearActiveTripContext();
+    }
+    searchState.submitKeyword();
+    setPageState({ key: "", page: 1 });
+    listRef.current?.scrollToOffset({ offset: 0, animated: true });
+  };
+
+  const activeRegionLabel = activeLocations.length === 1
+    ? getPlaceLocationDisplayLabel(activeLocations[0]) || activeLocations[0]?.label || ""
+    : activeLocations.length > 1
+      ? `${getPlaceLocationDisplayLabel(activeLocations[0]) || activeLocations[0]?.label || "선택 지역"} 외 ${activeLocations.length - 1}곳`
+      : "";
+  const searchPlaceholder = hasRegionContext
+    ? `${activeRegionLabel || "선택 지역"} 내의 여행지를 검색해보세요`
+    : "여행할 지역을 검색해주세요";
+  const initialPromptTitle = regionSearchAttempted ? "일치하는 지역이 없어요" : "어디로 떠나볼까요?";
+  const initialPromptDescription = regionSearchAttempted
+    ? "상단 검색창에 시도/시군구 이름을 다시 입력하거나, 지역 목록에서 직접 골라보세요."
+    : "상단 검색창에 지역명을 입력하거나 아래 버튼을 눌러 시도/시군구를 먼저 선택해 주세요.";
+  const initialPromptCtaLabel = regionSearchAttempted ? "지역 목록에서 선택하기" : "지역 선택하기";
 
   if (!placeRepository.available) return <Screen><ErrorState message={placeRepository.message ?? "장소 데이터를 사용할 수 없어요."} /></Screen>;
-  if (placeRepository.remoteEnabled && backendPlacesQuery.isLoading) return <Screen><LoadingState label="장소를 탐색 중이에요." /></Screen>;
-  if (placeRepository.remoteEnabled && backendPlacesQuery.isError && !backendPlacesQuery.data) {
-    return <Screen><ErrorState message={backendPlacesQuery.error instanceof Error ? backendPlacesQuery.error.message : "백엔드 장소 데이터를 불러오지 못했어요."} onRetry={() => { void backendPlacesQuery.refetch(); }} /></Screen>;
-  }
   if (source.currentUserId && !source.usersById[source.currentUserId]) return <Screen><ErrorState message="현재 사용자 정보를 찾을 수 없어 저장과 후보 관계를 불러오지 못했어요." /></Screen>;
 
-  const searchHeader = <View style={styles.fixedSearchHeader}>
-    <View style={styles.searchRow}>
+  const listEmptyComponent = placeRepository.remoteEnabled && backendPlacesQuery.isLoading
+    ? <LoadingState label={`${activeRegionLabel || "선택 지역"} 여행지를 불러오는 중이에요.`} />
+    : placeRepository.remoteEnabled && backendPlacesQuery.isError
+      ? <ErrorState message={backendPlacesQuery.error instanceof Error ? backendPlacesQuery.error.message : "백엔드 장소 데이터를 불러오지 못했어요."} onRetry={() => { void backendPlacesQuery.refetch(); }} />
+      : <EmptyState title="검색 결과가 없어요" description="검색어나 지역, 카테고리 조건을 바꿔 다시 찾아보세요." ctaLabel="조건 초기화" onPress={resetFilters} />;
+
+  const searchHeader = <View style={[styles.fixedSearchHeader, hasRegionContext && EXPLORE_MAP_LAYOUT_EXPERIMENT && styles.fixedSearchHeaderMapOverlay]}>
+    <View style={[styles.searchRow, showSearchDropdown && styles.searchRowDropdownOpen]}>
       <View style={styles.searchGroup}>
-        <PlaceSearchInput value={searchState.keyword} onFocus={handleSearchFocus} onBlur={handleSearchBlur} onChangeText={changeKeyword} onClear={() => changeKeyword("")} onSearch={() => submitSearch()} expanded={showSearchDropdown} placeholder={activeTrip ? `${activeTrip.title} 후보 장소 검색` : "장소, 지역, 태그 검색"} />
+        <PlaceSearchInput value={searchState.keyword} onFocus={handleSearchFocus} onBlur={handleSearchBlur} onChangeText={changeKeyword} onClear={() => changeKeyword("")} onSearch={() => submitSearch()} expanded={showSearchDropdown} placeholder={searchPlaceholder} />
         {showSearchDropdown ? <View style={styles.searchDropdown}>
           {recentSearchMatches.length ? <View style={styles.searchSection}>
             <View style={styles.suggestionHeadingRow}><Text style={styles.suggestionLabel}>최근 검색어</Text><Pressable accessibilityRole="button" accessibilityLabel="최근 검색어 전체 삭제" onPress={clearRecentSearches} style={styles.clearRecentButton}><Text style={styles.clearRecentText}>전체 삭제</Text></Pressable></View>
@@ -432,39 +794,144 @@ export function ExploreScreen() {
         </View> : null}
       </View>
     </View>
-    <View style={styles.filterToolbarRow}>
-      <Pressable accessibilityRole="button" accessibilityLabel="검색 필터 열기" accessibilityState={{ selected: filterActive }} onPress={openFilterSheet} style={styles.filterToolbarButton}><FilterButtonIcon /><Text style={styles.filterToolbarButtonText}>필터</Text></Pressable>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterToolbarChips} contentContainerStyle={styles.filterBadgeRow}>
-        {selectedCategories.map((category) => <Pressable key={category} accessibilityRole="button" accessibilityLabel={`${category} 카테고리 필터 해제`} onPress={() => clearCategoryFilter(category)} style={styles.categoryFilterBadge}><Text numberOfLines={1} style={styles.categoryFilterText}>{category}</Text><Text style={styles.categoryFilterRemove}>×</Text></Pressable>)}
+    {hasRegionContext && !EXPLORE_MAP_LAYOUT_EXPERIMENT ? <View style={[styles.appliedFilterToolbarRow, showSearchDropdown && styles.filterToolbarRowDropdownOpen]}>
+      <Pressable accessibilityRole="button" accessibilityLabel="검색 필터 열기" accessibilityState={{ selected: filterActive }} onPress={openFilterSheet} style={[styles.filterToolbarButton, filterActive && styles.filterToolbarButtonActive]}><FilterButtonIcon /></Pressable>
+      {activeFilterBadges.length ? <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterToolbarChips} contentContainerStyle={styles.filterBadgeRow}>
         {activeFilterBadges.map((badge) => <Pressable key={badge} accessibilityRole="button" accessibilityLabel={`${badge} 필터 수정`} onPress={openFilterSheet} style={styles.filterBadge}><Text numberOfLines={1} style={styles.filterBadgeText}>{badge}</Text></Pressable>)}
-      </ScrollView>
+      </ScrollView> : <View style={styles.filterToolbarSpacer} />}
       {hasFilters ? <Pressable accessibilityRole="button" accessibilityLabel="검색 조건 초기화" onPress={resetFilters} style={styles.inlineReset}><Text style={styles.inlineResetText}>초기화</Text></Pressable> : null}
-    </View>
+    </View> : null}
   </View>;
 
+  const resultSummaryRow = <View style={styles.resultRow}><View style={styles.resultCopy}><Pressable accessibilityRole="button" accessibilityLabel={`${activeRegionLabel || "선택 지역"} 지역 변경`} onPress={() => openRegionSheet()} style={styles.resultRegionButton}><Text numberOfLines={1} style={styles.resultTitle}>{activeRegionLabel || "선택 지역"} 여행지</Text><SymbolView name={{ ios: "chevron.down", android: "keyboard_arrow_down", web: "keyboard_arrow_down" }} tintColor={colors.primary} size={18} weight={{ ios: "semibold", android: mediumSymbolWeight }} style={styles.resultRegionChevron} /></Pressable><Text style={styles.resultCount}>{resultCountText}</Text></View><View style={styles.resultActions}><ExploreSortDropdown value={searchState.sortOption} open={sortMenuOpen} onToggle={() => { setSearchFocused(false); setSortMenuOpen((open) => !open); }} onChange={changeSort} /></View></View>;
+  const mapSheetSummaryRow = <View style={styles.mapSheetSummaryRow}><View style={styles.resultCopy}><Pressable accessibilityRole="button" accessibilityLabel={`${activeRegionLabel || "선택 지역"} 지역 변경`} onPress={() => openRegionSheet()} style={({ pressed }) => [styles.mapSheetRegionButton, pressed && styles.mapSheetRegionButtonPressed]}><View style={styles.mapSheetRegionIcon}><SymbolView name={{ ios: "mappin.circle.fill", android: "location_on", web: "location_on" }} tintColor={colors.primary} size={14} weight={{ ios: "semibold", android: mediumSymbolWeight }} style={styles.mapSheetRegionIconSymbol} /></View><Text numberOfLines={1} style={styles.mapSheetResultTitle}>{activeRegionLabel || "선택 지역"} 여행지</Text></Pressable><Text style={styles.mapSheetResultCount}>{resultCountText}</Text></View><View style={styles.mapSheetResultActions}><ExploreSortDropdown value={searchState.sortOption} open={sortMenuOpen} onToggle={() => { setSearchFocused(false); setSortMenuOpen((open) => !open); }} onChange={changeSort} variant="plain" /></View></View>;
+  const activeMapFilterLabels = activeFilterBadges.length ? activeFilterBadges : ["전체"];
+  const renderPlaceListItem = ({ item }: { item: Place }) => {
+    const viewModel = cardsById[item.id];
+    return viewModel ? <PlaceCard viewModel={viewModel} distanceProximityLabel={distanceProximityById[item.id]} onPress={() => openPlaceDetail(item.id)} onToggleSaved={() => { setSearchFocused(false); actions.toggleSaved(item.id); }} onAddCandidate={() => { setSearchFocused(false); actions.requestCandidate(item.id); }} /> : null;
+  };
+  const classicMapPanel = <>
+    {resultSummaryRow}
+    <View style={styles.mapPanel}>
+      <View style={styles.mapHeading}>
+        <View style={styles.mapIcon}><SymbolView name={{ ios: "map.fill", android: "map", web: "map" }} tintColor={colors.primary} size={19} weight={{ ios: "semibold", android: mediumSymbolWeight }} style={styles.mapIconSymbol} /></View>
+        <View style={styles.flex}>
+          <Text style={styles.mapTitle}>지도</Text>
+          <Text style={styles.mapDescription}>현재 페이지의 검색 결과를 위치로 확인해요.</Text>
+        </View>
+      </View>
+      <KakaoPlaceMap places={pagedPlaces} apiKey={environment.kakaoMapJavascriptKey} baseUrl={environment.kakaoMapBaseUrl} highlightedPlace={searchState.sortOption === "distance" ? distanceBasePlace : undefined} selectedPlaceId={selectedMapPlaceId} onSelectPlace={setSelectedMapPlaceId} />
+      {selectedMapPlace ? <Pressable accessibilityRole="button" accessibilityLabel={`${selectedMapPlace.name} 상세 보기`} onPress={() => openPlaceDetail(selectedMapPlace.id)} style={({ pressed }) => [styles.mapSelectedPlace, pressed && styles.pressed]}>
+        <View style={styles.flex}>
+          <Text numberOfLines={1} style={styles.mapSelectedTitle}>{selectedMapPlace.name}</Text>
+          <Text numberOfLines={1} style={styles.mapSelectedMeta}>{selectedMapPlace.category} · {selectedMapPlace.address}</Text>
+        </View>
+        <Text style={styles.mapSelectedAction}>상세</Text>
+      </Pressable> : null}
+    </View>
+  </>;
   const resultsHeader = <View style={styles.header}>
-    <ActiveTripBanner trip={activeTrip} region={activeTrip ? source.regionsById[activeTrip.regionId] : undefined} onClear={clearActiveTripSelection} />
-    <View style={styles.resultRow}><View style={styles.resultCopy}><Text style={styles.resultTitle}>장소 목록</Text><Text style={styles.resultCount}>{resultCountText}</Text></View><View style={styles.resultActions}><ExploreSortDropdown value={searchState.sortOption} open={sortMenuOpen} onToggle={() => { setSearchFocused(false); setSortMenuOpen((open) => !open); }} onChange={changeSort} /></View></View>
-    {searchState.sortOption === "distance" ? <View style={styles.distanceBasePanel}>
-      {distanceBaseLabel ? <View style={styles.distanceBaseSelected}><View style={styles.flex}><Text style={styles.distanceBaseEyebrow}>거리 기준</Text><Text numberOfLines={1} style={styles.distanceBaseText}>{distanceBaseLabel}</Text></View><Pressable accessibilityRole="button" accessibilityLabel="거리 기준 장소 해제" onPress={clearDistanceBase} style={styles.distanceBaseClear}><Text style={styles.distanceBaseClearText}>×</Text></Pressable></View> : null}
-      <TextInput accessibilityLabel="거리 기준 관광지 검색" value={distanceBaseQuery} onFocus={() => { setSearchFocused(false); setSortMenuOpen(false); }} onChangeText={setDistanceBaseQuery} placeholder="기준 관광지 검색" placeholderTextColor={colors.textMuted} autoCorrect={false} style={styles.distanceBaseInput} />
-      {normalizedDistanceBaseQuery ? <View style={styles.distanceBaseResults}>
-        {distanceBaseMatches.length ? distanceBaseMatches.map((place) => <Pressable key={place.id} accessibilityRole="button" accessibilityLabel={`${place.name} 거리 기준으로 선택`} onPress={() => selectDistanceBasePlace(place.id)} style={styles.distanceBaseResult}><View style={styles.flex}><Text numberOfLines={1} style={styles.distanceBaseResultTitle}>{place.name}</Text><Text numberOfLines={1} style={styles.distanceBaseResultMeta}>{place.address}</Text></View><Text style={styles.linkText}>선택</Text></Pressable>) : <Text style={styles.distanceBaseEmpty}>일치하는 관광지가 없어요.</Text>}
-      </View> : null}
-    </View> : null}
+    {activeTrip ? <ActiveTripBanner trip={activeTrip} region={source.regionsById[activeTrip.regionId]} onClear={clearActiveTripSelection} /> : null}
+    {classicMapPanel}
   </View>;
 
   const paginationPageCount = Math.max(loadedPageCount, currentPage);
-  const pageWindowSize = Math.min(5, paginationPageCount);
-  const firstVisiblePage = Math.min(Math.max(currentPage - 2, 1), Math.max(1, paginationPageCount - pageWindowSize + 1));
-  const visiblePageNumbers = Array.from({ length: pageWindowSize }, (_, index) => firstVisiblePage + index);
+  const pageBlockStart = Math.floor((currentPage - 1) / EXPLORE_PAGE_BLOCK_SIZE) * EXPLORE_PAGE_BLOCK_SIZE + 1;
+  const pageBlockSize = Math.max(1, Math.min(EXPLORE_PAGE_BLOCK_SIZE, paginationPageCount - pageBlockStart + 1));
+  const visiblePageNumbers = Array.from({ length: pageBlockSize }, (_, index) => pageBlockStart + index);
   const pagination = paginationPageCount > 1 || hasNextBackendPage ? <View style={styles.pagination}>
     {paginationPageCount > 1 || hasNextBackendPage ? <View style={styles.pageControls}>
       <Pressable accessibilityRole="button" accessibilityLabel="이전 검색 결과 페이지" accessibilityState={{ disabled: !canGoPreviousPage }} disabled={!canGoPreviousPage} onPress={() => goToPage(currentPage - 1)} style={[styles.pageArrow, !canGoPreviousPage && styles.pageButtonDisabled]}><PaginationChevron direction="left" disabled={!canGoPreviousPage} /></Pressable>
-      <View style={styles.pageDots}>{visiblePageNumbers.map((page) => <Pressable key={page} accessibilityRole="button" accessibilityLabel={`${page}번째 검색 결과 페이지`} accessibilityState={{ selected: currentPage === page }} onPress={() => goToPage(page)} style={[styles.pageDot, currentPage === page && styles.pageDotActive]} />)}</View>
+      <View style={styles.pageNumbers}>{visiblePageNumbers.map((page) => <Pressable key={page} accessibilityRole="button" accessibilityLabel={`${page}번째 검색 결과 페이지`} accessibilityState={{ selected: currentPage === page }} onPress={() => goToPage(page)} style={[styles.pageNumber, currentPage === page && styles.pageNumberActive]}><Text style={[styles.pageNumberText, currentPage === page && styles.pageNumberTextActive]}>{page}</Text></Pressable>)}</View>
       <Pressable accessibilityRole="button" accessibilityLabel="다음 검색 결과 페이지" accessibilityState={{ disabled: !canGoNextPage }} disabled={!canGoNextPage} onPress={() => goToPage(currentPage + 1)} style={[styles.pageArrow, !canGoNextPage && styles.pageButtonDisabled]}><PaginationChevron direction="right" disabled={!canGoNextPage} /></Pressable>
     </View> : null}
   </View> : null;
+
+  if (!hasRegionContext) {
+    return <Screen scroll={false}>
+      {tripExploreContext ? <AppHeader title="장소 더 찾기" onBack={returnToTrip} /> : null}
+      {searchHeader}
+      <View style={styles.initialPrompt}>
+        <Text style={styles.initialPromptTitle}>{initialPromptTitle}</Text>
+        <Text style={styles.initialPromptDescription}>{initialPromptDescription}</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel="탐색 지역 선택" onPress={() => openRegionSheet()} style={styles.initialPromptButton}>
+          <SymbolView name={{ ios: "mappin.circle.fill", android: "location_on", web: "location_on" }} tintColor={colors.white} size={20} weight={{ ios: "semibold", android: mediumSymbolWeight }} style={styles.initialPromptButtonIcon} />
+          <Text style={styles.initialPromptButtonText}>{initialPromptCtaLabel}</Text>
+        </Pressable>
+      </View>
+      <RegionSelectionSheet visible={regionSheetOpen} locationOptions={locationOptions} selectedLocations={activeLocations} initialQuery={regionSheetInitialQuery} onApply={applyRegionSelection} onClose={() => setRegionSheetOpen(false)} />
+      {actions.memberGatePrompt}
+    </Screen>;
+  }
+
+  if (EXPLORE_MAP_LAYOUT_EXPERIMENT) {
+    return <Screen scroll={false} padded={false} includeBottomSafeArea={false}>
+      <View onLayout={handleMapViewportLayout} style={styles.mapFullscreenRoot}>
+        <View style={styles.mapFullscreenMap}>
+          <KakaoPlaceMap places={pagedPlaces} apiKey={environment.kakaoMapJavascriptKey} baseUrl={environment.kakaoMapBaseUrl} highlightedPlace={searchState.sortOption === "distance" ? distanceBasePlace : undefined} fill focusTopInset={mapFocusTopInset} focusBottomInset={mapFocusBottomInset} focusYRatio={mapFocusYRatio} framed={false} selectedPlaceId={selectedMapPlaceId} showBuiltInZoomControl={false} zoomControlBottomOffset={mapZoomControlBottomOffset} onSelectPlace={setSelectedMapPlaceId} />
+        </View>
+        <View onLayout={handleMapFloatingControlsLayout} style={[styles.mapFloatingControls, mapSheetTargetPosition === "expanded" && styles.mapFloatingControlsExpanded, showSearchDropdown && styles.mapFloatingControlsDropdownOpen]}>
+          {tripExploreContext ? <AppHeader title="장소 더 찾기" onBack={returnToTrip} /> : null}
+          {searchHeader}
+        </View>
+        <Animated.View style={[styles.mapResultsSheet, mapSheetTargetPosition === "expanded" && styles.mapResultsSheetExpanded, { height: mapSheetSnapPoints.expanded }, mapSheetAnimatedStyle]}>
+          <GestureDetector gesture={mapSheetDragGesture}>
+            <View style={styles.mapSheetDragHeader}>
+              {mapSheetTargetPosition === "expanded" ? null : <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={mapSheetHandleLabel}
+                onPress={toggleMapSheetPosition}
+                style={styles.mapSheetHandleArea}
+                testID="explore-map-sheet-handle"
+              >
+                <View style={styles.sheetHandle} />
+              </Pressable>}
+              {mapSheetSummaryRow}
+              <View style={styles.mapSheetFilterLine}>
+                <Pressable accessibilityRole="button" accessibilityLabel="검색 필터 열기" accessibilityState={{ selected: filterActive }} onPress={openFilterSheet} style={[styles.mapSheetFilterButton, filterActive && styles.mapSheetFilterButtonActive]}><FilterButtonIcon /></Pressable>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.mapSheetFilterScroll} contentContainerStyle={styles.mapSheetFilterRow}>
+                  {activeMapFilterLabels.map((badge) => <Pressable key={`map-filter:${badge}`} accessibilityRole="button" accessibilityLabel={`${badge} 필터 수정`} onPress={openFilterSheet} style={[styles.mapSheetFilterChip, !activeFilterBadges.length && badge === "전체" && styles.mapSheetFilterChipActive]}><Text numberOfLines={1} style={[styles.mapSheetFilterChipText, !activeFilterBadges.length && badge === "전체" && styles.mapSheetFilterChipTextActive]}>{badge}</Text></Pressable>)}
+                </ScrollView>
+                {hasFilters ? <Pressable accessibilityRole="button" accessibilityLabel="검색 조건 초기화" onPress={resetFilters} style={styles.mapSheetReset}><Text style={styles.mapSheetResetText}>초기화</Text></Pressable> : null}
+              </View>
+            </View>
+          </GestureDetector>
+          {mapSheetBodyVisible && selectedMapPlace ? <Pressable accessibilityRole="button" accessibilityLabel={`${selectedMapPlace.name} 상세 보기`} onPress={() => openPlaceDetail(selectedMapPlace.id)} style={({ pressed }) => [styles.mapSelectedPlace, styles.mapSheetSelectedPlace, pressed && styles.pressed]}>
+            <View style={styles.flex}>
+              <Text numberOfLines={1} style={styles.mapSelectedTitle}>{selectedMapPlace.name}</Text>
+              <Text numberOfLines={1} style={styles.mapSelectedMeta}>{selectedMapPlace.category} · {selectedMapPlace.address}</Text>
+            </View>
+            <Text style={styles.mapSelectedAction}>상세</Text>
+          </Pressable> : null}
+          {mapSheetBodyVisible ? <FlatList
+            ref={listRef}
+            style={styles.mapSheetList}
+            data={pagedPlaces}
+            keyExtractor={(place) => place.id}
+            keyboardShouldPersistTaps="handled"
+            onScrollBeginDrag={() => { setSearchFocused(false); setSortMenuOpen(false); }}
+            onScroll={handleMapSheetListScroll}
+            onScrollEndDrag={handleMapSheetListScrollEndDrag}
+            scrollEventThrottle={16}
+            bounces={mapSheetPosition === "expanded"}
+            overScrollMode="always"
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={mapSheetListContentStyle}
+            extraData={`${sortMenuOpen}-${searchState.sortOption}-${selectedClassificationValues}-${activeFilterBadges.join("|")}-${distanceBaseLabel ?? ""}-${selectedMapPlaceId ?? ""}`}
+            ItemSeparatorComponent={() => <View style={styles.mapSheetCardGap} />}
+            ListFooterComponent={pagination}
+            ListEmptyComponent={listEmptyComponent}
+            renderItem={renderPlaceListItem}
+          /> : null}
+        </Animated.View>
+      </View>
+      <PlaceFeedbackBanner feedback={actions.feedback} onClose={actions.clearFeedback} onAction={(tripId) => router.push({ pathname: "/trips/[tripId]/workspace", params: { tripId } })} />
+      <RegionSelectionSheet visible={regionSheetOpen} locationOptions={locationOptions} selectedLocations={activeLocations} initialQuery={regionSheetInitialQuery} onApply={applyRegionSelection} onClose={() => setRegionSheetOpen(false)} />
+      <ExploreFilterSheet visible={filterOpen} categoryTree={categoryCodeTreeQuery.data ?? []} selectedClassifications={selectedClassifications} availableClassificationValues={availableClassificationValues} categoryTreeLoading={categoryCodeTreeQuery.isFetching && !categoryCodeTreeQuery.data} selectedEventStartDate={searchState.eventStartDate} selectedEventEndDate={searchState.eventEndDate} sortOption={searchState.sortOption} trips={actions.eligibleTrips} regionsById={source.regionsById} activeTripId={source.activeTripId} onApply={applyExploreFilters} onReset={resetFilters} onClose={() => setFilterOpen(false)} />
+      <DistanceBasePlaceSheet visible={distanceBaseSheetOpen} query={distanceBaseQuery} selectedPlace={distanceBasePlace} candidatePlaces={activeTripCandidatePlaces} searchResults={distanceBaseMatches} searchLoading={backendDistanceBaseSearchQuery.isFetching && Boolean(normalizedDistanceBaseQuery)} activeTripTitle={activeTrip?.title} onQueryChange={changeDistanceBaseQuery} onSelect={selectDistanceBasePlace} onClear={clearDistanceBase} onClose={() => setDistanceBaseSheetOpen(false)} />
+      <AddCandidateTripPickerModal visible={Boolean(actions.selectedPlace)} place={actions.selectedPlace} trips={actions.eligibleTrips} regionsById={source.regionsById} getState={(tripId) => actions.selectedPlace ? actions.getCandidateState(tripId, actions.selectedPlace.id) : "not-added"} onSelect={actions.addToTrip} onCreateTrip={() => { actions.closeCandidatePicker(); router.push("/trips/new"); }} onClose={actions.closeCandidatePicker} />
+      {actions.memberGatePrompt}</Screen>;
+  }
 
   return <Screen scroll={false}>
     {tripExploreContext ? <AppHeader title="장소 더 찾기" onBack={returnToTrip} /> : null}
@@ -477,30 +944,30 @@ export function ExploreScreen() {
     onScrollBeginDrag={() => { setSearchFocused(false); setSortMenuOpen(false); }}
     showsVerticalScrollIndicator={false}
     contentContainerStyle={styles.list}
-    extraData={`${sortMenuOpen}-${searchState.sortOption}-${selectedCategories.join("|")}-${activeFilterBadges.join("|")}-${distanceBaseLabel ?? ""}`}
+    extraData={`${sortMenuOpen}-${searchState.sortOption}-${selectedClassificationValues}-${activeFilterBadges.join("|")}-${distanceBaseLabel ?? ""}-${selectedMapPlaceId ?? ""}`}
     ItemSeparatorComponent={() => <View style={styles.gap} />}
     ListHeaderComponent={resultsHeader}
     ListFooterComponent={pagination}
-    ListEmptyComponent={<EmptyState title="검색 결과가 없어요" description="검색어나 지역, 카테고리 조건을 바꿔 다시 찾아보세요." ctaLabel="조건 초기화" onPress={resetFilters} />}
-    renderItem={({ item }) => {
-      const viewModel = cardsById[item.id];
-      return viewModel ? <PlaceCard viewModel={viewModel} distanceProximityLabel={distanceProximityById[item.id]} onPress={() => { setSearchFocused(false); router.push(buildPlaceDetailHref(item.id, tripExploreContext)); }} onToggleSaved={() => { setSearchFocused(false); actions.toggleSaved(item.id); }} onAddCandidate={() => { setSearchFocused(false); actions.requestCandidate(item.id); }} /> : null;
-    }}
+    ListEmptyComponent={listEmptyComponent}
+    renderItem={renderPlaceListItem}
   />
   <PlaceFeedbackBanner feedback={actions.feedback} onClose={actions.clearFeedback} onAction={(tripId) => router.push({ pathname: "/trips/[tripId]/workspace", params: { tripId } })} />
-  <ExploreFilterSheet visible={filterOpen} locationOptions={locationOptions} categories={filterCategories} selectedLocations={activeLocations} selectedCategories={selectedCategories} selectedEventStartDate={searchState.eventStartDate} selectedEventEndDate={searchState.eventEndDate} festivalCategory={TOUR_FESTIVAL_CATEGORY} sortOption={searchState.sortOption} trips={actions.eligibleTrips} regionsById={source.regionsById} activeTripId={source.activeTripId} onApply={(input) => { const selectedTrip = input.tripId ? source.tripsById[input.tripId] : undefined; const nextInput = selectedTrip && input.locations.length === 0 ? { ...input, regionId: selectedTrip.regionId, district: "all" as const } : input; searchState.applyFilters({ ...nextInput, distanceBasePlaceId: searchState.distanceBasePlaceId, distanceBaseLocation: searchState.distanceBaseLocation }); if (input.tripId) actions.setActiveTrip(input.tripId); else { actions.clearActiveTrip(); searchState.clearActiveTripContext(); } searchState.submitKeyword(); setPageState({ key: "", page: 1 }); listRef.current?.scrollToOffset({ offset: 0, animated: true }); }} onReset={resetFilters} onClose={() => setFilterOpen(false)} />
+  <RegionSelectionSheet visible={regionSheetOpen} locationOptions={locationOptions} selectedLocations={activeLocations} initialQuery={regionSheetInitialQuery} onApply={applyRegionSelection} onClose={() => setRegionSheetOpen(false)} />
+  <ExploreFilterSheet visible={filterOpen} categoryTree={categoryCodeTreeQuery.data ?? []} selectedClassifications={selectedClassifications} availableClassificationValues={availableClassificationValues} categoryTreeLoading={categoryCodeTreeQuery.isFetching && !categoryCodeTreeQuery.data} selectedEventStartDate={searchState.eventStartDate} selectedEventEndDate={searchState.eventEndDate} sortOption={searchState.sortOption} trips={actions.eligibleTrips} regionsById={source.regionsById} activeTripId={source.activeTripId} onApply={applyExploreFilters} onReset={resetFilters} onClose={() => setFilterOpen(false)} />
+  <DistanceBasePlaceSheet visible={distanceBaseSheetOpen} query={distanceBaseQuery} selectedPlace={distanceBasePlace} candidatePlaces={activeTripCandidatePlaces} searchResults={distanceBaseMatches} searchLoading={backendDistanceBaseSearchQuery.isFetching && Boolean(normalizedDistanceBaseQuery)} activeTripTitle={activeTrip?.title} onQueryChange={changeDistanceBaseQuery} onSelect={selectDistanceBasePlace} onClear={clearDistanceBase} onClose={() => setDistanceBaseSheetOpen(false)} />
   <AddCandidateTripPickerModal visible={Boolean(actions.selectedPlace)} place={actions.selectedPlace} trips={actions.eligibleTrips} regionsById={source.regionsById} getState={(tripId) => actions.selectedPlace ? actions.getCandidateState(tripId, actions.selectedPlace.id) : "not-added"} onSelect={actions.addToTrip} onCreateTrip={() => { actions.closeCandidatePicker(); router.push("/trips/new"); }} onClose={actions.closeCandidatePicker} />
   {actions.memberGatePrompt}</Screen>;
 }
 
-function ExploreSortDropdown({ value, open, onToggle, onChange }: { value: PlaceSortOption; open: boolean; onToggle(): void; onChange(value: PlaceSortOption): void }) {
+function ExploreSortDropdown({ value, open, onToggle, onChange, variant = "button" }: { value: PlaceSortOption; open: boolean; onToggle(): void; onChange(value: PlaceSortOption): void; variant?: "button" | "plain" }) {
   const current = EXPLORE_SORT_OPTIONS.find((option) => option.value === value) ?? EXPLORE_SORT_OPTIONS[0];
   const buttonRef = useRef<View>(null);
   const [anchor, setAnchor] = useState<{ top: number; left: number; width: number }>();
+  const plain = variant === "plain";
   const toggleMenu = () => {
     if (!open) {
       buttonRef.current?.measureInWindow((left, top, width, height) => {
-        setAnchor({ top: top + height + spacing.xs, left, width });
+        setAnchor({ top: top + height + spacing.xs, left: plain ? left + 5 : left, width });
       });
     }
     onToggle();
@@ -510,8 +977,8 @@ function ExploreSortDropdown({ value, open, onToggle, onChange }: { value: Place
   };
 
   return <>
-    <View style={styles.sortDropdownRoot}>
-      <Pressable ref={buttonRef} accessibilityRole="button" accessibilityLabel={`정렬 기준 ${current.label}`} accessibilityState={{ expanded: open }} onPress={toggleMenu} style={styles.sortDropdownButton}><Text style={styles.sortDropdownText}>{current.label}</Text><SortChevronIcon open={open} /></Pressable>
+    <View style={[styles.sortDropdownRoot, plain && styles.sortDropdownRootPlain]}>
+      <Pressable ref={buttonRef} accessibilityRole="button" accessibilityLabel={`정렬 기준 ${current.label}`} accessibilityState={{ expanded: open }} onPress={toggleMenu} style={[styles.sortDropdownButton, plain && styles.sortDropdownButtonPlain]}><Text style={styles.sortDropdownText}>{current.label}</Text><SortChevronIcon open={open} /></Pressable>
     </View>
     <Modal visible={open} transparent animationType="fade" onRequestClose={closeMenu}>
       <View style={styles.sortDropdownModalRoot}>
@@ -527,6 +994,84 @@ function ExploreSortDropdown({ value, open, onToggle, onChange }: { value: Place
   </>;
 }
 
+function DistanceBasePlaceSheet({
+  visible,
+  query,
+  selectedPlace,
+  candidatePlaces,
+  searchResults,
+  searchLoading,
+  activeTripTitle,
+  onQueryChange,
+  onSelect,
+  onClear,
+  onClose,
+}: {
+  visible: boolean;
+  query: string;
+  selectedPlace?: Place;
+  candidatePlaces: readonly Place[];
+  searchResults: readonly Place[];
+  searchLoading: boolean;
+  activeTripTitle?: string;
+  onQueryChange(value: string): void;
+  onSelect(placeId: string): void;
+  onClear(): void;
+  onClose(): void;
+}) {
+  if (!visible) return null;
+  const normalizedQuery = normalizeSearchKeyword(query);
+  const candidateResults = candidatePlaces.filter((place) => place.id !== selectedPlace?.id).slice(0, 8);
+
+  return <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <View style={styles.distanceSheetOverlay}>
+      <Pressable accessibilityRole="button" accessibilityLabel="거리 기준 관광지 선택 닫기" onPress={onClose} style={StyleSheet.absoluteFill} />
+      <View style={styles.distanceSheet}>
+        <View style={styles.sheetHandle} />
+        <View style={styles.distanceSheetHeading}>
+          <View style={styles.flex}>
+            <Text style={styles.distanceSheetTitle}>거리 기준 관광지</Text>
+            <Text style={styles.distanceSheetSubtitle}>가까운 여행지부터 보려면 출발점이 될 장소를 골라주세요.</Text>
+          </View>
+          <Pressable accessibilityRole="button" accessibilityLabel="거리 기준 관광지 선택 닫기" onPress={onClose} style={styles.distanceSheetClose}><Text style={styles.distanceSheetCloseText}>×</Text></Pressable>
+        </View>
+        <View style={styles.distanceBaseInputWrap}>
+          <TextInput accessibilityLabel="거리 기준 관광지 검색" value={query} onChangeText={onQueryChange} placeholder="기준 관광지를 검색해보세요" placeholderTextColor={colors.textMuted} returnKeyType="search" autoCorrect={false} style={styles.distanceBaseInput} />
+          {query ? <Pressable accessibilityRole="button" accessibilityLabel="거리 기준 관광지 검색어 지우기" onPress={() => onQueryChange("")} style={styles.distanceBaseClear}><Text style={styles.distanceBaseClearText}>×</Text></Pressable> : null}
+        </View>
+        {selectedPlace ? <View style={styles.distanceSelectedCard}>
+          <View style={styles.flex}>
+            <Text style={styles.distanceSelectedEyebrow}>현재 기준</Text>
+            <Text numberOfLines={1} style={styles.distanceSelectedTitle}>{selectedPlace.name}</Text>
+            <Text numberOfLines={1} style={styles.distanceSelectedMeta}>{selectedPlace.address}</Text>
+          </View>
+          <Pressable accessibilityRole="button" accessibilityLabel="거리 기준 관광지 해제" onPress={onClear} style={styles.distanceSelectedClear}><Text style={styles.distanceSelectedClearText}>해제</Text></Pressable>
+        </View> : null}
+        <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} style={styles.distanceSheetList} contentContainerStyle={styles.distanceSheetListContent}>
+          {normalizedQuery ? <View style={styles.distanceSheetSection}>
+            <Text style={styles.distanceSheetSectionTitle}>검색 결과</Text>
+            {searchLoading ? <Text style={styles.distanceSheetEmpty}>관광지를 찾는 중이에요.</Text> : searchResults.length ? searchResults.map((place) => <DistanceBasePlaceRow key={`search:${place.id}`} place={place} selected={place.id === selectedPlace?.id} onSelect={onSelect} />) : <Text style={styles.distanceSheetEmpty}>일치하는 관광지가 없어요.</Text>}
+          </View> : null}
+          <View style={styles.distanceSheetSection}>
+            <Text style={styles.distanceSheetSectionTitle}>{activeTripTitle ? `${activeTripTitle} 후보` : "여행방 후보"}</Text>
+            {candidateResults.length ? candidateResults.map((place) => <DistanceBasePlaceRow key={`candidate:${place.id}`} place={place} selected={place.id === selectedPlace?.id} onSelect={onSelect} />) : <Text style={styles.distanceSheetEmpty}>{activeTripTitle ? "이 여행방에 담긴 후보 장소가 아직 없어요." : "후보를 담을 여행방을 선택하면 그 방의 장소도 바로 고를 수 있어요."}</Text>}
+          </View>
+        </ScrollView>
+      </View>
+    </View>
+  </Modal>;
+}
+
+function DistanceBasePlaceRow({ place, selected, onSelect }: { place: Place; selected: boolean; onSelect(placeId: string): void }) {
+  return <Pressable accessibilityRole="button" accessibilityState={{ selected }} accessibilityLabel={`${place.name} 거리 기준으로 선택`} onPress={() => onSelect(place.id)} style={({ pressed }) => [styles.distancePlaceRow, selected && styles.distancePlaceRowSelected, pressed && styles.pressed]}>
+    <View style={styles.flex}>
+      <Text numberOfLines={1} style={[styles.distancePlaceTitle, selected && styles.distancePlaceTitleSelected]}>{place.name}</Text>
+      <Text numberOfLines={1} style={[styles.distancePlaceMeta, selected && styles.distancePlaceMetaSelected]}>{place.category} · {place.address}</Text>
+    </View>
+    <Text style={[styles.distancePlaceAction, selected && styles.distancePlaceActionSelected]}>{selected ? "기준" : "선택"}</Text>
+  </Pressable>;
+}
+
 function SortChevronIcon({ open }: { open: boolean }) {
   return <SymbolView name={{ ios: "chevron.down", android: "keyboard_arrow_down", web: "keyboard_arrow_down" }} tintColor={colors.primary} size={18} weight={{ ios: "semibold", android: mediumSymbolWeight }} style={[styles.sortChevronIcon, open && styles.sortChevronOpen]} />;
 }
@@ -540,15 +1085,24 @@ function PaginationChevron({ direction, disabled }: { direction: "left" | "right
 }
 
 const styles = StyleSheet.create({
-  fixedSearchHeader: { zIndex: 120, gap: spacing.sm, paddingTop: spacing.sm, paddingBottom: spacing.sm, backgroundColor: colors.background },
+  fixedSearchHeader: { position: "relative", zIndex: 200, gap: spacing.sm, paddingTop: spacing.sm, paddingBottom: spacing.sm, backgroundColor: colors.background },
+  fixedSearchHeaderMapOverlay: { backgroundColor: "transparent" },
   listFrame: { flex: 1, zIndex: 1 },
   flex: { flex: 1 },
+  pressed: { opacity: 0.82 },
   list: { paddingTop: spacing.xs, paddingBottom: spacing.xxxl },
   header: { zIndex: 90, elevation: 30, gap: spacing.sm, marginBottom: spacing.lg },
+  initialPrompt: { flex: 1, alignItems: "center", justifyContent: "center", gap: spacing.sm, paddingHorizontal: spacing.xl, paddingBottom: spacing.xxxl },
+  initialPromptTitle: { ...typography.title, color: colors.text, textAlign: "center" },
+  initialPromptDescription: { ...typography.body, color: colors.textSecondary, textAlign: "center" },
+  initialPromptButton: { minHeight: 46, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs, paddingHorizontal: spacing.lg, borderRadius: radius.pill, backgroundColor: colors.primary, ...shadows.card },
+  initialPromptButtonIcon: { width: 20, height: 20 },
+  initialPromptButtonText: { ...typography.bodyStrong, color: colors.white },
   gap: { height: spacing.md },
-  searchRow: { zIndex: 50, flexDirection: "row", alignItems: "center", gap: spacing.xs },
-  searchGroup: { zIndex: 60, flex: 1, position: "relative" },
-  searchDropdown: { position: "absolute", top: 51, left: 0, right: 0, zIndex: 80, maxHeight: 320, overflow: "hidden", borderWidth: 1, borderTopWidth: 0, borderColor: colors.borderStrong, borderBottomLeftRadius: radius.md, borderBottomRightRadius: radius.md, backgroundColor: colors.surface, ...shadows.floating },
+  searchRow: { position: "relative", zIndex: 20, minHeight: 52 },
+  searchRowDropdownOpen: { zIndex: 180 },
+  searchGroup: { zIndex: 1, minHeight: 52, position: "relative" },
+  searchDropdown: { position: "absolute", top: 51, left: 0, right: 0, zIndex: 220, maxHeight: 320, overflow: "hidden", borderWidth: 1, borderTopWidth: 0, borderColor: colors.borderStrong, borderBottomLeftRadius: radius.md, borderBottomRightRadius: radius.md, backgroundColor: colors.surface, ...shadows.floating },
   searchSection: { borderTopWidth: 1, borderTopColor: colors.border },
   suggestionHeadingRow: { minHeight: 38, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm, paddingRight: spacing.md },
   suggestionLabel: { ...typography.caption, color: colors.textSecondary, paddingHorizontal: spacing.md, paddingTop: spacing.sm, paddingBottom: spacing.xs },
@@ -561,7 +1115,9 @@ const styles = StyleSheet.create({
   recentBadge: { ...typography.caption, color: colors.textSecondary, paddingHorizontal: spacing.sm, paddingVertical: spacing.xxs, borderRadius: radius.pill, backgroundColor: colors.surfaceMuted },
   regionBadge: { ...typography.caption, color: colors.primary, paddingHorizontal: spacing.sm, paddingVertical: spacing.xxs, borderRadius: radius.pill, backgroundColor: colors.primarySoft },
   sortDropdownRoot: { zIndex: 160, elevation: 40, position: "relative" },
-  sortDropdownButton: { minHeight: 42, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm, paddingHorizontal: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.surface },
+  sortDropdownRootPlain: { alignItems: "stretch" },
+  sortDropdownButton: { minHeight: 38, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm, paddingHorizontal: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.surface },
+  sortDropdownButtonPlain: { minHeight: 30, alignItems: "flex-end", justifyContent: "flex-end", paddingHorizontal: 0, borderWidth: 0, backgroundColor: "transparent" },
   sortDropdownText: { ...typography.bodyStrong, color: colors.text },
   sortChevronIcon: { width: 18, height: 18 },
   sortChevronOpen: { transform: [{ rotate: "180deg" }] },
@@ -573,45 +1129,119 @@ const styles = StyleSheet.create({
   sortDropdownOptionText: { ...typography.body, color: colors.text },
   sortDropdownOptionTextSelected: { ...typography.bodyStrong, color: colors.primary },
   sortSelectedMark: { ...typography.bodyStrong, color: colors.primary },
+  sheetHandle: { alignSelf: "center", width: 42, height: 5, borderRadius: radius.pill, backgroundColor: colors.borderStrong },
+  distanceSheetOverlay: { flex: 1, justifyContent: "flex-end", backgroundColor: colors.overlay },
+  distanceSheet: { height: "80%", gap: spacing.md, paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.lg, borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl, backgroundColor: colors.background, ...shadows.floating },
+  distanceSheetHeading: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  distanceSheetTitle: { ...typography.subtitle, color: colors.text },
+  distanceSheetSubtitle: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
+  distanceSheetClose: { width: 44, height: 44, alignItems: "center", justifyContent: "center", borderRadius: radius.pill, backgroundColor: colors.surface },
+  distanceSheetCloseText: { fontSize: 24, lineHeight: 26, textAlign: "center", color: colors.textSecondary },
+  distanceSelectedCard: { minHeight: 62, flexDirection: "row", alignItems: "center", gap: spacing.sm, padding: spacing.sm, borderRadius: radius.md, borderWidth: 1, borderColor: colors.primary, backgroundColor: colors.primarySoft },
+  distanceSelectedEyebrow: { ...typography.caption, color: colors.primary },
+  distanceSelectedTitle: { ...typography.bodyStrong, color: colors.text },
+  distanceSelectedMeta: { ...typography.caption, color: colors.textSecondary, marginTop: 1 },
+  distanceSelectedClear: { minHeight: 34, justifyContent: "center", paddingHorizontal: spacing.sm, borderRadius: radius.pill, backgroundColor: colors.surface },
+  distanceSelectedClearText: { ...typography.caption, color: colors.primary },
+  distanceSheetList: { flex: 1, minHeight: 0 },
+  distanceSheetListContent: { gap: spacing.md, paddingBottom: spacing.lg },
+  distanceSheetSection: { gap: spacing.xs },
+  distanceSheetSectionTitle: { ...typography.bodyStrong, color: colors.text },
+  distanceSheetEmpty: { ...typography.caption, color: colors.textSecondary, padding: spacing.sm, borderRadius: radius.md, backgroundColor: colors.surfaceMuted },
+  distancePlaceRow: { minHeight: 62, flexDirection: "row", alignItems: "center", gap: spacing.sm, padding: spacing.sm, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  distancePlaceRowSelected: { borderColor: colors.primary, backgroundColor: colors.primary },
+  distancePlaceTitle: { ...typography.bodyStrong, color: colors.text },
+  distancePlaceTitleSelected: { color: colors.white },
+  distancePlaceMeta: { ...typography.caption, color: colors.textSecondary, marginTop: 1 },
+  distancePlaceMetaSelected: { color: colors.primarySoft },
+  distancePlaceAction: { ...typography.caption, color: colors.primary },
+  distancePlaceActionSelected: { color: colors.white },
   distanceBasePanel: { gap: spacing.xs, padding: spacing.sm, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   distanceBaseSelected: { minHeight: 42, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.sm, borderRadius: radius.sm, backgroundColor: colors.primarySoft },
   distanceBaseEyebrow: { ...typography.caption, color: colors.primary },
   distanceBaseText: { ...typography.bodyStrong, color: colors.text },
-  distanceBaseClear: { width: 34, height: 34, alignItems: "center", justifyContent: "center", borderRadius: radius.pill, backgroundColor: colors.surface },
+  distanceBaseInputWrap: { minHeight: 44, flexDirection: "row", alignItems: "center", borderRadius: radius.sm, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.background, overflow: "hidden" },
+  distanceBaseClear: { width: 42, alignSelf: "stretch", alignItems: "center", justifyContent: "center" },
   distanceBaseClearText: { fontSize: 22, lineHeight: 24, textAlign: "center", color: colors.primary },
-  distanceBaseInput: { minHeight: 42, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.borderStrong, paddingHorizontal: spacing.sm, ...typography.body, color: colors.text, backgroundColor: colors.background },
+  distanceBaseInput: { flex: 1, height: 42, paddingHorizontal: spacing.sm, paddingTop: 10, paddingBottom: 10, textAlignVertical: "center", ...typography.body, color: colors.text },
   distanceBaseResults: { overflow: "hidden", borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   distanceBaseResult: { minHeight: 52, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.sm, borderTopWidth: 1, borderTopColor: colors.border },
   distanceBaseResultTitle: { ...typography.bodyStrong, color: colors.text },
   distanceBaseResultMeta: { ...typography.caption, color: colors.textSecondary, marginTop: 1 },
   distanceBaseEmpty: { ...typography.caption, color: colors.textSecondary, padding: spacing.sm },
   linkText: { ...typography.caption, color: colors.primary },
-  filterToolbarRow: { zIndex: 1, minHeight: 40, flexDirection: "row", alignItems: "center", gap: spacing.sm },
-  filterToolbarButton: { minHeight: 38, minWidth: 74, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs, paddingHorizontal: spacing.md, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.primary, backgroundColor: colors.primary, ...shadows.card },
+  filterToolbarRowDropdownOpen: { zIndex: 10 },
+  appliedFilterToolbarRow: { position: "relative", zIndex: 80, minHeight: 42, flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  filterToolbarButton: { flexShrink: 0, width: 42, minHeight: 38, alignItems: "center", justifyContent: "center", borderRadius: radius.pill, borderWidth: 1, borderColor: colors.primary, backgroundColor: colors.primary, ...shadows.card },
   filterToolbarButtonActive: { borderColor: colors.primary, backgroundColor: colors.primary },
   filterButtonIcon: { width: 18, height: 18 },
-  filterToolbarButtonText: { ...typography.caption, color: colors.white },
-  filterToolbarButtonTextActive: { color: colors.white },
-  filterToolbarChips: { flex: 1 },
+  filterToolbarChips: { flex: 1, minWidth: 0 },
+  filterToolbarSpacer: { flex: 1 },
   filterBadgeRow: { alignItems: "center", gap: spacing.xs, paddingRight: spacing.sm },
   categoryFilterBadge: { minHeight: 34, maxWidth: 168, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs, paddingLeft: spacing.sm, paddingRight: spacing.xs, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.primary, backgroundColor: colors.primarySoft },
   categoryFilterText: { ...typography.caption, color: colors.primary },
   categoryFilterRemove: { minWidth: 18, fontSize: 18, lineHeight: 20, textAlign: "center", color: colors.primary },
   filterBadge: { minHeight: 34, justifyContent: "center", paddingHorizontal: spacing.sm, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.surface },
   filterBadgeText: { ...typography.caption, color: colors.textSecondary },
-  inlineReset: { minHeight: 34, alignItems: "center", justifyContent: "center", paddingHorizontal: spacing.xs },
+  inlineReset: { flexShrink: 0, minHeight: 34, alignItems: "center", justifyContent: "center", paddingHorizontal: spacing.xs },
   inlineResetText: { ...typography.caption, color: colors.primary, textDecorationLine: "underline" },
   resultRow: { zIndex: 100, elevation: 40, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm },
   resultCopy: { flex: 1, minWidth: 0 },
+  resultRegionButton: { maxWidth: "100%", minHeight: 30, flexDirection: "row", alignItems: "center", alignSelf: "flex-start", gap: spacing.xs },
+  resultRegionChevron: { flexShrink: 0, width: 18, height: 18 },
   resultTitle: { ...typography.subtitle, color: colors.text },
   resultCount: { ...typography.caption, color: colors.textSecondary },
   resultActions: { zIndex: 30, width: 142, alignItems: "stretch" },
+  mapPanel: { gap: spacing.sm, marginTop: spacing.sm },
+  mapHeading: { minHeight: 42, flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  mapIcon: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderRadius: radius.pill, backgroundColor: colors.primarySoft },
+  mapIconSymbol: { width: 19, height: 19 },
+  mapTitle: { ...typography.bodyStrong, color: colors.text },
+  mapDescription: { ...typography.caption, color: colors.textSecondary, marginTop: 1 },
+  mapFullscreenRoot: { flex: 1, position: "relative", overflow: "hidden", backgroundColor: colors.background },
+  mapFullscreenMap: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, backgroundColor: colors.surfaceMuted },
+  mapFloatingControls: { position: "absolute", top: 0, left: 0, right: 0, zIndex: 220, elevation: 60, gap: spacing.xs, paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.sm },
+  mapFloatingControlsExpanded: { backgroundColor: colors.background, borderBottomWidth: 0 },
+  mapFloatingControlsDropdownOpen: { zIndex: 320, elevation: 80 },
+  mapResultsSheet: { position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 180, elevation: 50, overflow: "hidden", gap: spacing.xxs, paddingHorizontal: spacing.lg, paddingBottom: spacing.sm, borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl, borderWidth: 1, borderBottomWidth: 0, borderColor: "#D6DEE8", backgroundColor: colors.background, ...shadows.floating },
+  mapResultsSheetExpanded: { zIndex: 240, elevation: 70, borderTopWidth: 0, borderTopLeftRadius: 0, borderTopRightRadius: 0 },
+  mapSheetDragHeader: { gap: spacing.xxs },
+  mapSheetHandleArea: { minHeight: 22, alignItems: "center", justifyContent: "center" },
+  mapSheetSummaryRow: { zIndex: 100, elevation: 40, minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm },
+  mapSheetRegionButton: { maxWidth: "100%", minHeight: 28, flexDirection: "row", alignItems: "center", alignSelf: "flex-start", gap: spacing.xs, paddingRight: spacing.xs, borderRadius: radius.pill },
+  mapSheetRegionButtonPressed: { backgroundColor: colors.primarySoft },
+  mapSheetRegionIcon: { width: 22, height: 22, alignItems: "center", justifyContent: "center", borderRadius: radius.pill, backgroundColor: colors.primarySoft },
+  mapSheetRegionIconSymbol: { width: 14, height: 14 },
+  mapSheetResultTitle: { ...typography.bodyStrong, color: colors.text },
+  mapSheetResultCount: { ...typography.caption, color: colors.textSecondary, marginTop: -1 },
+  mapSheetResultActions: { zIndex: 30, width: 126, alignItems: "stretch", alignSelf: "flex-end", justifyContent: "flex-end", marginRight: 15 },
+  mapSheetFilterLine: { minHeight: 34, flexDirection: "row", alignItems: "center", gap: spacing.xs },
+  mapSheetFilterScroll: { flex: 1, minWidth: 0 },
+  mapSheetFilterRow: { alignItems: "center", gap: spacing.xs, paddingRight: spacing.sm },
+  mapSheetFilterButton: { width: 36, minHeight: 32, alignItems: "center", justifyContent: "center", borderRadius: radius.pill, borderWidth: 1, borderColor: colors.primary, backgroundColor: colors.primary },
+  mapSheetFilterButtonActive: { backgroundColor: colors.primary },
+  mapSheetFilterChip: { minHeight: 32, justifyContent: "center", paddingHorizontal: spacing.sm, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.surface },
+  mapSheetFilterChipActive: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
+  mapSheetFilterChipText: { ...typography.caption, color: colors.textSecondary },
+  mapSheetFilterChipTextActive: { color: colors.primary },
+  mapSheetReset: { flexShrink: 0, minHeight: 32, alignItems: "center", justifyContent: "center", paddingHorizontal: spacing.xs },
+  mapSheetResetText: { ...typography.caption, color: colors.primary, textDecorationLine: "underline" },
+  mapSheetSelectedPlace: { flexShrink: 0 },
+  mapSheetList: { flex: 1, minHeight: 0 },
+  mapSheetListContent: { paddingTop: spacing.md, paddingBottom: spacing.lg },
+  mapSheetCardGap: { height: spacing.sm },
+  mapSelectedPlace: { minHeight: 58, flexDirection: "row", alignItems: "center", gap: spacing.sm, padding: spacing.sm, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  mapSelectedTitle: { ...typography.bodyStrong, color: colors.text },
+  mapSelectedMeta: { ...typography.caption, color: colors.textSecondary, marginTop: 1 },
+  mapSelectedAction: { ...typography.caption, color: colors.primary },
   pagination: { alignItems: "center", justifyContent: "center", gap: spacing.sm, paddingTop: spacing.lg },
   pageControls: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm },
   pageArrow: { width: 44, minHeight: 44, alignItems: "center", justifyContent: "center", borderRadius: radius.pill, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.surface },
   paginationChevronIcon: { width: 22, height: 22 },
   pageButtonDisabled: { borderColor: colors.border, backgroundColor: colors.surfaceMuted },
-  pageDots: { minHeight: 42, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, paddingHorizontal: spacing.sm, borderRadius: radius.pill, backgroundColor: colors.surface },
-  pageDot: { width: 9, height: 9, borderRadius: radius.pill, backgroundColor: colors.borderStrong },
-  pageDotActive: { width: 24, backgroundColor: colors.primary },
+  pageNumbers: { minHeight: 42, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xxs, paddingHorizontal: spacing.xxs, borderRadius: radius.pill, backgroundColor: colors.surface },
+  pageNumber: { minWidth: 34, minHeight: 34, alignItems: "center", justifyContent: "center", paddingHorizontal: spacing.xxs, borderRadius: radius.pill },
+  pageNumberActive: { backgroundColor: colors.primary },
+  pageNumberText: { ...typography.bodyStrong, color: colors.textSecondary },
+  pageNumberTextActive: { color: colors.surface },
 });

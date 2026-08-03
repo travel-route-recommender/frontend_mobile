@@ -1,5 +1,6 @@
 import type { EntityId, Place, Region } from "../../../domain";
 import type { PlaceSearchParams, PlaceSortOption } from "../types";
+import { matchesPlaceClassifications } from "./placeClassification";
 
 const TOUR_REGION_IDS = new Set([
   "seoul",
@@ -21,6 +22,12 @@ const TOUR_REGION_IDS = new Set([
   "jeonnam",
   "jeju",
 ]);
+
+const DISTRICT_REGION_ALIASES: Readonly<Record<string, { regionId: EntityId; district: string }>> = {
+  gyeongju: { regionId: "gyeongbuk", district: "경주시" },
+};
+
+const TOUR_FESTIVAL_CATEGORY_LABEL = "행사/공연/축제";
 
 export function normalizeSearchKeyword(value: string) {
   return value.trim().replace(/\s+/g, " ").toLocaleLowerCase("ko-KR");
@@ -78,9 +85,10 @@ export function normalizeRegionFilter(regionId: string, _regionsById: Readonly<R
 
 function matchesLocation(place: Place, regionId: EntityId | "all", district: string | "all" | undefined, regionsById: Readonly<Record<EntityId, Region>>) {
   const normalizedRegion = normalizeRegionFilter(regionId, regionsById);
-  if (normalizedRegion !== "all" && place.regionId !== normalizedRegion) return false;
+  const alias = DISTRICT_REGION_ALIASES[place.regionId];
+  if (normalizedRegion !== "all" && place.regionId !== normalizedRegion && alias?.regionId !== normalizedRegion) return false;
   const normalizedDistrict = district && district !== "all" ? normalizeSearchKeyword(district) : "";
-  return !normalizedDistrict || normalizeSearchKeyword(`${place.address} ${place.name}`).includes(normalizedDistrict);
+  return !normalizedDistrict || normalizeSearchKeyword(`${place.address} ${place.name} ${alias?.district ?? ""}`).includes(normalizedDistrict);
 }
 
 function dateToNumber(value?: string) {
@@ -98,20 +106,22 @@ function matchesEventDateRange(place: Place, startDate?: string, endDate?: strin
   return eventStart <= (filterEnd ?? Number.POSITIVE_INFINITY) && eventEnd >= (filterStart ?? Number.NEGATIVE_INFINITY);
 }
 
-export function filterPlaces(places: readonly Place[], params: Pick<PlaceSearchParams, "keyword" | "regionId" | "district" | "locations" | "category" | "categories" | "eventStartDate" | "eventEndDate">, regionsById: Readonly<Record<EntityId, Region>>) {
+export function filterPlaces(places: readonly Place[], params: Pick<PlaceSearchParams, "keyword" | "regionId" | "district" | "locations" | "category" | "categories" | "classification" | "classifications" | "eventStartDate" | "eventEndDate">, regionsById: Readonly<Record<EntityId, Region>>) {
   const regionId = normalizeRegionFilter(params.regionId, regionsById);
-  const district = params.district && params.district !== "all" ? normalizeSearchKeyword(params.district) : "";
   const locations = params.locations?.filter((location) => location.regionId !== "all") ?? [];
   const categoryFilters = params.categories?.length ? params.categories : params.category !== "all" ? [params.category] : [];
+  const classificationFilters = params.classifications?.length ? params.classifications : params.classification ? [params.classification] : [];
+  const hasEventDateFilter = Boolean(params.eventStartDate || params.eventEndDate);
   return places.filter((place) => {
+    const placeCategory = getPlaceCategoryLabel(place.category);
     if (locations.length) {
       if (!locations.some((location) => matchesLocation(place, location.regionId, location.district, regionsById))) return false;
     } else {
-      if (regionId !== "all" && place.regionId !== regionId) return false;
-      if (district && !normalizeSearchKeyword(`${place.address} ${place.name}`).includes(district)) return false;
+      if (!matchesLocation(place, regionId, params.district, regionsById)) return false;
     }
-    if (categoryFilters.length && !categoryFilters.includes(getPlaceCategoryLabel(place.category))) return false;
-    if (!matchesEventDateRange(place, params.eventStartDate, params.eventEndDate)) return false;
+    if (!matchesPlaceClassifications(place, classificationFilters)) return false;
+    if (categoryFilters.length && !categoryFilters.includes(placeCategory)) return false;
+    if (hasEventDateFilter && placeCategory === TOUR_FESTIVAL_CATEGORY_LABEL && !matchesEventDateRange(place, params.eventStartDate, params.eventEndDate)) return false;
     return matchesPlaceKeyword(place, params.keyword, regionsById[place.regionId]);
   });
 }
@@ -217,4 +227,3 @@ export function parsePlaceCoordinate(value: unknown): PlaceCoordinate | undefine
   if (latitude === 0 && longitude === 0) return undefined;
   return { latitude, longitude };
 }
-

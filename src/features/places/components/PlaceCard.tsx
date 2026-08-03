@@ -1,5 +1,5 @@
-import { Pressable, StyleSheet, Text, View } from "react-native";
-import { Card, Chip, RemoteImage } from "../../../components/common";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Card, RemoteImage } from "../../../components/common";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import type { PlaceCardViewModel } from "../types";
 
@@ -17,15 +17,14 @@ export function PlaceCard({ viewModel, distanceProximityLabel, onPress, onToggle
     : viewModel.activeTripCandidateState === "candidate"
       ? { label: "후보 해제", disabled: false, selected: true }
       : { label: "여행방 후보 추가", disabled: false, selected: false };
-  const hasTags = viewModel.tags.length > 0 || viewModel.hiddenTagCount > 0;
+  const hasTags = viewModel.tags.length > 0;
   return <Card style={styles.card}>
     <Pressable accessibilityRole="button" accessibilityLabel={`${viewModel.name}, ${viewModel.regionName}, ${viewModel.categoryLabel} 상세 보기`} onPress={onPress} style={({ pressed }) => [styles.detail, pressed && styles.pressed]}>
       <View style={styles.thumbnail}><RemoteImage uri={viewModel.imageUrl} accessibilityLabel={`${viewModel.name} 이미지`} aspectRatio={1} /></View>
       <View style={styles.content}>
-        <View style={styles.heading}><View style={styles.copy}><Text numberOfLines={2} style={styles.title}>{viewModel.name}</Text><Text numberOfLines={2} style={styles.address}>{viewModel.regionName} · {viewModel.address}</Text></View></View>
-        <View style={styles.metaRow}><Chip label={viewModel.categoryLabel} />{distanceProximityLabel ? <Text numberOfLines={1} style={styles.proximity}>{distanceProximityLabel}</Text> : null}</View>
-        {hasTags ? <View style={styles.chips}>{viewModel.tags.map((tag) => <Chip key={tag} label={tag} />)}{viewModel.hiddenTagCount ? <Chip label={`+${viewModel.hiddenTagCount}`} /> : null}</View> : null}
-        {viewModel.summary ? <Text numberOfLines={1} style={styles.summary}>{viewModel.summary}</Text> : null}
+        <View style={styles.heading}><View style={styles.copy}><Text numberOfLines={2} style={styles.title}>{viewModel.name}</Text><Text numberOfLines={2} style={styles.address}>{viewModel.categoryLabel} · {viewModel.address}</Text></View></View>
+        {distanceProximityLabel ? <Text numberOfLines={1} style={styles.proximity}>{distanceProximityLabel}</Text> : null}
+        {hasTags ? <ScrollView horizontal directionalLockEnabled nestedScrollEnabled showsHorizontalScrollIndicator={false} style={styles.tagsScroller} contentContainerStyle={styles.tagsContent}>{viewModel.tags.map((tag) => <View key={tag} style={styles.tagPill}><Text numberOfLines={1} style={styles.tagText}>{tag}</Text></View>)}</ScrollView> : null}
       </View>
       {viewModel.candidateTripIds.length > 0 && viewModel.activeTripCandidateState === "not-added" ? <Text style={styles.relationNote}>다른 여행방 {viewModel.candidateTripIds.length}곳의 후보</Text> : null}
     </Pressable>
@@ -37,6 +36,6 @@ export function PlaceCard({ viewModel, distanceProximityLabel, onPress, onToggle
 }
 
 const styles = StyleSheet.create({
-  card: { padding: spacing.sm, gap: spacing.sm }, detail: { flexDirection: "row", alignItems: "flex-start", gap: spacing.sm }, pressed: { opacity: 0.84 }, thumbnail: { width: 88, height: 88, overflow: "hidden", borderRadius: radius.md, backgroundColor: colors.primarySoft }, content: { flex: 1, minHeight: 88, gap: spacing.xs }, heading: { flexDirection: "row", alignItems: "flex-start", gap: spacing.sm }, copy: { flex: 1 }, title: { ...typography.subtitle, color: colors.text }, address: { ...typography.caption, color: colors.textSecondary, marginTop: spacing.xxs }, metaRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: spacing.xs }, proximity: { ...typography.caption, color: colors.primary, flexShrink: 1 }, summary: { ...typography.caption, color: colors.textSecondary }, chips: { flexDirection: "row", flexWrap: "wrap", gap: 6 }, relationNote: { ...typography.caption, color: colors.primary, alignSelf: "flex-end" },
+  card: { padding: spacing.sm, gap: spacing.sm }, detail: { flexDirection: "row", alignItems: "flex-start", gap: spacing.sm }, pressed: { opacity: 0.84 }, thumbnail: { width: 88, height: 88, overflow: "hidden", borderRadius: radius.md, backgroundColor: colors.primarySoft }, content: { flex: 1, minHeight: 88, gap: spacing.xs }, heading: { flexDirection: "row", alignItems: "flex-start", gap: spacing.sm }, copy: { flex: 1 }, title: { ...typography.subtitle, color: colors.text }, address: { ...typography.caption, color: colors.textSecondary, marginTop: spacing.xxs }, proximity: { ...typography.caption, color: colors.primary, flexShrink: 1 }, tagsScroller: { maxWidth: "100%" }, tagsContent: { gap: spacing.xs, paddingRight: spacing.sm }, tagPill: { minHeight: 26, justifyContent: "center", paddingHorizontal: spacing.xs, paddingVertical: 2, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceMuted }, tagText: { ...typography.caption, lineHeight: 17, color: colors.textSecondary }, relationNote: { ...typography.caption, color: colors.primary, alignSelf: "flex-end" },
   actions: { flexDirection: "row", gap: spacing.xs }, action: { flex: 1, minHeight: 46, alignItems: "center", justifyContent: "center", borderRadius: radius.md, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.surface }, savedAction: { borderColor: colors.primary, backgroundColor: colors.primarySoft }, candidateAction: { backgroundColor: colors.primary, borderColor: colors.primary }, candidateSelectedAction: { backgroundColor: colors.primarySoft, borderColor: colors.primary }, candidateDisabledAction: { backgroundColor: colors.surfaceMuted, borderColor: colors.border }, saveContent: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs }, heartText: { fontSize: 24, lineHeight: 28, color: colors.textSecondary }, actionText: { ...typography.caption, color: colors.textSecondary }, savedText: { color: colors.primary }, candidateText: { color: colors.white }, candidateSelectedText: { color: colors.primary }, candidateDisabledText: { color: colors.textMuted },
 });

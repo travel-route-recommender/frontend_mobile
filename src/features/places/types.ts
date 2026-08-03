@@ -1,4 +1,5 @@
 import type { EntityId } from "../../domain";
+import type { PlaceClassificationSelection } from "./logic/placeClassification";
 
 export type PlaceCategoryFilter = "all" | string;
 export type PlaceSortOption = "popular" | "rating" | "distance" | "default" | "name" | "saved-first";
@@ -8,6 +9,8 @@ export type PlaceLocationSelection = {
   label: string;
   regionId: EntityId | "all";
   district: string | "all";
+  areaCode?: string;
+  sigunguCode?: string;
 };
 
 export interface PlaceSearchParams {
@@ -17,6 +20,8 @@ export interface PlaceSearchParams {
   locations?: readonly PlaceLocationSelection[];
   category: PlaceCategoryFilter;
   categories?: readonly string[];
+  classification?: PlaceClassificationSelection;
+  classifications?: readonly PlaceClassificationSelection[];
   sort: PlaceSortOption;
   eventStartDate?: string;
   eventEndDate?: string;
@@ -45,4 +50,3 @@ export type PlaceActionFeedback = {
   message: string;
   tripId?: EntityId;
 };
-
