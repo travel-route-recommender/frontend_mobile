@@ -67,7 +67,7 @@ export function OnboardingIntroScreen() {
   const user = useDuriStore((state) => userId ? state.usersById[userId] : undefined);
   const name = useMemo(() => user?.name ?? "여행자", [user?.name]);
   const [serviceError, setServiceError] = useState<string | null>(null);
-  const finish = async (destination: "/(tabs)/home" | "/tests/personal") => {
+  const finish = async (destination: "/(tabs)/home" | "/(onboarding)/quick-test") => {
     setServiceError(null);
     try {
       await authService.completeOnboarding();
@@ -78,7 +78,7 @@ export function OnboardingIntroScreen() {
     }
   };
   const skip = () => finish("/(tabs)/home");
-  const startTest = () => finish("/tests/personal");
+  const startTest = () => finish("/(onboarding)/quick-test");
   return <AuthLayout title={`${name}님, 두리와 여행을 시작해요`} subtitle="두리가 함께 여행하는 방법을 간단히 알려드릴게요." onBack={() => router.back()} footer={<View style={styles.footerGap}><PrimaryButton label="여행 성향 테스트 시작" onPress={startTest} /><SecondaryButton label="다음에 하기" onPress={skip} /></View>}>
     <DuriLogo compact />
     <OnboardingProgress current={2} total={2} />

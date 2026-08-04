@@ -27,6 +27,7 @@ expo-env.d.ts
 .duri-verification/
 .state-integrity-verification/
 .auth-verification/
+.preference-verification/
 
 # debug
 npm-debug.*
@@ -52,3 +53,6 @@ example
 # generated native folders
 /ios
 /android
+
+__pycache__/
+*.py[cod]

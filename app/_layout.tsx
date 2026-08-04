@@ -10,6 +10,7 @@ import { ErrorState, LoadingState } from "../src/components/feedback";
 import { useAuthSessionHydration } from "../src/features/auth/hooks/useAuthSessionHydration";
 import { useAuthSessionBootstrap } from "../src/features/auth/hooks/useAuthSessionBootstrap";
 import { useAuthSessionStore } from "../src/features/auth/store/useAuthSessionStore";
+import { useFriendCompatibilityHydration } from "../src/features/compatibility/hooks/use-friend-compatibility-hydration";
 import { useTripInviteHydration } from "../src/features/invitations/hooks/useTripInviteHydration";
 import { usePreferenceDraftHydration } from "../src/features/preferences/hooks/usePreferenceDraftHydration";
 import { useCreateTripDraftHydration } from "../src/features/trip-creation/hooks/useCreateTripDraftHydration";
@@ -27,12 +28,14 @@ export default function RootLayout() {
 function HydratedNavigator() {
   const domainHydration = useStoreHydration();
   const authHydration = useAuthSessionHydration();
+  const friendCompatibilityHydration = useFriendCompatibilityHydration();
   const preferenceDraftHydration = usePreferenceDraftHydration();
   const createTripDraftHydration = useCreateTripDraftHydration();
   const tripInviteHydration = useTripInviteHydration();
   const tripDocumentHydration = useTripDocumentHydration();
   const localHydrated = domainHydration.isHydrated
     && authHydration.isHydrated
+    && friendCompatibilityHydration.isHydrated
     && preferenceDraftHydration.isHydrated
     && createTripDraftHydration.isHydrated
     && tripInviteHydration.isHydrated
@@ -40,6 +43,7 @@ function HydratedNavigator() {
   const sessionBootstrap = useAuthSessionBootstrap(localHydrated);
   const error = domainHydration.error
     ?? authHydration.error
+    ?? friendCompatibilityHydration.error
     ?? preferenceDraftHydration.error
     ?? createTripDraftHydration.error
     ?? tripInviteHydration.error
@@ -49,6 +53,7 @@ function HydratedNavigator() {
     void Promise.all([
       domainHydration.retry(),
       authHydration.retry(),
+      friendCompatibilityHydration.retry(),
       preferenceDraftHydration.retry(),
       createTripDraftHydration.retry(),
       tripInviteHydration.retry(),
@@ -90,8 +95,7 @@ function SessionAwareNavigator() {
       <Stack.Screen name="(onboarding)" />
       <Stack.Screen name="tests" />
       <Stack.Screen name="trips/[tripId]" />
-      <Stack.Screen name="explore" />
-      <Stack.Screen name="places" />
+      <Stack.Screen name="places/[placeId]" />
     </Stack.Protected>
     <Stack.Protected guard={member}>
       <Stack.Screen name="trips/new" />

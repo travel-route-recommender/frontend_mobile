@@ -1,6 +1,7 @@
 import type { PersonalPreferenceAnswers, PreferenceDimension, PreferenceScore } from "../../../domain";
 import { PERSONAL_TEST_VERSION, personalTestQuestions } from "../../../duri/preferences";
-import type { PersonalPreferenceDraftAnswers } from "../types";
+
+type LegacyPreferenceDraftAnswers = Partial<Record<PreferenceDimension, PreferenceScore>>;
 
 type UnknownRecord = Record<string, unknown>;
 const isRecord = (value: unknown): value is UnknownRecord => Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -14,9 +15,9 @@ export type PreferenceAnswersValidation =
       firstInvalidDimension?: PreferenceDimension;
     };
 
-export function normalizePreferenceDraftAnswers(value: unknown): PersonalPreferenceDraftAnswers {
+export function normalizePreferenceDraftAnswers(value: unknown): LegacyPreferenceDraftAnswers {
   if (!isRecord(value)) return {};
-  const normalized: PersonalPreferenceDraftAnswers = {};
+  const normalized: LegacyPreferenceDraftAnswers = {};
   for (const question of personalTestQuestions) {
     const score = value[question.dimension];
     if (question.choices.some((choice) => choice.value === score)) normalized[question.dimension] = score as PreferenceScore;

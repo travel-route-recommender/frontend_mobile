@@ -1,0 +1,24 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "customConditions": [],
+    "target": "ES2022",
+    "rootDir": ".",
+    "outDir": ".preference-verification",
+    "declaration": false,
+    "sourceMap": false
+  },
+  "include": [
+    "scripts/verify-preference-compatibility.ts",
+    "src/domain/**/*.ts",
+    "src/duri/preferences/**/*.ts",
+    "src/features/preferences/types.ts",
+    "src/features/preferences/config/**/*.ts",
+    "src/features/preferences/logic/**/*.ts",
+    "src/features/compatibility/types.ts",
+    "src/features/compatibility/logic/**/*.ts"
+  ]
+}

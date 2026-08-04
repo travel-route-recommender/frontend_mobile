@@ -10,6 +10,7 @@
 ## 목차
 
 - [주요 기능](#주요-기능)
+- [성향 테스트와 궁합도](#성향-테스트와-궁합도)
 - [기술 스택](#기술-스택)
 - [빠른 시작](#빠른-시작)
 - [환경 변수](#환경-변수)
@@ -64,13 +65,85 @@
 
 ### 여행 성향과 두리 분석
 
-- 웹 기준 6문항 개인 여행 성향 테스트
-- 중간 답변 복구, 답변 검토, 결과 저장, 재테스트 보호
+- 메신저·친구 선택·여행 현장을 섞은 15개 상황 문항과 숙소·체력·예산·탐색 질문
+- 도전 실행형·신중 탐색형·안정 계획형 분류와 여유로운·알찬 일정 수식어
+- 중간 답변 복구, 결과 저장, 상세 결과 확인, 재테스트 보호
+- 친구 한 명 또는 여러 명과 6개 항목을 비교하는 회원용 여행 궁합도
 - 여행방 멤버별 응답 상태와 그룹 여행 성향 진단
 - 일정 밀도·식사·충돌·날짜 균형·동선·후보 활용 분석
 - 일정 개선 제안의 before/after와 항목별 diff
 - 분석 이후 일정이 바뀐 경우 stale fingerprint로 적용 차단
 - 전체 다음 일정을 검증한 뒤 한 번에 반영하는 atomic apply
+
+## 성향 테스트와 궁합도
+
+### 개인 여행 성향 테스트
+
+개인 테스트는 `/tests/personal`에서 시작하며, 실제 여행에서 마주칠 법한 대화와 선택 장면으로 응답 피로도를 낮춘 5개 단계로 구성됩니다.
+
+| 단계 | 입력 | 결과에 반영되는 값 |
+| --- | --- | --- |
+| 여행 장면 | 도전·안정 6문항(5점 척도)과 활동 8종 및 일정 밀도에 관한 9문항(선호·중간·불호) | 새로운 경험 접근 유형, 활동 선호, 일정 밀도 |
+| 숙소 | 숙소 의미, 위치↔시설, 편안함↔가격의 3축 8점 척도 | 숙소 기준 |
+| 체력 | 하루 종일 이동한 뒤의 행동 3가지 중 선택 | 낮은 편·보통·높은 편 |
+| 예산 | 숙소·맛집·체험·쇼핑·이동을 많이 쓰고 싶은 순서대로 선택 | 5개 예산 카테고리 우선순위 |
+| 여행지 탐색 | 대표 명소와 로컬 탐방 관심도를 각각 4점으로 선택 | 명소 필수도·로컬 관심도 |
+
+이동수단 자체는 개인 테스트에서 묻지 않습니다. 예산 단계의 `이동`은 교통수단 선호가 아니라 이동 편의에 예산을 얼마나 우선 배정할지를 의미합니다.
+
+도전·안정 6문항은 앱에 포함된 결정트리 모델로 `도전 실행형`, `신중 탐색형`, `안정 계획형` 중 하나를 분류합니다. 일정 밀도 60%, 휴식 선호의 역방향 25%, 체력 15%를 조합해 최종 유형 앞에 `여유로운` 또는 `알찬` 수식어를 붙입니다. 상세 결과에서는 활동 선호, 숙소 기준, 체력, 예산 우선순위와 여행지 탐색 점수를 확인할 수 있습니다.
+
+작성 중 응답은 로컬 초안으로 복구되며 완료 결과는 사용자별로 저장됩니다. 결과 화면에서 재테스트를 시작할 수 있고, 완료 전에는 기존 결과를 덮어쓰지 않습니다.
+
+관련 라우트:
+
+- `/tests/personal`: 질문 진행
+- `/tests/personal/review`: 응답 검토
+- `/tests/personal/result`: 요약·상세 결과와 재테스트
+
+### 친구와 궁합도 확인
+
+궁합도는 완료된 개인 성향 결과가 있는 회원이 `/friends`에서 저장한 친구를 한 명 이상 선택해 확인합니다. 현재 친구 데이터와 계산 엔진은 `mock/local`이며 `api`, `hybrid` 모드에서는 백엔드 계약 대기 상태를 명시적으로 반환합니다.
+
+궁합도는 이동수단을 제외한 6개 항목을 비교합니다.
+
+| 항목 | 비교 기준 | 전체 가중치 |
+| --- | --- | ---: |
+| 일정 밀도 | 일정 밀도와 활동 중 휴식 선호의 유사도 | 24% |
+| 체력 | LOW·NORMAL·HIGH 점수 차이 | 20% |
+| 숙소 스타일 | 숙소 의미·위치/시설·편안함/가격 3축 유사도 | 20% |
+| 예산 소비 | 5개 예산 카테고리의 순위 차이 | 16% |
+| 새로운 경험 접근 | 탐색 성향과 신중성의 일치 또는 보완 관계 | 10% |
+| 여행지 탐색 | 대표 명소와 로컬 관심의 일치 또는 보완 관계 | 10% |
+
+예산 궁합은 각 카테고리의 순위 차이 절댓값을 모두 합산한 뒤, 5개 항목에서 가능한 최대 차이 `12`로 정규화합니다.
+
+```text
+예산 점수 = 100 × (1 - 순위 차이 합 / 12)
+```
+
+현재 궁합도 알고리즘은 v6이며, 전체 점수는 위 가중치의 산술평균입니다. 예산 점수가 0점이어도 전체에서는 가중치 16%만 감점되고, 예산 항목에는 `사전 조율` 안내를 표시합니다. 함께 여행할 때 분리하기 어려운 조건에는 다음 하드캡을 적용합니다.
+
+- 일정·체력·숙소 중 하나가 25점 미만: 전체 최대 39점
+- 일정·체력·숙소 중 하나가 25점 이상 40점 미만: 전체 최대 59점
+- 새로운 경험·여행지 탐색 중 하나가 25점 미만: 전체 최대 79점
+- 예산: 전체 하드캡 없음
+
+두 사람은 한 쌍의 결과를 그대로 사용합니다. 세 명 이상은 신청자와 친구뿐 아니라 친구끼리도 포함한 모든 조합을 비교하고, 항목별 중앙 관계 70%와 가장 낮은 관계 30%를 반영합니다. 항목 상태는 `성향 일치`, `보완 시너지`, `조율 가능`, `사전 조율`로 구분합니다.
+
+| 전체 점수 | 궁합 유형 |
+| ---: | --- |
+| 0~19 | 조율이 많이 필요한 사이 |
+| 20~39 | 차이를 즐길 수 있는 사이 |
+| 40~59 | 적당히 맞춰가는 사이 |
+| 60~79 | 꽤 잘 맞는 여행 메이트 |
+| 80~100 | 찰떡 여행 메이트 |
+
+관련 라우트:
+
+- `/friends`: 궁합도를 확인할 친구 저장
+- `/tests/compatibility`: 친구 선택과 궁합도 계산
+- `/tests/compatibility/result`: 전체 점수, 관계 유형과 항목별 상세
 
 ## 기술 스택
 
@@ -200,6 +273,7 @@ Expo Router의 route group은 URL에 포함되지 않습니다.
 | 두리 분석 | `/trips/[tripId]/analysis` | 전체 여행 일정 분석 리포트 |
 | 두리 제안 | `/trips/[tripId]/suggestions/[suggestionId]` | 제안 비교·확인·적용 |
 | 개인 성향 | `/tests/personal`, `/tests/personal/review`, `/tests/personal/result` | 테스트·검토·결과 |
+| 친구·궁합도 | `/friends`, `/tests/compatibility`, `/tests/compatibility/result` | 친구 저장·선택과 여행 궁합도 결과 |
 | 딥링크 | `/invite/[code]` | `tripmatch://invite/:code` 수신 경계 |
 
 잘못된 `placeId`, `tripId`, 초대 코드와 존재하지 않는 route에는 복구 가능한 오류 상태 또는 not-found 화면을 제공합니다.
@@ -214,7 +288,7 @@ frontend_mobile/
 │  ├─ (tabs)/                  # 홈·탐색·여행·저장·마이
 │  ├─ places/[placeId].tsx
 │  ├─ trips/[tripId]/          # 여행 홈·워크스페이스·분석·제안
-│  └─ tests/personal/          # 개인 성향 테스트
+│  └─ tests/                   # 개인 성향 테스트와 친구 궁합도
 ├─ assets/                      # 앱 아이콘·splash 등 정적 자산
 ├─ docs/                        # 기능·아키텍처·회귀 검증 문서
 ├─ scripts/                     # 순수 로직 및 상태 무결성 검증기
@@ -324,6 +398,7 @@ npx expo-doctor
 | 명령 | 검증 범위 |
 | --- | --- |
 | `npm run verify:group-preferences` | 멤버 응답 집계와 그룹 성향 진단 |
+| `npm run verify:preference-compatibility` | 개인 성향 특징값·분류와 친구 궁합도 계산·하드캡 |
 | `npm run verify:trip-flow` | 여행방 정렬·날짜·초안·생성·준비율 |
 | `npm run verify:place-flow` | 검색·필터·저장·후보·권한 관계 |
 | `npm run verify:workspace-editor` | DAY, 일정 편집·충돌·순서·후보 관계 |
@@ -344,6 +419,7 @@ npm run build
 ```bash
 npm run lint
 npm run typecheck
+npm run verify:preference-compatibility
 npm run verify:group-preferences
 npm run verify:trip-flow
 npm run verify:place-flow
@@ -459,3 +535,13 @@ git push -u origin feature/mobile-workspace
 ## 라이선스
 
 이 저장소의 라이선스 정보는 [LICENSE](LICENSE)를 확인하세요.
+
+## 일정표 에셋 관리
+
+일정표·드래그 기능 본체: [`DraggableItineraryEditor.tsx`](src/features/preferences/components/DraggableItineraryEditor.tsx)
+
+재사용 에셋 진입점: [`itinerary-schedule-builder.tsx`](src/features/preferences/assets/itinerary-schedule-builder.tsx)
+
+8종류 블록의 이름·아이콘·색상: [`travel-preference-test-config.ts`](src/features/preferences/config/travel-preference-test-config.ts)
+
+08:00~24:00 시간 슬롯·일정표 행 설정: [`travel-preference-test-config.ts`](src/features/preferences/config/travel-preference-test-config.ts)
