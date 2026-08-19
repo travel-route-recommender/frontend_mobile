@@ -27,16 +27,17 @@ type BackendUser = {
   onboardingCompleted?: boolean;
   travelType?: unknown;
   isGuest: boolean;
-  accountType: "member" | "guest";
+  /** Newer auth contracts may expose this, while the current Swagger does not. */
+  accountType?: "member" | "guest";
 };
 
 type BackendSession = {
   accessToken: string;
   refreshToken: string;
-  tokenType: "Bearer";
-  expiresIn: number;
-  refreshExpiresAt: string;
-  sessionId: string;
+  tokenType?: "Bearer";
+  expiresIn?: number;
+  refreshExpiresAt?: string;
+  sessionId?: string;
   user: BackendUser;
 };
 
@@ -118,7 +119,29 @@ function failure(error: unknown): AuthResult {
 async function persistSession(session: BackendSession) {
   // 로그인 응답도 Refresh Token을 먼저 안전하게 저장한 뒤 Access Token을 활성화한다.
   await nativeTokenStorage.setRefreshToken(session.refreshToken);
-  await nativeTokenStorage.setAccessToken(session.accessToken, session.expiresIn);
+  await nativeTokenStorage.setAccessToken(session.accessToken, accessTokenLifetimeSeconds(session));
+}
+
+/**
+ * Current Swagger omits expiresIn, while a newer auth contract can include it.
+ * Prefer the explicit value, otherwise read JWT exp only to schedule a refresh.
+ * The server still verifies the token. An opaque token falls back to 401-driven
+ * refresh instead of guessing a lifetime.
+ */
+function accessTokenLifetimeSeconds(session: Pick<BackendSession, "accessToken" | "expiresIn">) {
+  if (Number.isFinite(session.expiresIn) && (session.expiresIn as number) > 0) {
+    return session.expiresIn as number;
+  }
+  try {
+    const payload = session.accessToken.split(".")[1];
+    if (!payload || typeof globalThis.atob !== "function") return Number.POSITIVE_INFINITY;
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(payload.length / 4) * 4, "=");
+    const parsed = JSON.parse(globalThis.atob(normalized)) as { exp?: unknown };
+    if (typeof parsed.exp !== "number" || !Number.isFinite(parsed.exp)) return Number.POSITIVE_INFINITY;
+    return Math.max(1, Math.ceil(parsed.exp - Date.now() / 1_000));
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
 }
 
 const MAX_REFRESH_ATTEMPTS = 3;
@@ -187,7 +210,7 @@ class ApiAuthService implements AuthService {
   async login(input: LoginInput): Promise<AuthResult> {
     try {
       this.cancelInFlightRefresh();
-      const session = await apiClient.request<BackendSession>({ path: "/auth/login", method: "POST", auth: false, body: { email: normalizeEmail(input.email), password: input.password, ...(await getClientMetadata()) } });
+      const session = await apiClient.request<BackendSession>({ path: "/auth/login", method: "POST", auth: false, body: { email: normalizeEmail(input.email), password: input.password } });
       this.lastProvider = "email";
       await persistSession(session);
       return mapSession(session, "email");
@@ -197,7 +220,7 @@ class ApiAuthService implements AuthService {
   async signup(input: SignupInput): Promise<AuthResult> {
     try {
       this.cancelInFlightRefresh();
-      const session = await apiClient.request<BackendSession>({ path: "/auth/signup", method: "POST", auth: false, body: { nickname: input.nickname.trim(), email: normalizeEmail(input.email), password: input.password, ...(await getClientMetadata()) } });
+      const session = await apiClient.request<BackendSession>({ path: "/auth/signup", method: "POST", auth: false, body: { nickname: input.nickname.trim(), email: normalizeEmail(input.email), password: input.password } });
       this.lastProvider = "email";
       await persistSession(session);
       return mapSession(session, "email");
@@ -205,18 +228,16 @@ class ApiAuthService implements AuthService {
   }
 
   async previewInvite(code: string) {
-    const metadata = await getClientMetadata();
     return apiClient.request<InvitePreview>({
-      path: `/auth/invites/${encodeURIComponent(normalizeInviteCode(code))}/preview`,
+      path: `/invites/${encodeURIComponent(normalizeInviteCode(code))}/preview`,
       auth: false,
-      query: { installationId: metadata.installationId, platform: metadata.platform },
     });
   }
 
   async joinByInvite(input: InviteJoinInput): Promise<AuthResult> {
     try {
       this.cancelInFlightRefresh();
-      const session = await apiClient.request<BackendGuestSession>({ path: "/auth/join-by-invite", method: "POST", auth: false, body: { inviteCode: normalizeInviteCode(input.code), nickname: input.nickname.trim(), ...(await getClientMetadata()) } });
+      const session = await apiClient.request<BackendGuestSession>({ path: "/auth/join-by-invite", method: "POST", auth: false, body: { inviteCode: normalizeInviteCode(input.code), nickname: input.nickname.trim() } });
       this.lastProvider = "guest";
       await persistSession(session);
       return { ...mapSession(session, "guest"), invitedTripId: session.roomId };
@@ -285,7 +306,7 @@ class ApiAuthService implements AuthService {
     this.cancelInFlightRefresh();
     const refreshToken = await nativeTokenStorage.getRefreshToken();
     try {
-      if (refreshToken) await apiClient.request({ path: "/auth/logout-by-refresh", method: "POST", auth: false, body: { refreshToken } });
+      if (refreshToken) await apiClient.request({ path: "/auth/logout", method: "POST", body: { refreshToken } });
     } finally {
       await nativeTokenStorage.clearTokens();
     }
@@ -331,7 +352,6 @@ class ApiAuthService implements AuthService {
   private async executeRefresh(generation: number, signal: AbortSignal) {
     const pending = await nativeTokenStorage.getOrCreatePendingRefresh(createRequestId(), Date.now());
     if (!pending) throw new ApiError("저장된 로그인 정보가 없어요.", { status: 401, code: "REFRESH_TOKEN_MISSING" });
-    const metadata = await getClientMetadata();
 
     for (let attempt = 0; attempt < MAX_REFRESH_ATTEMPTS; attempt += 1) {
       const timeoutMs = refreshRequestTimeoutMs(pending, Date.now());
@@ -348,13 +368,13 @@ class ApiAuthService implements AuthService {
           retryUnauthorized: false,
           signal: attemptSignal.signal,
           headers: { "Idempotency-Key": pending.operationId },
-          body: { refreshToken: pending.refreshToken, requestId: pending.operationId, ...metadata },
+          body: { refreshToken: pending.refreshToken },
         });
         if (signal.aborted || generation !== this.sessionGeneration) throw createAbortError();
         // R1과 pending 제거를 한 SecureStore 값으로 기록한 다음 A1을 메모리에 활성화한다.
         await nativeTokenStorage.commitRefresh(pending.operationId, session.refreshToken);
         if (signal.aborted || generation !== this.sessionGeneration) throw createAbortError();
-        await nativeTokenStorage.setAccessToken(session.accessToken, session.expiresIn);
+        await nativeTokenStorage.setAccessToken(session.accessToken, accessTokenLifetimeSeconds(session));
         return session;
       } catch (error) {
         const normalizedError = attemptSignal.didTimeout() && !signal.aborted

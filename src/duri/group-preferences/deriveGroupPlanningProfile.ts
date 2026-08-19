@@ -1,6 +1,6 @@
 import type { GroupPlanningDimension, GroupPlanningProfile, GroupPreferenceDiagnosis } from "./types";
 
-const planningDimensions: GroupPlanningDimension[] = ["pace", "mobility", "activity", "mealStyle", "planningStyle"];
+const planningDimensions: GroupPlanningDimension[] = ["pace", "budget", "mobility", "activity", "mealStyle", "planningStyle"];
 
 export function deriveGroupPlanningProfile(diagnosis?: GroupPreferenceDiagnosis): GroupPlanningProfile {
   const completedMemberCount = diagnosis?.completedMemberCount ?? 0;

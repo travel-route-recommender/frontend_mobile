@@ -3,6 +3,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type {
   EntityId,
+  DuriPreferenceSignals,
   ItineraryItem,
   PersonalPreferenceAnswers,
   Place,
@@ -34,6 +35,7 @@ import { toggleUniqueId } from "../utils/entityRelations";
 import {
   findOverlappingItem,
   getTripDates,
+  isValidClockTime,
   isValidScheduleRange,
   sortItineraryItemsByDateAndTime,
 } from "../utils/schedule";
@@ -57,6 +59,11 @@ import {
   resolveTripEndConditionAddition,
   resolveTripEndConditionMutation,
 } from "../features/workspace/logic/tripEndCondition";
+import {
+  prepareLockedDocumentScheduleAddition,
+  type LockedDocumentScheduleDraft,
+  type LockedDocumentScheduleAdditionFailure,
+} from "../features/trip-documents/logic/documentSchedule";
 
 export type AddPlaceToItineraryInput = {
   tripId: EntityId;
@@ -66,6 +73,7 @@ export type AddPlaceToItineraryInput = {
   durationMinutes?: number;
   preferredByUserIds?: EntityId[];
   note?: string;
+  lockedForDuri?: boolean;
 };
 
 export type CreateTripInput = {
@@ -104,7 +112,7 @@ function isValidCreateTripEndCondition(condition: TripEndCondition | null) {
   return ["train", "intercity-bus", "rental-car-return", "other"].includes(condition.type)
     && Boolean(condition.location.name.trim())
     && condition.location.name.trim().length <= 100
-    && /^([01]\d|2[0-3]):(?:00|15|30|45)$/.test(condition.deadline)
+    && isValidClockTime(condition.deadline)
     && Number.isInteger(condition.travelMinutes)
     && condition.travelMinutes >= 0
     && condition.travelMinutes <= 1440
@@ -160,6 +168,10 @@ export type AddPlaceToItineraryWithIdResult =
   | { status: "success"; itemId: EntityId }
   | { status: Exclude<AddPlaceToItineraryResult, "success"> };
 
+export type AddLockedDocumentScheduleResult =
+  | { status: "success"; itemId: EntityId; created: boolean }
+  | { status: LockedDocumentScheduleAdditionFailure };
+
 export type ExtendTripEndDateResult =
   | { status: "success"; endDate: string }
   | { status: "invalid-trip" | "trip-not-editable" | "not-member" | "invalid-date" };
@@ -193,16 +205,21 @@ type DuriActions = {
   addTripMember: (tripId: EntityId, userId: EntityId) => void;
   updateCurrentUserProfile: (input: UpdateCurrentUserProfileInput) => boolean;
   createTrip: (input: CreateTripInput) => EntityId;
-  updateTripPlanningFacts: (tripId: EntityId, input: UpdateTripPlanningFactsInput) => TripPlanningFactsMutationResult;
+  updateTripPlanningFacts: (
+    tripId: EntityId,
+    input: UpdateTripPlanningFactsInput,
+    automaticShiftProtectedItemIds?: readonly EntityId[],
+  ) => TripPlanningFactsMutationResult;
   extendTripByOneDay: (tripId: EntityId) => ExtendTripEndDateResult;
-  removeTripDay: (tripId: EntityId, date: string) => TripDateMutationResult;
-  moveTripDay: (tripId: EntityId, date: string, direction: TripDayMoveDirection) => TripDateMutationResult;
-  moveTripDayToIndex: (tripId: EntityId, date: string, targetIndex: number) => TripDateMutationResult;
+  removeTripDay: (tripId: EntityId, date: string, automaticShiftProtectedItemIds?: readonly EntityId[]) => TripDateMutationResult;
+  moveTripDay: (tripId: EntityId, date: string, direction: TripDayMoveDirection, automaticShiftProtectedItemIds?: readonly EntityId[]) => TripDateMutationResult;
+  moveTripDayToIndex: (tripId: EntityId, date: string, targetIndex: number, automaticShiftProtectedItemIds?: readonly EntityId[]) => TripDateMutationResult;
   updateTripDateRange: (
     tripId: EntityId,
     startDate: string,
     endDate: string,
     selectedDate?: string,
+    automaticShiftProtectedItemIds?: readonly EntityId[],
   ) => TripDateMutationResult;
   setActiveTrip: (tripId: EntityId) => void;
   clearActiveTrip: () => void;
@@ -211,14 +228,16 @@ type DuriActions = {
   removeCandidatePlace: (tripId: EntityId, placeId: EntityId) => RemoveCandidatePlaceResult;
   addPlaceToItinerary: (input: AddPlaceToItineraryInput) => AddPlaceToItineraryResult;
   addPlaceToItineraryWithId: (input: AddPlaceToItineraryInput) => AddPlaceToItineraryWithIdResult;
+  addLockedDocumentSchedule: (tripId: EntityId, draft: LockedDocumentScheduleDraft) => AddLockedDocumentScheduleResult;
   removeItineraryItem: (tripId: EntityId, itineraryItemId: EntityId) => ItineraryMutationResult;
   updateItineraryItem: (
     tripId: EntityId,
     itineraryItemId: EntityId,
     patch: Partial<Omit<ItineraryItem, "id" | "tripId">>,
+    automaticShiftProtectedItemIds?: readonly EntityId[],
   ) => ItineraryMutationResult;
-  moveItineraryItem: (tripId: EntityId, itineraryItemId: EntityId, direction: ItineraryMoveDirection) => ItineraryMutationResult;
-  moveItineraryItemToIndex: (tripId: EntityId, itineraryItemId: EntityId, targetIndex: number) => ItineraryMutationResult;
+  moveItineraryItem: (tripId: EntityId, itineraryItemId: EntityId, direction: ItineraryMoveDirection, automaticShiftProtectedItemIds?: readonly EntityId[]) => ItineraryMutationResult;
+  moveItineraryItemToIndex: (tripId: EntityId, itineraryItemId: EntityId, targetIndex: number, automaticShiftProtectedItemIds?: readonly EntityId[]) => ItineraryMutationResult;
   reorderItinerary: (tripId: EntityId, orderedItemIds: EntityId[]) => ItineraryMutationResult;
   applyDuriSuggestion: (tripId: EntityId, suggestion: DuriSuggestion) => SuggestionApplyResult;
   applyDuriSuggestionAtomically: (input: ApplyDuriSuggestionAtomicallyInput) => ApplyDuriSuggestionAtomicallyResult;
@@ -226,6 +245,7 @@ type DuriActions = {
     userId: EntityId | undefined,
     answers: PersonalPreferenceAnswers,
     completedAt?: string,
+    detailedSignals?: DuriPreferenceSignals,
   ) => UserPreferenceResult | undefined;
   resetDemoData: () => void;
 };
@@ -236,6 +256,12 @@ export const useDuriHydrationState = createPersistHydrationStore();
 
 function createItineraryId(state: DuriDomainState, tripId: EntityId, placeId: EntityId, date: string) {
   const prefix = `itinerary-${tripId}-${date}-${placeId}`;
+  const existingIds = new Set((state.itineraryByTripId[tripId] ?? []).map((item) => item.id));
+  return createUniqueEntityId(prefix, existingIds);
+}
+
+function createDocumentItineraryId(state: DuriDomainState, tripId: EntityId, date: string) {
+  const prefix = `itinerary-${tripId}-${date}-document`;
   const existingIds = new Set((state.itineraryByTripId[tripId] ?? []).map((item) => item.id));
   return createUniqueEntityId(prefix, existingIds);
 }
@@ -375,7 +401,7 @@ export const useDuriStore = create<DuriState>()(
 
         return createdTripId;
       },
-      updateTripPlanningFacts: (tripId, input) => {
+      updateTripPlanningFacts: (tripId, input, automaticShiftProtectedItemIds) => {
         let result: TripPlanningFactsMutationResult = "invalid-trip";
         set((state) => {
           const trip = state.tripsById[tripId];
@@ -411,7 +437,7 @@ export const useDuriStore = create<DuriState>()(
                 }
               : null,
           };
-          const endResolution = resolveTripEndConditionMutation(nextTrip, state.itineraryByTripId[tripId] ?? []);
+          const endResolution = resolveTripEndConditionMutation(nextTrip, state.itineraryByTripId[tripId] ?? [], automaticShiftProtectedItemIds);
           if (endResolution.status === "rejected") {
             result = "end-condition";
             return state;
@@ -454,7 +480,7 @@ export const useDuriStore = create<DuriState>()(
         });
         return result;
       },
-      removeTripDay: (tripId, date) => {
+      removeTripDay: (tripId, date, automaticShiftProtectedItemIds) => {
         let result: TripDateMutationResult = { status: "invalid-trip" };
         set((state) => {
           const trip = state.tripsById[tripId];
@@ -478,7 +504,7 @@ export const useDuriStore = create<DuriState>()(
             return state;
           }
           const nextTrip = { ...trip, startDate: change.startDate, endDate: change.endDate, dateUndecided: false };
-          const endResolution = resolveTripEndConditionMutation(nextTrip, change.items);
+          const endResolution = resolveTripEndConditionMutation(nextTrip, change.items, automaticShiftProtectedItemIds);
           if (endResolution.status === "rejected") {
             result = { status: "end-condition" };
             return state;
@@ -504,7 +530,7 @@ export const useDuriStore = create<DuriState>()(
         });
         return result;
       },
-      moveTripDay: (tripId, date, direction) => {
+      moveTripDay: (tripId, date, direction, automaticShiftProtectedItemIds) => {
         let result: TripDateMutationResult = { status: "invalid-trip" };
         set((state) => {
           const trip = state.tripsById[tripId];
@@ -528,7 +554,7 @@ export const useDuriStore = create<DuriState>()(
             result = { status: change.status };
             return state;
           }
-          const endResolution = resolveTripEndConditionMutation(trip, change.items);
+          const endResolution = resolveTripEndConditionMutation(trip, change.items, automaticShiftProtectedItemIds);
           if (endResolution.status === "rejected") {
             result = { status: "end-condition" };
             return state;
@@ -550,7 +576,7 @@ export const useDuriStore = create<DuriState>()(
         });
         return result;
       },
-      moveTripDayToIndex: (tripId, date, targetIndex) => {
+      moveTripDayToIndex: (tripId, date, targetIndex, automaticShiftProtectedItemIds) => {
         let result: TripDateMutationResult = { status: "invalid-trip" };
         set((state) => {
           const trip = state.tripsById[tripId];
@@ -574,7 +600,7 @@ export const useDuriStore = create<DuriState>()(
             result = { status: change.status };
             return state;
           }
-          const endResolution = resolveTripEndConditionMutation(trip, change.items);
+          const endResolution = resolveTripEndConditionMutation(trip, change.items, automaticShiftProtectedItemIds);
           if (endResolution.status === "rejected") {
             result = { status: "end-condition" };
             return state;
@@ -596,7 +622,7 @@ export const useDuriStore = create<DuriState>()(
         });
         return result;
       },
-      updateTripDateRange: (tripId, startDate, endDate, selectedDate) => {
+      updateTripDateRange: (tripId, startDate, endDate, selectedDate, automaticShiftProtectedItemIds) => {
         let result: TripDateMutationResult = { status: "invalid-trip" };
         set((state) => {
           const trip = state.tripsById[tripId];
@@ -622,7 +648,7 @@ export const useDuriStore = create<DuriState>()(
             return state;
           }
           const nextTrip = { ...trip, startDate: change.startDate, endDate: change.endDate, dateUndecided: false };
-          const endResolution = resolveTripEndConditionMutation(nextTrip, change.items);
+          const endResolution = resolveTripEndConditionMutation(nextTrip, change.items, automaticShiftProtectedItemIds);
           if (endResolution.status === "rejected") {
             result = { status: "end-condition" };
             return state;
@@ -791,10 +817,6 @@ export const useDuriStore = create<DuriState>()(
           }
 
           const current = state.itineraryByTripId[input.tripId] ?? [];
-          if (current.some((item) => item.placeId === input.placeId)) {
-            result = "duplicate-place";
-            return state;
-          }
           const nextItem: ItineraryItem = {
             id: createItineraryId(state, input.tripId, input.placeId, input.date),
             tripId: input.tripId,
@@ -805,6 +827,7 @@ export const useDuriStore = create<DuriState>()(
             itemType: "place",
             preferredByUserIds: input.preferredByUserIds ?? candidate?.addedByUserIds ?? [state.currentUserId],
             ...(input.note?.trim() ? { note: input.note.trim() } : {}),
+            ...(input.lockedForDuri ? { lockedForDuri: true } : {}),
           };
           if (!isValidScheduleRange(nextItem)) {
             result = "invalid-time";
@@ -833,10 +856,36 @@ export const useDuriStore = create<DuriState>()(
         return result;
       },
       addPlaceToItineraryWithId: (input) => {
+        const previousIds = new Set((get().itineraryByTripId[input.tripId] ?? []).map((item) => item.id));
         const status = get().addPlaceToItinerary(input);
         if (status !== "success") return { status };
-        const item = (get().itineraryByTripId[input.tripId] ?? []).find((entry) => entry.placeId === input.placeId);
+        const item = (get().itineraryByTripId[input.tripId] ?? []).find((entry) => !previousIds.has(entry.id));
         return item ? { status, itemId: item.id } : { status: "invalid-item" };
+      },
+      addLockedDocumentSchedule: (tripId, draft) => {
+        let result: AddLockedDocumentScheduleResult = { status: "invalid-trip" };
+        set((state) => {
+          const prepared = prepareLockedDocumentScheduleAddition({
+            trip: state.tripsById[tripId],
+            currentUserId: state.currentUserId,
+            itinerary: state.itineraryByTripId[tripId] ?? [],
+            placesById: state.placesById,
+            draft,
+            createItemId: () => createDocumentItineraryId(state, tripId, draft.date),
+          });
+          if (!prepared.ok) {
+            result = { status: prepared.status };
+            return state;
+          }
+          result = { status: "success", itemId: prepared.itemId, created: prepared.created };
+          return {
+            itineraryByTripId: {
+              ...state.itineraryByTripId,
+              [tripId]: prepared.itinerary,
+            },
+          };
+        });
+        return result;
       },
       removeItineraryItem: (tripId, itineraryItemId) => {
         let result: ItineraryMutationResult = "invalid-trip";
@@ -868,7 +917,7 @@ export const useDuriStore = create<DuriState>()(
 
         return result;
       },
-      updateItineraryItem: (tripId, itineraryItemId, patch) => {
+      updateItineraryItem: (tripId, itineraryItemId, patch, automaticShiftProtectedItemIds) => {
         let result: ItineraryMutationResult = "invalid-trip";
 
         set((state) => {
@@ -901,10 +950,6 @@ export const useDuriStore = create<DuriState>()(
             result = "invalid-time";
             return state;
           }
-          if (nextItem.placeId && current.some((entry) => entry.id !== itineraryItemId && entry.placeId === nextItem.placeId)) {
-            result = "duplicate-place";
-            return state;
-          }
           if (findOverlappingItem(current, nextItem, itineraryItemId)) {
             result = "overlap";
             return state;
@@ -912,7 +957,7 @@ export const useDuriStore = create<DuriState>()(
           const nextItinerary = sortItineraryItemsByDateAndTime(
             current.map((entry) => (entry.id === itineraryItemId ? nextItem : entry)),
           );
-          const endResolution = resolveTripEndConditionMutation(trip, nextItinerary);
+          const endResolution = resolveTripEndConditionMutation(trip, nextItinerary, automaticShiftProtectedItemIds);
           if (endResolution.status === "rejected") {
             result = "end-condition";
             return state;
@@ -928,7 +973,7 @@ export const useDuriStore = create<DuriState>()(
 
         return result;
       },
-      moveItineraryItem: (tripId, itineraryItemId, direction) => {
+      moveItineraryItem: (tripId, itineraryItemId, direction, automaticShiftProtectedItemIds) => {
         let result: ItineraryMutationResult = "invalid-trip";
         set((state) => {
           const trip = state.tripsById[tripId];
@@ -946,7 +991,7 @@ export const useDuriStore = create<DuriState>()(
             result = moved.status === "boundary" ? "boundary" : moved.status;
             return state;
           }
-          const endResolution = resolveTripEndConditionMutation(trip, moved.items);
+          const endResolution = resolveTripEndConditionMutation(trip, moved.items, automaticShiftProtectedItemIds);
           if (endResolution.status === "rejected") {
             result = "end-condition";
             return state;
@@ -961,7 +1006,7 @@ export const useDuriStore = create<DuriState>()(
         });
         return result;
       },
-      moveItineraryItemToIndex: (tripId, itineraryItemId, targetIndex) => {
+      moveItineraryItemToIndex: (tripId, itineraryItemId, targetIndex, automaticShiftProtectedItemIds) => {
         let result: ItineraryMutationResult = "invalid-trip";
         set((state) => {
           const trip = state.tripsById[tripId];
@@ -983,7 +1028,7 @@ export const useDuriStore = create<DuriState>()(
             result = moved.status === "boundary" ? "boundary" : moved.status;
             return state;
           }
-          const endResolution = resolveTripEndConditionMutation(trip, moved.items);
+          const endResolution = resolveTripEndConditionMutation(trip, moved.items, automaticShiftProtectedItemIds);
           if (endResolution.status === "rejected") {
             result = "end-condition";
             return state;
@@ -1124,13 +1169,21 @@ export const useDuriStore = create<DuriState>()(
         });
         return result;
       },
-      savePersonalPreferenceResult: (userId, answers, completedAt) => {
+      savePersonalPreferenceResult: (userId, answers, completedAt, detailedSignals) => {
         let saved: UserPreferenceResult | undefined;
 
         set((state) => {
           const targetUserId = userId ?? state.currentUserId;
           if (targetUserId !== state.currentUserId || !state.usersById[targetUserId]) return state;
-          saved = calculatePersonalPreferenceResult(targetUserId, answers, completedAt);
+          saved = {
+            ...calculatePersonalPreferenceResult(targetUserId, answers, completedAt),
+            ...(detailedSignals ? { detailedSignals: {
+              ...detailedSignals,
+              mobilityModes: [...detailedSignals.mobilityModes],
+              categoryScores: { ...detailedSignals.categoryScores },
+              budgetRanking: [...detailedSignals.budgetRanking],
+            } } : {}),
+          };
           return {
             preferenceResultsByUserId: {
               ...state.preferenceResultsByUserId,

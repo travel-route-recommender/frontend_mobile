@@ -12,7 +12,9 @@ type TourPlaceImage = {
 
 type TourPlace = {
   id?: string;
-  source?: "TOUR_API";
+  source?: "tour" | "TOUR_API";
+  placeId?: string | null;
+  externalId?: string;
   contentTypeId?: number;
   contentTypeLabel?: string | null;
   lclsSystm1?: string | null;
@@ -26,6 +28,8 @@ type TourPlace = {
   thumbnailUrl?: string | null;
   latitude?: number | null;
   longitude?: number | null;
+  lat?: number | null;
+  lng?: number | null;
   distanceMeters?: number | string;
   overview?: string | null;
   tel?: string | null;
@@ -294,7 +298,7 @@ export function resolveRegionIdForAreaCode(areaCode?: string | null) {
   return AREA_CODE_TO_REGION[areaCode];
 }
 
-function buildTourSearchPath(params: BackendPlaceSearchParams) {
+export function buildTourSearchPath(params: BackendPlaceSearchParams) {
   const query = new URLSearchParams();
   const keyword = params.keyword?.trim();
   const areaCode = params.areaCode ?? areaCodeForRegion(params.regionId);
@@ -382,8 +386,8 @@ export function mapTourPlaceToPlace(place: TourPlace): Place | null {
 
   const category = getContentTypeLabel(place.contentTypeId, place.contentTypeLabel);
   const overview = firstString([place.overview]);
-  const latitude = asNumber(place.latitude);
-  const longitude = asNumber(place.longitude);
+  const latitude = asNumber(place.latitude) ?? asNumber(place.lat);
+  const longitude = asNumber(place.longitude) ?? asNumber(place.lng);
   const eventStartDate = tourDateToDateOnly(place.eventStartDate);
   const eventEndDate = tourDateToDateOnly(place.eventEndDate);
   const eventDateTag = formatEventDateTag(eventStartDate, eventEndDate);
@@ -473,78 +477,82 @@ export async function searchBackendFestivalPage(params: BackendPlaceSearchParams
 
 export async function fetchBackendRegionCodes(signal?: AbortSignal) {
   return apiClient.request<BackendRegionCode[]>({
-    path: "/tour/meta/region-codes",
+    path: "/tour/meta/ldong-codes?size=1000",
     signal,
   });
 }
 
 export async function fetchBackendRegionCodeTree(signal?: AbortSignal) {
-  return apiClient.request<BackendRegionCodeTree[]>({
-    path: "/tour/meta/region-codes/tree",
-    signal,
-  });
+  // The current Backend exposes legal-district codes (`ldong-codes`), not a
+  // TourAPI areaCode/sigunguCode tree. Treating those different code systems
+  // as interchangeable would send wrong region filters. Explore already has
+  // the verified TourAPI province mapping and safely falls back to it when the
+  // remote tree is empty.
+  if (signal?.aborted) throw signal.reason ?? new Error("지역 코드 요청이 취소됐어요.");
+  return [] satisfies BackendRegionCodeTree[];
 }
 
 export async function fetchBackendCategoryCodeTree(signal?: AbortSignal) {
-  return apiClient.request<PlaceClassificationTreeItem[]>({
-    path: "/tour/meta/category-codes/tree",
+  const largeCodes = await apiClient.request<BackendRegionCode[]>({
+    path: "/tour/meta/category-codes?size=1000",
     signal,
   });
+  const tree: PlaceClassificationTreeItem[] = [];
+  // Keep provider pressure bounded while collecting the second level. The
+  // current Backend has no aggregate tree endpoint and no leaf-on-demand UI.
+  for (let offset = 0; offset < largeCodes.length; offset += 4) {
+    const group = largeCodes.slice(offset, offset + 4);
+    const middleGroups = await Promise.all(group.map(async (large) => {
+      const params = new URLSearchParams({ lclsSystm1: large.code, size: "1000" });
+      const middleCodes = await apiClient.request<BackendRegionCode[]>({
+        path: `/tour/meta/category-codes?${params.toString()}`,
+        signal,
+      });
+      return {
+        code: large.code,
+        name: large.name,
+        children: middleCodes.map((middle) => ({
+          code: middle.code,
+          name: middle.name,
+          children: [],
+        })),
+      } satisfies PlaceClassificationTreeItem;
+    }));
+    tree.push(...middleGroups);
+  }
+  return tree;
 }
 
 export async function suggestBackendRegions(keyword: string, size = 10, signal?: AbortSignal) {
-  const params = new URLSearchParams();
-  params.set("keyword", keyword.trim());
-  params.set("size", String(size));
-  return apiClient.request<BackendRegionCode[]>({
-    path: `/tour/regions/suggest?${params.toString()}`,
-    signal,
-  });
+  const normalized = keyword.trim().toLocaleLowerCase("ko-KR");
+  const codes = await fetchBackendRegionCodes(signal);
+  return codes
+    .filter((region) => !normalized || `${region.name} ${region.code}`.toLocaleLowerCase("ko-KR").includes(normalized))
+    .slice(0, Math.max(0, size));
 }
 
 export async function searchBackendRegionPlacePage(
   region: string,
   params: BackendPlaceSearchParams = {},
 ): Promise<BackendPlacePageResult> {
-  const query = new URLSearchParams();
-  if (params.keyword?.trim()) query.set("keyword", params.keyword.trim());
-  if (params.sigunguCode) query.set("sigunguCode", params.sigunguCode);
-  const contentTypeId = contentTypeIdForCategory(params.category);
-  if (contentTypeId) query.set("contentTypeId", String(contentTypeId));
-  appendClassificationParams(query, params);
-  query.set("page", String(params.page ?? 1));
-  query.set("size", String(params.limit ?? 50));
-
-  const page = await apiClient.request<TourPlacePage>({
-    path: `/tour/regions/${encodeURIComponent(region)}/search?${query.toString()}`,
-    signal: params.signal,
+  const areaCode = /^\d+$/.test(region.trim())
+    ? region.trim()
+    : resolveAreaCodeForRegion(region.trim());
+  return searchBackendPlacePage({
+    ...params,
+    ...(areaCode ? { areaCode } : { regionId: region.trim() }),
   });
-
-  const places = Array.isArray(page.data)
-    ? page.data.flatMap((place) => {
-      const mapped = mapTourPlaceToPlace(place);
-      return mapped ? [mapped] : [];
-    })
-    : [];
-  const requestedPage = params.page ?? 1;
-  const requestedSize = params.limit ?? 50;
-  const currentPage = asNumber(page.meta?.page) ?? requestedPage;
-  const size = asNumber(page.meta?.size) ?? requestedSize;
-  const total = asNumber(page.meta?.total);
-  const hasNextPage = total !== undefined ? currentPage * size < total : places.length >= requestedSize;
-
-  return {
-    places,
-    page: currentPage,
-    size,
-    ...(total !== undefined ? { total } : {}),
-    hasNextPage,
-  };
 }
 
 export async function getBackendPlace(placeId: EntityId, signal?: AbortSignal) {
+  const normalizedId = placeId.trim();
+  const tourContentId = normalizedId.match(/^tour:(\d+)$/)?.[1]
+    ?? (/^\d+$/.test(normalizedId) ? normalizedId : undefined);
+  const path = tourContentId
+    ? `/tour/places/${encodeURIComponent(tourContentId)}`
+    : `/places/${encodeURIComponent(normalizedId)}`;
   const place = await apiClient.request<TourPlace>({
-    path: `/tour/places/${encodeURIComponent(placeId)}`,
+    path,
     signal,
   });
   return mapTourPlaceToPlace(place);

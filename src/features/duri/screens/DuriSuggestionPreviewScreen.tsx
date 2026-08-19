@@ -12,11 +12,12 @@ import { ScheduleSnapshot } from "../components/ScheduleSnapshot";
 import { StaleSuggestionNotice } from "../components/StaleSuggestionNotice";
 import { SuggestionApplyConfirmModal } from "../components/SuggestionApplyConfirmModal";
 import { SuggestionChangeCard } from "../components/SuggestionChangeCard";
+import { buildDuriAnalysisInputWithDocuments } from "../logic/analysisInput";
 import { createDuriAnalysisSnapshot, createDuriInputFingerprint } from "../logic/analysisSnapshot";
 import { createDuriSuggestionPreview } from "../logic/suggestionPreview";
-import { buildDuriAnalysisInputFromState } from "../selectors/duriSelectors";
 import { useDuriAnalysisStore } from "../store/useDuriAnalysisStore";
 import { useTripDocumentStore, type TravelDocument } from "../../trip-documents";
+import { buildConfirmedScheduleConstraintsFromDocuments, buildDuriDocumentReferencesFromDocuments } from "../../trip-documents";
 
 const EMPTY_TRAVEL_DOCUMENTS: TravelDocument[] = [];
 
@@ -42,11 +43,7 @@ export function DuriSuggestionPreviewScreen() {
   const envelope = feature.suggestions?.find((entry) => entry.suggestion.id === suggestionId);
   const trip = source.tripsById[tripId];
   const tripDocuments = useTripDocumentStore((state) => state.documentsByTripId[tripId] ?? EMPTY_TRAVEL_DOCUMENTS);
-  const detachedItemIds = useMemo(() => [...new Set(envelope?.suggestion.changes.flatMap((change) =>
-    (change.action === "remove" || change.action === "replace") && change.itemId ? [change.itemId] : []) ?? [])], [envelope]);
-  const detachedDocumentCount = useMemo(() => tripDocuments.filter((document) =>
-    document.itineraryItemIds.some((itemId) => detachedItemIds.includes(itemId))).length, [detachedItemIds, tripDocuments]);
-  const currentInput = useMemo(() => buildDuriAnalysisInputFromState(source, tripId), [source, tripId]);
+  const currentInput = useMemo(() => buildDuriAnalysisInputWithDocuments(source, tripId, tripDocuments), [source, tripDocuments, tripId]);
   const currentFingerprint = useMemo(() => currentInput ? createDuriInputFingerprint(createDuriAnalysisSnapshot(currentInput)) : "", [currentInput]);
   const stale = Boolean(envelope && envelope.baseFingerprint !== currentFingerprint);
   const preview = useMemo(() => envelope && trip ? createDuriSuggestionPreview({
@@ -55,7 +52,8 @@ export function DuriSuggestionPreviewScreen() {
     placesById: feature.session?.snapshot.placesById ?? source.placesById,
     candidates: feature.session?.snapshot.candidates ?? source.candidatesByTripId[tripId] ?? [],
     trip,
-  }) : undefined, [envelope, feature.session, source.candidatesByTripId, source.placesById, trip, tripId]);
+    protectionInput: currentInput,
+  }) : undefined, [currentInput, envelope, feature.session, source.candidatesByTripId, source.placesById, trip, tripId]);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [applying, setApplying] = useState(false);
   const [applyError, setApplyError] = useState("");
@@ -67,19 +65,20 @@ export function DuriSuggestionPreviewScreen() {
     setApplying(true);
     setApplyError("");
     try {
+      const latestDocuments = useTripDocumentStore.getState().documentsByTripId[tripId] ?? [];
+      const confirmedScheduleConstraints = buildConfirmedScheduleConstraintsFromDocuments(latestDocuments).constraints;
       const result = useDuriStore.getState().applyDuriSuggestionAtomically({
         tripId,
         envelope,
         expectedFingerprint: envelope.baseFingerprint,
         appliedByUserId: source.currentUserId,
+        documentReferences: buildDuriDocumentReferencesFromDocuments(latestDocuments),
+        confirmedScheduleConstraints,
       });
       if (!result.ok) {
         setApplyError(result.message);
         setConfirmOpen(false);
         return;
-      }
-      for (const itemId of detachedItemIds) {
-        useTripDocumentStore.getState().setLinksForItinerary(tripId, itemId, []);
       }
       useDuriAnalysisStore.getState().recordReceipt(result.receipt);
       setConfirmOpen(false);
@@ -119,8 +118,7 @@ export function DuriSuggestionPreviewScreen() {
 
     <View style={styles.section}><Text style={styles.sectionTitle}>계산 가능한 기대 효과</Text>{preview.impact.metrics.length ? preview.impact.metrics.map((metric) => <View key={metric.id} style={styles.impact}><Text style={styles.impactLabel}>{metric.label}</Text><Text style={styles.impactValue}>{metric.before}{metric.unit} → {metric.after}{metric.unit}</Text></View>) : <Text style={styles.noImpact}>시간 충돌·날짜별 개수·공동 후보 배치에서 달라지는 수치가 없어요. 계산하지 않은 만족도나 이동시간 효과는 표시하지 않아요.</Text>}</View>
 
-    <View style={styles.notice}><Text style={styles.noticeTitle}>적용 전 확인</Text><Text style={styles.noticeText}>실제 이동시간·도로 경로·영업시간은 확인하지 않았어요. 확인 버튼을 누른 뒤에도 전체 validation이 성공한 경우에만 일정 Store를 한 번 갱신해요.</Text></View>
-    {detachedDocumentCount ? <View style={styles.documentNotice}><Text style={styles.documentNoticeTitle}>연결 문서 {detachedDocumentCount}개 확인</Text><Text style={styles.noticeText}>장소가 교체되거나 일정에서 제외되는 항목의 입장권·예약 연결은 적용 시 해제돼요. 파일 자체는 여행 문서함에 남습니다.</Text></View> : null}
+    <View style={styles.notice}><Text style={styles.noticeTitle}>적용 전 확인</Text><Text style={styles.noticeText}>분석 세션에서 확인한 경로·운영정보와 사용자 사실을 다시 대조하고, 전체 validation이 성공한 경우에만 일정 Store를 한 번 갱신해요. 사용자 잠금·확정 예약·연결 문서는 자동으로 해제하지 않아요.</Text></View>
     {disabledReason ? <Text accessibilityRole="alert" style={styles.disabledReason}>적용 불가 · {disabledReason}</Text> : null}
     <PrimaryButton label="제안 적용 확인" disabled={Boolean(disabledReason)} onPress={() => setConfirmOpen(true)} />
     <SecondaryButton label="취소하고 리포트로" onPress={() => router.back()} />
@@ -144,8 +142,6 @@ const styles = StyleSheet.create({
   notice: { gap: spacing.xs, borderRadius: radius.lg, backgroundColor: colors.primarySoft, padding: spacing.md },
   noticeTitle: { ...typography.bodyStrong, color: colors.primary },
   noticeText: { ...typography.caption, color: colors.textSecondary },
-  documentNotice: { gap: spacing.xs, borderRadius: radius.lg, backgroundColor: colors.warningSoft, padding: spacing.md },
-  documentNoticeTitle: { ...typography.bodyStrong, color: colors.warning },
   error: { gap: spacing.xs, borderRadius: radius.lg, backgroundColor: colors.dangerSoft, padding: spacing.md },
   errorTitle: { ...typography.bodyStrong, color: colors.danger },
   errorText: { ...typography.caption, color: colors.textSecondary },

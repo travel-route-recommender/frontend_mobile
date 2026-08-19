@@ -12,6 +12,9 @@ import type {
   DuriGroupInsight,
   DuriReportIssue,
 } from "../types";
+import { isUsableConfirmedScheduleConstraint } from "./confirmedScheduleConstraint";
+import { buildScheduledRouteLegs } from "./routeEvidence";
+import { findUsableRouteEstimateForLeg } from "./scheduleConstraintAnalysis";
 
 function uniqueConflictPairs(items: readonly ItineraryItem[], date: string) {
   const pairs = new Set<string>();
@@ -42,6 +45,8 @@ export function analyzeTimeConflicts(snapshot: DuriAnalysisSnapshot): DuriReport
         affectedMemberIds: [],
         evidence: [{ label: "겹치는 시간 범위", value: timeRanges.join(" / "), itemIds: [leftId, rightId].sort(), placeIds }],
         suggestionSupported: true,
+        constraintType: "hard" as const,
+        confidence: "high" as const,
         source: "mobile-context" as const,
       };
     }),
@@ -82,6 +87,8 @@ export function analyzeEndCondition(snapshot: DuriAnalysisSnapshot): DuriReportI
       affectedMemberIds: [],
       evidence,
       suggestionSupported: false,
+      constraintType: "informational",
+      confidence: "medium",
       source: "mobile-context",
     }];
   }
@@ -98,6 +105,26 @@ export function analyzeEndCondition(snapshot: DuriAnalysisSnapshot): DuriReportI
       affectedMemberIds: [],
       evidence,
       suggestionSupported: false,
+      constraintType: "informational",
+      confidence: "high",
+      source: "mobile-context",
+    }];
+  }
+  if (assessment.status === "cross-midnight") {
+    return [{
+      id: "end-condition-cross-midnight-" + snapshot.trip.id,
+      category: "end-condition",
+      severity: "medium",
+      title: "복귀 이동이 자정 경계를 넘을 수 있어요",
+      summary: assessment.message + " 여행 날짜의 의미와 실제 출발일을 사용자가 확인해 주세요.",
+      date: snapshot.trip.endDate ?? undefined,
+      affectedItemIds: assessment.affectedItemIds,
+      affectedPlaceIds,
+      affectedMemberIds: [],
+      evidence,
+      suggestionSupported: false,
+      constraintType: "soft",
+      confidence: "high",
       source: "mobile-context",
     }];
   }
@@ -114,6 +141,8 @@ export function analyzeEndCondition(snapshot: DuriAnalysisSnapshot): DuriReportI
       affectedMemberIds: [],
       evidence,
       suggestionSupported: false,
+      constraintType: "hard",
+      confidence: "high",
       source: "mobile-context",
     }];
   }
@@ -130,6 +159,8 @@ export function analyzeEndCondition(snapshot: DuriAnalysisSnapshot): DuriReportI
     affectedMemberIds: [],
     evidence,
     suggestionSupported: true,
+    constraintType: "hard",
+    confidence: "medium",
     source: "mobile-context",
   }];
 }
@@ -140,21 +171,70 @@ function minutesToLabel(minutes: number) {
   return `${String(hours).padStart(2, "0")}:${String(rest).padStart(2, "0")}`;
 }
 
-export function analyzeDayBalance(snapshot: DuriAnalysisSnapshot): { metrics: DuriDayMetric[]; issues: DuriReportIssue[] } {
+const ADULT_SLEEP_REFERENCE_MINUTES = 7 * 60;
+
+/**
+ * 날짜 경계의 빈 시간을 수면으로 단정하지 않는다. 다만 AASM/SRS 성인 권고의
+ * 7시간보다 짧으면 야간 이동이 의도인지 확인하도록 낮은 신뢰도의 Soft 항목으로만 알린다.
+ */
+export function analyzeOvernightRecovery(snapshot: DuriAnalysisSnapshot): DuriReportIssue[] {
   const dates = getTripDates(snapshot.trip.startDate, snapshot.trip.endDate);
+  return dates.slice(0, -1).flatMap((date, index) => {
+    const nextDate = dates[index + 1];
+    const currentItems = sortItineraryItemsByDateAndTime(snapshot.itinerary.filter((item) => item.date === date && isValidScheduleRange(item)));
+    const nextItems = sortItineraryItemsByDateAndTime(snapshot.itinerary.filter((item) => item.date === nextDate && isValidScheduleRange(item)));
+    if (!currentItems.length || !nextItems.length) return [];
+    const last = currentItems[currentItems.length - 1];
+    const first = nextItems[0];
+    const lastEnd = timeStringToMinutes(last.startTime) + last.durationMinutes;
+    const firstStart = timeStringToMinutes(first.startTime);
+    const recoveryMinutes = (24 * 60 - lastEnd) + firstStart;
+    if (!Number.isFinite(recoveryMinutes) || recoveryMinutes >= ADULT_SLEEP_REFERENCE_MINUTES) return [];
+    const affectedPlaceIds = [last.placeId, first.placeId].filter((placeId): placeId is string => Boolean(placeId));
+    return [{
+      id: `overnight-recovery-${date}-${nextDate}-${last.id}-${first.id}`,
+      category: "overnight-recovery" as const,
+      severity: "low" as const,
+      title: "다음 날 첫 일정까지 회복 시간이 짧을 수 있어요",
+      summary: `${date} 마지막 일정 종료부터 ${nextDate} 첫 일정 시작까지 ${Math.floor(recoveryMinutes / 60)}시간 ${recoveryMinutes % 60}분이에요. 심야 이동·축제처럼 의도한 일정일 수 있어 삭제하거나 시간을 바꾸지 않아요.`,
+      date: nextDate,
+      affectedItemIds: [last.id, first.id],
+      affectedPlaceIds,
+      affectedMemberIds: [],
+      evidence: [
+        { label: "일정 사이 시간", value: `${recoveryMinutes}분`, itemIds: [last.id, first.id], placeIds: affectedPlaceIds },
+        { label: "성인 수면 참고", value: "규칙적으로 7시간 이상 권고", source: "AASM/SRS 성인 수면시간 합의문" },
+      ],
+      suggestionSupported: false,
+      constraintType: "soft" as const,
+      confidence: "low" as const,
+      source: "external-evidence" as const,
+    }];
+  });
+}
+
+export function analyzeDayBalance(snapshot: DuriAnalysisSnapshot, analyzedAt = new Date().toISOString()): { metrics: DuriDayMetric[]; issues: DuriReportIssue[] } {
+  const dates = getTripDates(snapshot.trip.startDate, snapshot.trip.endDate);
+  const routeLegs = buildScheduledRouteLegs(snapshot);
   const metrics = dates.map((date) => {
     const items = sortItineraryItemsByDateAndTime(snapshot.itinerary.filter((item) => item.date === date && isValidScheduleRange(item)));
-    const longGapMinutes = items.slice(1).reduce((total, item, index) => {
-      const previous = items[index];
-      const gap = timeStringToMinutes(item.startTime) - (timeStringToMinutes(previous.startTime) + previous.durationMinutes);
-      return total + (gap >= DURI_MOBILE_CONTEXT_CONFIG.longGapMinutes ? gap : 0);
-    }, 0);
+    const dayLegs = routeLegs.filter((leg) => leg.date === date);
+    const analyzedLegs = dayLegs.flatMap((leg) => {
+      const estimate = findUsableRouteEstimateForLeg(snapshot.routeLegEstimates ?? [], leg, snapshot.trip.transport, analyzedAt);
+      return estimate ? [{ leg, estimate }] : [];
+    });
+    // 경로를 조회하지 못한 구간을 0분 이동으로 가정하지 않는다. 확인된 구간만
+    // `사용 가능 공백 - 실제 이동시간`으로 계산해 긴 이동을 공백으로 오인하지 않는다.
+    const routeAdjustedIdleMinutes = Math.round(analyzedLegs.reduce((total, { leg, estimate }) =>
+      total + Math.max(0, leg.availableSeconds - estimate.durationSeconds), 0) / 60);
     return {
       date,
       itemCount: items.length,
       scheduledMinutes: items.reduce((total, item) => total + item.durationMinutes, 0),
       conflictCount: uniqueConflictPairs(items, date).length,
-      longGapMinutes,
+      routeAdjustedIdleMinutes,
+      analyzedRouteLegCount: analyzedLegs.length,
+      requiredRouteLegCount: dayLegs.length,
     };
   });
   if (metrics.length < 2) return { metrics, issues: [] };
@@ -180,6 +260,8 @@ export function analyzeDayBalance(snapshot: DuriAnalysisSnapshot): { metrics: Du
         { label: lightest.date, value: `${lightest.itemCount}개 · ${lightest.scheduledMinutes}분` },
       ],
       suggestionSupported: true,
+      constraintType: "soft",
+      confidence: "low",
       source: "mobile-context",
     }],
   };
@@ -210,6 +292,8 @@ export function analyzeCandidateUsage(snapshot: DuriAnalysisSnapshot): { usage: 
     affectedMemberIds: [],
     evidence: [{ label: "미배치 공동 후보", value: `${shared.length}개`, placeIds: shared }],
     suggestionSupported: false,
+    constraintType: "informational",
+    confidence: "high",
     source: "mobile-context",
   }] : [];
   return { usage, issues };
@@ -240,25 +324,88 @@ export function buildGroupPreferenceInsights(snapshot: DuriAnalysisSnapshot): Du
 }
 
 export function calculateAnalysisCoverage(snapshot: DuriAnalysisSnapshot): DuriAnalysisCoverage {
-  const placeItems = snapshot.itinerary.filter((item) => item.placeId && snapshot.placesById[item.placeId]);
-  const coordinateCount = placeItems.filter((item) => {
-    const place = snapshot.placesById[item.placeId as string] as typeof snapshot.placesById[string] & { latitude?: number; longitude?: number };
-    return Number.isFinite(place.latitude) && Number.isFinite(place.longitude);
-  }).length;
-  const routeData = coordinateCount >= 2 && coordinateCount === placeItems.length
+  const routeCollection = snapshot.evidenceCollection?.route;
+  const routeData = routeCollection && routeCollection.requiredLegCount > 0
+    ? routeCollection.analyzedLegCount === routeCollection.requiredLegCount
+      ? "available"
+      : routeCollection.analyzedLegCount > 0
+        ? "partial"
+        : "unavailable"
+    : "unavailable";
+  const placeCollection = snapshot.evidenceCollection?.placeDetails;
+  const operatingFactPlaceCount = placeCollection?.operatingFactPlaceCount ?? 0;
+  const durationFactPlaceCount = placeCollection?.durationFactPlaceCount ?? 0;
+  const scheduledPlaceCount = placeCollection?.scheduledPlaceCount ?? 0;
+  const operatingData = placeCollection && scheduledPlaceCount > 0
+    ? operatingFactPlaceCount === scheduledPlaceCount
+      ? "available"
+      : operatingFactPlaceCount > 0
+        ? "partial"
+        : "unavailable"
+    : "unavailable";
+  const congestionCollection = snapshot.evidenceCollection?.congestion;
+  const scheduledCongestionPlaceDateCount = congestionCollection?.scheduledPlaceDateCount ?? 0;
+  const matchedCongestionPlaceDateCount = congestionCollection?.matchedPlaceDateCount ?? 0;
+  const congestionData = congestionCollection && scheduledCongestionPlaceDateCount > 0
+    ? matchedCongestionPlaceDateCount === scheduledCongestionPlaceDateCount
+      ? "available"
+      : matchedCongestionPlaceDateCount > 0
+        ? "partial"
+        : "unavailable"
+    : "unavailable";
+  const confirmedCount = (snapshot.confirmedScheduleConstraints ?? [])
+    .filter((constraint) => isUsableConfirmedScheduleConstraint(constraint, snapshot.trip)).length;
+  const documentCount = snapshot.documentReferences?.length ?? 0;
+  const documentReviewCount = snapshot.documentReferences?.filter((reference) => reference.extractionStatus === "needs-review").length ?? 0;
+  const documentUnavailableCount = snapshot.documentReferences?.filter((reference) => reference.extractionStatus === "failed" || reference.extractionStatus === "unsupported").length ?? 0;
+  const resolvedDocumentCount = snapshot.documentReferences?.filter((reference) =>
+    reference.extractionStatus === "confirmed" && (reference.confirmedFactIds?.length ?? 0) > 0).length ?? 0;
+  const unresolvedDocumentCount = documentCount - resolvedDocumentCount;
+  const documentData = confirmedCount > 0 && unresolvedDocumentCount === 0
     ? "available"
-    : coordinateCount > 0
+    : confirmedCount > 0 || documentCount > 0
       ? "partial"
       : "unavailable";
+  const routeMessage = routeCollection?.mode === "car" && routeData !== "unavailable"
+    ? `Kakao Mobility 실제 도로 경로로 ${routeCollection.analyzedLegCount}/${routeCollection.requiredLegCount}개 구간을 초 단위 비교했어요. 현재 교통 기준이며 여행 날짜의 미래 교통은 아니에요.${routeCollection.unavailableReason ? ` ${routeCollection.unavailableReason}` : ""}`
+    : routeCollection?.mode === "public"
+      ? routeCollection.unavailableReason ?? "대중교통 경로 근거를 조회하지 못했어요."
+      : routeCollection?.requiredLegCount === 0
+        ? "같은 날짜에 연속된 장소 일정이 없어 실제 이동시간 비교 대상이 없어요."
+        : routeCollection?.unavailableReason ?? "실제 경로 근거가 없어 직선거리를 이동시간처럼 사용하지 않았어요.";
+  const operatingMessage = operatingData === "available"
+    ? `일정의 ${scheduledPlaceCount}개 장소 모두에서 TourAPI 운영시간·휴무일·행사기간 중 하나 이상을 확인했어요. 권장 소요시간 근거는 ${durationFactPlaceCount}개 장소에 있어요.${placeCollection?.unavailableReason ? ` ${placeCollection.unavailableReason}` : ""}`
+    : operatingData === "partial"
+      ? `일정의 ${scheduledPlaceCount}개 중 ${operatingFactPlaceCount}개 장소에서 TourAPI 운영시간·휴무일·행사기간 중 하나 이상을 확인했어요. 권장 소요시간 근거는 ${durationFactPlaceCount}개 장소에 있어요. ${placeCollection?.unavailableReason ?? "원문을 해석할 수 없는 장소는 판단하지 않았어요."}`
+      : `${placeCollection?.unavailableReason ?? "파싱 가능한 TourAPI 운영정보가 없어 운영시간을 판단하지 않았어요."}${durationFactPlaceCount ? ` 권장 소요시간 근거는 ${durationFactPlaceCount}개 장소에만 있어요.` : ""}`;
+  const congestionMessage = congestionData === "available"
+    ? `일정의 장소·방문일 ${scheduledCongestionPlaceDateCount}건 모두에서 한국관광공사 향후 집중률 예측과 날짜가 정확히 일치했어요. 절대 방문자 수나 대기시간으로 해석하지 않아요.${congestionCollection?.unavailableReason ? ` ${congestionCollection.unavailableReason}` : ""}`
+    : congestionData === "partial"
+      ? `일정의 장소·방문일 ${scheduledCongestionPlaceDateCount}건 중 ${matchedCongestionPlaceDateCount}건에서만 향후 집중률 예측 날짜가 일치했어요. ${congestionCollection?.unavailableReason ?? "나머지 일정에는 예측값을 적용하지 않았어요."}`
+      : congestionCollection?.unavailableReason ?? "일정 날짜와 정확히 일치하는 한국관광공사 집중률 예측값이 없어 혼잡도를 판단하지 않았어요.";
+  const documentMessage = documentData === "available"
+    ? `${confirmedCount}개의 사용자 확인 예약·필수 일정만 하드 제약으로 검사했어요.`
+    : documentData === "partial"
+      ? `첨부 문서 ${documentCount}개 중 확인 완료 ${resolvedDocumentCount}개, 미확정·처리 불가 ${unresolvedDocumentCount}개이며 현재 검증 가능한 사용자 확인 사실은 ${confirmedCount}개예요.${documentReviewCount ? ` 추출 결과 확인 필요 ${documentReviewCount}개.` : ""}${documentUnavailableCount ? ` OCR 미지원·실패 ${documentUnavailableCount}개.` : ""} 직접 확인한 날짜·시각·대상만 하드 제약으로 승격해요.`
+      : "사용자가 확인한 예약·교통편 구조화 정보가 없어 누락·지각 여부를 판단하지 않았어요.";
   return {
     itinerary: snapshot.itinerary.length === 0 ? "insufficient" : snapshot.itinerary.length === 1 ? "partial" : "complete",
     preferences: snapshot.groupPreferenceDiagnosis.coverage,
     routeData,
-    routeMessage: routeData === "available"
-      ? "모든 관련 장소 좌표로 직선거리 흐름만 계산했어요. 실제 도로 거리나 이동시간은 아니에요."
-      : routeData === "partial"
-        ? "일부 장소만 좌표가 있어 직선거리 동선 판단은 완료하지 않았어요."
-        : "장소 좌표가 없어 직선거리 동선은 분석하지 않았어요. 주소 권역 근거가 있으면 권역 전환만 참고로 보여줘요.",
+    operatingData,
+    congestionData,
+    documentData,
+    routeMessage,
+    operatingMessage,
+    congestionMessage,
+    documentMessage,
+    limitations: [
+      "현재 Backend는 미래 출발시각 자동차 경로를 제공하지 않아 분석 시점 교통만 사용해요.",
+      "대중교통 막차·마지막 환승 시각은 Kakao 경로 응답에 없어 검증하지 않아요.",
+      "TourAPI에는 마지막 입장·라스트 오더 필드가 없어 운영 종료시각으로 대신 추정하지 않아요.",
+      "관광지 집중률은 각 관광지의 역대 최고 수준을 100으로 둔 날짜 단위 예측이라 장소 간 비교가 불가능하고 실제 방문자 수·시간대별 대기시간·수용 한계를 판단하지 않아요.",
+      "숙소·공항·역의 날짜별 출발·종료 좌표와 출발 마감이 없어 하루 첫·마지막 연결은 검증하지 않아요.",
+    ],
   };
 }
 
@@ -266,7 +413,7 @@ export function mapCoreIssues(issues: AnalysisIssue[]): DuriReportIssue[] {
   return issues.map((issue) => ({
     id: issue.id,
     category: issue.category,
-    severity: issue.severity,
+    severity: issue.severity === "high" ? "medium" : issue.severity,
     title: issue.title,
     summary: issue.summary,
     date: issue.date,
@@ -275,6 +422,8 @@ export function mapCoreIssues(issues: AnalysisIssue[]): DuriReportIssue[] {
     affectedMemberIds: [...issue.affectedMemberIds],
     evidence: issue.evidence.map((entry) => ({ ...entry, itemIds: entry.itemIds ? [...entry.itemIds] : undefined, placeIds: entry.placeIds ? [...entry.placeIds] : undefined, memberIds: entry.memberIds ? [...entry.memberIds] : undefined })),
     suggestionSupported: issue.severity !== "info",
+    constraintType: issue.severity === "info" ? "informational" : "soft",
+    confidence: "low",
     source: "web-engine",
   }));
 }

@@ -47,6 +47,7 @@ export type ScheduleChangeSnapshot = {
   itemType?: ItineraryItemType;
   preferredByUserIds?: EntityId[];
   note?: string;
+  lockedForDuri?: boolean;
 };
 
 export type ScheduleChangeState = ScheduleChangeSnapshot;

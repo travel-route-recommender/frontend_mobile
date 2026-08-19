@@ -14,6 +14,7 @@ import {
   SLOT_MINUTES,
   WORKSPACE_END_MINUTES,
   WORKSPACE_GRID_HEIGHT_PX,
+  WORKSPACE_HOUR_LABEL_COUNT,
   WORKSPACE_SLOT_COUNT,
   WORKSPACE_START_MINUTES,
 } from "../../../data/workspaceSchedule";
@@ -72,7 +73,7 @@ export function WorkspaceScheduleGrid({
       return earliest === null ? minutes : Math.min(earliest, minutes);
     }, null);
     const top = firstStart === null
-      ? 0
+      ? Math.max(((8 * 60 - WORKSPACE_START_MINUTES) / SLOT_MINUTES) * SLOT_HEIGHT_PX - 72, 0)
       : Math.max(((firstStart - WORKSPACE_START_MINUTES) / SLOT_MINUTES) * SLOT_HEIGHT_PX - 72, 0);
     scrollRef.current?.scrollTo({ y: top, animated: false });
   }, [date.date]);
@@ -82,7 +83,7 @@ export function WorkspaceScheduleGrid({
       <View style={styles.headerCopy}>
         <Text style={styles.eyebrow}>{date.dayLabel} · {date.monthDayLabel} {date.weekdayLabel}</Text>
         <Text style={styles.title}>일정표</Text>
-        <Text style={styles.guide}>08:00–24:00 · {SLOT_MINUTES}분 단위</Text>
+        <Text style={styles.guide}>00:00–24:00 · {SLOT_MINUTES}분 단위</Text>
       </View>
       {canEdit ? <Pressable
         accessibilityRole="button"
@@ -139,7 +140,7 @@ export function WorkspaceScheduleGrid({
 
 function TimeAxis() {
   return <View style={styles.timeAxis}>
-    {Array.from({ length: 17 }, (_, index) => {
+    {Array.from({ length: WORKSPACE_HOUR_LABEL_COUNT }, (_, index) => {
       const minutes = WORKSPACE_START_MINUTES + index * 60;
       const top = Math.min(
         Math.max(((minutes - WORKSPACE_START_MINUTES) / SLOT_MINUTES) * SLOT_HEIGHT_PX - 8, 0),
@@ -151,7 +152,10 @@ function TimeAxis() {
 }
 
 function formatEndConditionStart(entry: TripEndConditionTimelineEntry) {
-  if (entry.cutoffMinutes < WORKSPACE_START_MINUTES) return "08:00 이전 출발 필요";
+  if (entry.cutoffMinutes < WORKSPACE_START_MINUTES) {
+    const previousDayMinutes = ((entry.cutoffMinutes % (24 * 60)) + 24 * 60) % (24 * 60);
+    return `이전 날짜 ${formatMinutesToTime(previousDayMinutes) ?? "--:--"} 출발 필요`;
+  }
   return `${formatMinutesToTime(entry.cutoffMinutes) ?? "--:--"} 복귀 출발`;
 }
 
@@ -349,7 +353,7 @@ function ScheduleGridItem({
   };
 
   return <Animated.View
-    accessibilityLabel={`${item.placeName}, ${previewStartTime}부터 ${previewEndTime}, ${previewDuration}분`}
+    accessibilityLabel={`${item.placeName}, ${previewStartTime}부터 ${previewEndTime}, ${previewDuration}분${item.lockedForDuri ? ", 두리 변경 잠금" : ""}`}
     style={[
       styles.item,
       item.hasTimeConflict && styles.itemConflict,
@@ -360,7 +364,7 @@ function ScheduleGridItem({
   >
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${item.placeName} 일정 편집`}
+      accessibilityLabel={`${item.placeName} 일정 편집${item.lockedForDuri ? ", 두리 변경 잠금" : ""}`}
       accessibilityHint={micro ? "두 번 탭하여 시간과 체류시간을 편집하세요" : undefined}
       hitSlop={compact ? { top: 12, bottom: 12 } : undefined}
       onPress={onEdit}
@@ -370,9 +374,9 @@ function ScheduleGridItem({
         maxFontSizeMultiplier={visualMicro ? 1 : visualCompact ? 1.15 : undefined}
         numberOfLines={1}
         style={[styles.itemName, visualCompact && styles.itemNameCompact, visualMicro && styles.itemNameMicro]}
-      >{visualCompact ? `${previewStartTime}–${previewEndTime} · ${item.placeName}` : item.placeName}</Text>
+      >{visualCompact ? `${previewStartTime}–${previewEndTime} · ${item.lockedForDuri ? "🔒 " : ""}${item.placeName}` : `${item.lockedForDuri ? "🔒 " : ""}${item.placeName}`}</Text>
       {!visualCompact ? <Text numberOfLines={1} style={styles.itemTime}>{previewStartTime}–{previewEndTime}</Text> : null}
-      {!visualCompact ? <Text numberOfLines={1} style={styles.itemMeta}>{item.categoryLabel} · {previewDuration}분</Text> : null}
+      {!visualCompact ? <Text numberOfLines={1} style={styles.itemMeta}>{item.categoryLabel} · {previewDuration}분{item.lockedForDuri ? " · 두리 변경 잠금" : ""}</Text> : null}
     </Pressable>
     {canEdit ? <View
       {...moveHandlers}

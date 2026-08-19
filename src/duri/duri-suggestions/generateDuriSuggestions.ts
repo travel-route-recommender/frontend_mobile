@@ -45,6 +45,7 @@ function itemState(item: ItineraryItem) {
     itemType: item.itemType,
     preferredByUserIds: [...item.preferredByUserIds],
     note: item.note,
+    lockedForDuri: Boolean(item.lockedForDuri),
   };
 }
 
@@ -121,6 +122,7 @@ export function buildRouteReorderSuggestion(
   let best: { left: ItineraryItem; right: ItineraryItem; score: number } | undefined;
 
   for (let index = 0; index < entries.length - 1; index += 1) {
+    if (entries[index].item.lockedForDuri || entries[index + 1].item.lockedForDuri) continue;
     const reordered = [...entries];
     [reordered[index], reordered[index + 1]] = [reordered[index + 1], reordered[index]];
     const score = transitionCount(reordered.map((entry) => entry.area));
@@ -300,16 +302,16 @@ function buildDensitySuggestions(input: DuriSuggestionInput, issue: AnalysisIssu
       : freeTime
         ? "현장에서 유연하게 결정할 수 있도록 자유 시간을 남겨요."
         : "";
-  const last = dayItems[dayItems.length - 1];
-  const currentEnd = timeStringToMinutes(last.startTime) + last.durationMinutes;
-  const movedStart = findNextAvailableSlot({
+  const last = [...dayItems].reverse().find((item) => !item.lockedForDuri);
+  const currentEnd = last ? timeStringToMinutes(last.startTime) + last.durationMinutes : undefined;
+  const movedStart = last && currentEnd !== undefined ? findNextAvailableSlot({
     items: input.itinerary,
     date: issue.date,
     durationMinutes: last.durationMinutes,
     fromMinutes: currentEnd + 60,
     excludeItemId: last.id,
-  });
-  if (movedStart && movedStart !== last.startTime) {
+  }) : undefined;
+  if (last && movedStart && movedStart !== last.startTime) {
     suggestions.push(createSuggestion(input, {
       sourceIssueIds: [issue.id],
       type: "move-item",
@@ -342,7 +344,7 @@ function buildDensitySuggestions(input: DuriSuggestionInput, issue: AnalysisIssu
   if (!suggestions.length && issue.severity === "high") {
     const candidatesByPlaceId = new Map(input.candidates.map((candidate) => [candidate.placeId, candidate]));
     const removable = dayItems
-      .filter((item) => item.placeId && candidatesByPlaceId.has(item.placeId))
+      .filter((item) => !item.lockedForDuri && item.placeId && candidatesByPlaceId.has(item.placeId))
       .map((item) => ({
         item,
         candidate: candidatesByPlaceId.get(item.placeId as string) as TripCandidate,
@@ -437,7 +439,7 @@ function buildPreferenceSuggestion(input: DuriSuggestionInput, issue: AnalysisIs
 
   const replacement = preferenceCandidates.flatMap((candidateEntry) => {
     const category = normalizeTrait(candidateEntry.place.category);
-    const sameCategory = input.itinerary.filter((item) => item.placeId && input.placesById[item.placeId] && normalizeTrait(input.placesById[item.placeId].category) === category);
+    const sameCategory = input.itinerary.filter((item) => !item.lockedForDuri && item.placeId && input.placesById[item.placeId] && normalizeTrait(input.placesById[item.placeId].category) === category);
     const target = sameCategory.length >= 2
       ? sameCategory.find((item) => !item.preferredByUserIds.includes(memberId))
       : undefined;

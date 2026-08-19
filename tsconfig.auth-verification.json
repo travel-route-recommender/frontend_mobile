@@ -15,6 +15,7 @@
   "include": [
     "scripts/verify-auth-session.ts",
     "src/config/environment.ts",
+    "src/features/auth/services/localPrivateDataPolicy.ts",
     "src/features/auth/services/authTokenState.ts",
     "src/features/auth/services/guestAccessPolicy.ts",
     "src/services/apiClient.ts"

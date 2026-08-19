@@ -5,6 +5,7 @@ import type { CreateTripDraft } from "../../features/trip-creation/types";
 import type { AuthIntegrityState, StateIntegrityIssue } from "./types";
 import { issue } from "./types";
 import { isValidISODate } from "../../utils/formatters";
+import { isValidClockTime } from "../../utils/schedule";
 
 export function validatePreferences(
   domain: DuriDomainState,
@@ -86,7 +87,7 @@ export function validateCreateTripDraft(
   }
   if (draft.endCondition) {
     if (!draft.endCondition.location.trim() || draft.endCondition.location.length > 100) issues.push(issue("error", "trip-draft.end-condition-location-invalid", "trip-draft", "여행방 초안의 종료 지점이 올바르지 않습니다."));
-    if (!/^([01]\d|2[0-3]):(?:00|15|30|45)$/.test(draft.endCondition.deadline)) issues.push(issue("error", "trip-draft.end-condition-deadline-invalid", "trip-draft", "여행방 초안의 종료 시각이 올바르지 않습니다."));
+    if (!isValidClockTime(draft.endCondition.deadline)) issues.push(issue("error", "trip-draft.end-condition-deadline-invalid", "trip-draft", "여행방 초안의 종료 시각이 올바르지 않습니다."));
     const travelMinutes = Number(draft.endCondition.travelMinutes);
     if (!/^\d{1,4}$/.test(draft.endCondition.travelMinutes) || !Number.isInteger(travelMinutes) || travelMinutes > 1440) issues.push(issue("error", "trip-draft.end-condition-travel-invalid", "trip-draft", "여행방 초안의 종료 지점 이동시간이 올바르지 않습니다."));
     const bufferMinutes = Number(draft.endCondition.serviceBufferMinutes);

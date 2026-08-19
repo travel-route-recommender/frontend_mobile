@@ -13,6 +13,7 @@ import { buildInitialTripDays, mapDraftToCreateTripRoomRequest } from "../src/fe
 import { createTripDraftEditCopy, getRegionSelectionPatch, getTripEditCommitPatch } from "../src/features/trip-creation/logic/tripDraftEditing";
 import { buildCalendarMonth, moveCalendarMonth, selectTripDateRange } from "../src/features/trip-creation/logic/tripDateRange";
 import { createTripRoomService, validateCreateTripRoomRequest } from "../src/features/trip-creation/services/createTripRoomService";
+import { parseApiTripLocalFacts } from "../src/features/trip-creation/services/apiTripFactsStorage";
 import { normalizeCreateTripDraft } from "../src/features/trip-creation/store/useCreateTripDraftStore";
 import { createRegionService, mapRegionToOption } from "../src/features/trip-creation/services/regionService";
 import { normalizeInvitedUserIds, validateCreateTripDraft } from "../src/features/trip-creation/validation/validateCreateTripDraft";
@@ -73,7 +74,8 @@ async function main() {
   assert(validateCreateTripDraft(createDraft({ transport: null }), validationContext)?.includes("이동 방식"), "새 여행방은 실제 이동 방식을 명시적으로 선택해야 한다");
   const endCondition = { type: "train" as const, location: "부산역", deadline: "18:30", travelMinutes: "45", serviceBufferMinutes: "30", note: "승강장 이동" };
   assert(validateCreateTripDraft(createDraft({ endCondition }), validationContext) === undefined, "완성된 종료 조건은 생성 validation을 통과해야 한다");
-  assert(validateCreateTripDraft(createDraft({ endCondition: { ...endCondition, deadline: "18:20" } }), validationContext)?.includes("15분"), "종료 시각은 15분 단위여야 한다");
+  assert(validateCreateTripDraft(createDraft({ endCondition: { ...endCondition, deadline: "18:07" } }), validationContext) === undefined, "종료 시각은 1분 단위 HH:mm을 허용해야 한다");
+  assert(validateCreateTripDraft(createDraft({ endCondition: { ...endCondition, deadline: "18:60" } }), validationContext)?.includes("HH:mm"), "달력 시각으로 표현할 수 없는 종료 시각은 거부해야 한다");
   assert(validateCreateTripDraft(createDraft({ endCondition: { ...endCondition, travelMinutes: "" } }), validationContext)?.includes("이동시간"), "예상 이동시간은 빈 값일 수 없다");
   assert(validateCreateTripDraft(createDraft({ dateUndecided: true, startDate: null, endDate: null, endCondition }), validationContext)?.includes("종료 조건"), "날짜 미정 여행에는 종료 조건을 함께 저장하면 안 된다");
   assert(normalizeInvitedUserIds(["friend", "friend", "owner", "missing"], "owner", users).join(",") === "friend", "동행자는 중복·방장·없는 사용자를 제거해야 한다");
@@ -116,12 +118,29 @@ async function main() {
 
   const regionOption = mapRegionToOption(regions.busan);
   const request = mapDraftToCreateTripRoomRequest(createDraft({ selectedMemberUserIds: ["friend"], accommodationLocation: "부산역 호텔", endCondition }), regionOption, ["friend"]);
-  assert(request.name === "부산 여행" && request.regionId === "busan" && request.expectedMemberCount === 2, "Draft mapper는 이름·지역·실제 선택 인원을 request로 옮겨야 한다");
+  assert(request.name === "부산 여행" && request.regionId === "busan" && request.regionName === "부산광역시" && request.expectedMemberCount === 2, "Draft mapper는 이름·지역·실제 선택 인원을 request로 옮겨야 한다");
   assert(request.transport === "public" && request.accommodationLocation?.name === "부산역 호텔", "Draft mapper는 실제 이동 방식과 선택 숙소를 request로 옮겨야 한다");
   assert(request.endCondition?.location.name === "부산역" && request.endCondition.travelMinutes === 45 && request.endCondition.serviceBufferMinutes === 30, "Draft mapper는 종료 조건의 숫자형 사실 정보를 손실 없이 변환해야 한다");
   assert(!("budgetLevel" in request) && !("intensity" in request), "여행방 생성 request에는 개인 성향 필드를 포함하면 안 된다");
   assert(validateCreateTripRoomRequest(request) === undefined, "완성된 mock request는 service validation을 통과해야 한다");
+  assert(validateCreateTripRoomRequest({ ...request, endCondition: request.endCondition ? { ...request.endCondition, deadline: "18:07" } : null }) === undefined, "service validation도 1분 단위 종료 시각을 보존해야 한다");
   assert(validateCreateTripRoomRequest({ ...request, dateUndecided: true, startDate: null, endDate: null })?.includes("종료 조건"), "service도 날짜 미정과 종료 조건의 동시 저장을 막아야 한다");
+  const apiLocalFacts = parseApiTripLocalFacts({
+    transport: "car",
+    accommodationLocation: { name: " 부산역 호텔 ", address: " 부산 동구 " },
+    endCondition: {
+      type: "train",
+      location: { name: "부산역" },
+      deadline: "18:07",
+      travelMinutes: 42,
+      serviceBufferMinutes: 18,
+    },
+    companionType: " friends ",
+    expectedMemberCount: 3,
+    savedAt: "2026-08-19T00:00:00.000Z",
+  });
+  assert(apiLocalFacts?.accommodationLocation?.name === "부산역 호텔" && apiLocalFacts.endCondition?.deadline === "18:07", "API 기기 사실은 중첩 위치·1분 마감 시각을 엄격 파싱해 보존해야 한다");
+  assert(parseApiTripLocalFacts({ ...apiLocalFacts, endCondition: { ...apiLocalFacts?.endCondition, deadline: "18:60" } }) === null, "손상된 기기 종료 조건은 Workspace에 주입하지 않아야 한다");
   let invalidMapperRejected = false;
   try { mapDraftToCreateTripRoomRequest(createDraft({ endCondition: { ...endCondition, travelMinutes: "" } }), regionOption, []); } catch { invalidMapperRejected = true; }
   assert(invalidMapperRejected, "mapper를 직접 호출해도 빈 예상 이동시간을 숫자 0으로 위장하면 안 된다");
@@ -139,6 +158,8 @@ async function main() {
   const popular = await regionService.getPopularRegions();
   const search = await regionService.searchRegions("부산");
   assert(popular.length === 1 && search[0]?.id === "busan" && !search[0]?.areaCode, "지역 service는 mock 목록을 검색하되 허위 공식 코드를 만들면 안 된다");
+  const apiRegion = (await createRegionService("api", Object.values(regions)).searchRegions("부산"))[0];
+  assert(apiRegion?.source === "reference" && apiRegion.areaCode === "6", "API 생성 화면은 검증된 TourAPI 지역 코드 reference를 사용해야 한다");
 
   const progress = calculateTripPreparationProgress({ trip: tripsById.sooner, completedPreferenceCount: 1, preferenceTargetCount: 2, candidateCount: 2, itineraryCount: 0 });
   assert(progress.totalSteps === 5 && progress.completedSteps === 1 && progress.activeSteps === 2 && progress.rate === 0.4, "준비율은 완료 1점·진행 0.5점 기준이어야 한다");

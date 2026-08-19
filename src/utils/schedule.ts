@@ -22,6 +22,12 @@ export function timeStringToMinutes(time: string) {
   return hours * 60 + minutes;
 }
 
+/** A same-day clock value supported by TripEndCondition and Backend HH:mm DTOs. */
+export function isValidClockTime(time: string) {
+  const minutes = timeStringToMinutes(time);
+  return Number.isFinite(minutes) && minutes >= 0 && minutes < 24 * 60;
+}
+
 export function minutesToTimeString(minutes: number) {
   const safeMinutes = Math.min(Math.max(Math.round(minutes), 0), 24 * 60);
   const hours = Math.floor(safeMinutes / 60);
@@ -135,11 +141,22 @@ export function isValidScheduleRange(range: ScheduleRange) {
   const start = timeStringToMinutes(range.startTime);
   return (
     Number.isFinite(start) &&
+    Number.isInteger(range.durationMinutes) &&
     start >= WORKSPACE_START_MINUTES &&
     start < WORKSPACE_END_MINUTES &&
-    start % SLOT_MINUTES === 0 &&
-    range.durationMinutes >= MIN_DURATION_MINUTES &&
-    range.durationMinutes % SLOT_MINUTES === 0 &&
+    range.durationMinutes >= 1 &&
     start + range.durationMinutes <= WORKSPACE_END_MINUTES
   );
+}
+
+/**
+ * Backend DTO의 HH:mm는 1분 단위다. 기존 서버 일정을 잃지 않도록 일반 유효성은
+ * 분 단위로 판단하고, Workspace에서 새로 만들거나 이동하는 값에만 15분 격자를 강제한다.
+ */
+export function isValidGridScheduleRange(range: ScheduleRange) {
+  const start = timeStringToMinutes(range.startTime);
+  return isValidScheduleRange(range)
+    && start % SLOT_MINUTES === 0
+    && range.durationMinutes >= MIN_DURATION_MINUTES
+    && range.durationMinutes % SLOT_MINUTES === 0;
 }

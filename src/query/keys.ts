@@ -12,4 +12,7 @@ export const queryKeys = {
     all: ["trips"] as const,
     detail: (tripId: EntityId) => ["trips", tripId] as const,
   },
+  users: {
+    directory: () => ["users", "directory"] as const,
+  },
 } as const;

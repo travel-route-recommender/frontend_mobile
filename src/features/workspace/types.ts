@@ -63,6 +63,7 @@ export interface ItineraryItemViewModel {
   endTime: string;
   durationMinutes: number;
   note?: string;
+  lockedForDuri: boolean;
   categoryLabel: string;
   preferredByNames: string[];
   conflictItemIds: EntityId[];

@@ -10,6 +10,8 @@ import type {
   ItinerarySnapshotItem,
   ScheduleDiffItem,
 } from "../types";
+import type { DuriAnalysisInput } from "../../../duri/duri-analysis";
+import { validateDuriSuggestionProtection } from "./suggestionProtection";
 
 export function createItinerarySnapshot(itinerary: ItineraryItem[]): ItinerarySnapshotItem[] {
   const counters = new Map<string, number>();
@@ -94,20 +96,38 @@ export function createDuriSuggestionPreview({
   placesById,
   candidates,
   trip,
+  protectionInput,
 }: {
   envelope: DuriSuggestionEnvelope;
   tripDates: string[];
   placesById: Record<string, Place>;
   candidates: TripCandidate[];
   trip: TripRoom;
+  protectionInput?: Pick<DuriAnalysisInput, "trip" | "itinerary" | "confirmedScheduleConstraints" | "documentReferences">;
 }): DuriSuggestionPreview {
+  const protection = protectionInput
+    ? validateDuriSuggestionProtection(protectionInput, envelope.suggestion)
+    : { valid: true as const };
+  const before = createItinerarySnapshot(envelope.beforeItinerary);
+  if (!protection.valid) {
+    return {
+      suggestionId: envelope.suggestion.id,
+      tripId: envelope.suggestion.tripId,
+      baseFingerprint: envelope.baseFingerprint,
+      before,
+      after: before,
+      diff: diffItinerarySnapshots(before, before, placesById),
+      affectedDates: [],
+      impact: { metrics: [] },
+      validation: { valid: false, message: protection.message },
+    };
+  }
   const simulated = previewSuggestion(envelope.beforeItinerary, envelope.suggestion, {
     tripId: envelope.suggestion.tripId,
     tripDates,
     placesById,
     candidates,
   });
-  const before = createItinerarySnapshot(envelope.beforeItinerary);
   if (!simulated.success) {
     return {
       suggestionId: envelope.suggestion.id,

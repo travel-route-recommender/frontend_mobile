@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { environment } from "../../../config/environment";
 import { authService, setSessionInvalidatedHandler } from "../services/authService";
+import { activateLocalPrivateDataForUser } from "../services/localPrivateData";
 import { useAuthSessionStore } from "../store/useAuthSessionStore";
 import { clearAuthStores } from "./useAuthFlow";
 
 export function useAuthSessionBootstrap(enabled: boolean) {
   const [attempt, setAttempt] = useState(0);
-  const [isReady, setReady] = useState(environment.dataSource === "mock");
+  const [isReady, setReady] = useState(false);
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
@@ -15,13 +16,22 @@ export function useAuthSessionBootstrap(enabled: boolean) {
   }, []);
 
   useEffect(() => {
-    if (!enabled || environment.dataSource === "mock") return;
+    if (!enabled) return;
     let cancelled = false;
     const bootstrap = async () => {
       await Promise.resolve();
       if (cancelled) return undefined;
       setReady(false);
       setError(null);
+      const initialState = useAuthSessionStore.getState();
+      if (environment.dataSource === "mock") {
+        if ((initialState.sessionKind === "member" || initialState.sessionKind === "guest") && initialState.currentSessionUserId) {
+          await activateLocalPrivateDataForUser(initialState.currentSessionUserId);
+        } else {
+          clearAuthStores();
+        }
+        return;
+      }
       useAuthSessionStore.getState().setAuthLoading();
       const hasStoredCredential = await authService.hasStoredSession();
       const state = useAuthSessionStore.getState();
@@ -33,6 +43,7 @@ export function useAuthSessionBootstrap(enabled: boolean) {
         clearAuthStores();
         return;
       }
+      await activateLocalPrivateDataForUser(state.currentSessionUserId!);
       // Access Token은 복원하지 않는다. 첫 보호 API가 필요할 때 Refresh한다.
       useAuthSessionStore.getState().markStoredSessionReady();
     };

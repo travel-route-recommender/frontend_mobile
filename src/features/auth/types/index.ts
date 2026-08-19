@@ -18,7 +18,8 @@ export type SocialChallenge = {
 };
 
 export type InvitePreview = {
-  roomId: string;
+  /** Current preview DTO intentionally does not expose the room ID. */
+  roomId?: string;
   title: string;
   destination?: string;
   startDate?: string;

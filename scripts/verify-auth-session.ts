@@ -18,6 +18,13 @@ import {
 } from "../src/features/auth/services/authTokenState";
 import { ApiError, NativeApiClient, configureApiAuth } from "../src/services/apiClient";
 import { apiPermissionMessage, restrictedFeatureMessage } from "../src/features/auth/services/guestAccessPolicy";
+import {
+  activateLocalPrivateDataScope,
+  deactivateLocalPrivateDataScope,
+  inferLegacyLocalPrivateDataOwner,
+  resolveHydratedLocalPrivateDataScope,
+  transferLocalPrivateDataScope,
+} from "../src/features/auth/services/localPrivateDataPolicy";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -46,6 +53,8 @@ async function verifyTokenState() {
   assert(!shouldRefreshAccessToken(access, 800_000), "valid access token must not refresh early");
   assert(shouldRefreshAccessToken(access, 841_000), "access token inside the 60 second margin must refresh");
   assert(shouldRefreshAccessToken(null, 1_000), "missing access token must refresh lazily");
+  const opaqueAccess = createAccessTokenState("opaque-access", Number.POSITIVE_INFINITY, 1_000);
+  assert(!shouldRefreshAccessToken(opaqueAccess, Number.MAX_SAFE_INTEGER), "an opaque current-contract token must wait for a server 401 instead of refreshing before every request");
 
   const initial = { refreshToken: "R0" } satisfies StoredAuthState;
   const first = beginPendingRefresh(initial, "K1", 1_000);
@@ -192,11 +201,66 @@ async function verifyApi401Policy() {
   }
 }
 
+async function verifyMultipartRequestBody() {
+  const originalFetch = globalThis.fetch;
+  const client = new NativeApiClient("https://api.example.test/api");
+  const form = new FormData();
+  form.append("note", "ticket");
+  try {
+    globalThis.fetch = (async (_input, init) => {
+      const headers = new Headers(init?.headers);
+      assert(!headers.has("Content-Type"), "multipart boundary Content-Type은 fetch가 FormData에 맞게 설정해야 한다");
+      assert(init?.body === form, "FormData를 JSON 문자열로 변환하면 안 된다");
+      return jsonResponse(200, { ok: true });
+    }) as typeof fetch;
+    const result = await client.request<{ ok: boolean }>({ path: "/tickets", method: "POST", body: form, auth: false });
+    assert(result.ok, "multipart 요청 응답을 정상 파싱해야 한다");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+function verifyLocalPrivateDataAccountScope() {
+  const empty = () => ({} as Record<string, readonly string[]>);
+  const accountA = {
+    ownerUserId: "user-a",
+    activeData: { "same-trip-id": ["A-document-uri", "A-ocr-todo"] },
+    dataByOwnerUserId: {},
+  };
+  const loggedOut = deactivateLocalPrivateDataScope(accountA, empty);
+  assert(loggedOut.ownerUserId === null, "logout must remove the active local-private owner");
+  assert(!loggedOut.activeData["same-trip-id"], "logout must remove document/OCR/TODO references from the active view synchronously");
+
+  const accountB = activateLocalPrivateDataScope(loggedOut, "user-b", empty);
+  assert(!accountB.activeData["same-trip-id"], "a different account must not see account A data even when the tripId is identical");
+  const accountBWithOwnData = { ...accountB, activeData: { "same-trip-id": ["B-document-uri"] } };
+  const accountBLoggedOut = deactivateLocalPrivateDataScope(accountBWithOwnData, empty);
+  const accountAReturned = activateLocalPrivateDataScope(accountBLoggedOut, "user-a", empty);
+  assert(accountAReturned.activeData["same-trip-id"]?.includes("A-document-uri"), "the original account may recover its own device-local data");
+  assert(!accountAReturned.activeData["same-trip-id"]?.includes("B-document-uri"), "account B data must remain isolated from account A");
+
+  const lateHydrationForB = resolveHydratedLocalPrivateDataScope(accountA, "user-b", empty);
+  assert(lateHydrationForB.ownerUserId === "user-b" && !lateHydrationForB.activeData["same-trip-id"], "late hydration must honor the already requested account instead of exposing the persisted previous owner");
+  const lateHydrationAfterLogout = resolveHydratedLocalPrivateDataScope(accountA, null, empty);
+  assert(lateHydrationAfterLogout.ownerUserId === null && !lateHydrationAfterLogout.activeData["same-trip-id"], "late hydration after logout must remain deactivated");
+
+  const sameAccount = activateLocalPrivateDataScope(accountAReturned, "user-a", empty);
+  assert(sameAccount === accountAReturned, "same-account session refresh must not churn or lose local demo data");
+  const upgraded = transferLocalPrivateDataScope(accountA, "user-a", "member-a", empty);
+  assert(upgraded.ownerUserId === "member-a" && upgraded.activeData["same-trip-id"] === accountA.activeData["same-trip-id"], "verified guest upgrade must retain the same person's local data");
+
+  const singleOwner = inferLegacyLocalPrivateDataOwner(["user-a", "user-a"]);
+  assert(singleOwner.status === "single-owner" && singleOwner.userId === "user-a", "legacy data with one creator may be safely assigned to that account");
+  assert(inferLegacyLocalPrivateDataOwner(["user-a", "user-b"]).status === "ambiguous", "mixed-owner legacy data must be quarantined instead of exposed");
+}
+
 async function main() {
   await verifyTokenState();
   await verifySingleFlight();
   await verifyTenConcurrentExpiredRequests();
   await verifyApi401Policy();
+  await verifyMultipartRequestBody();
+  verifyLocalPrivateDataAccountScope();
   assert(isAccessTokenExpiredError({ status: 401, code: "TOKEN_EXPIRED" }), "TOKEN_EXPIRED policy must stay explicit");
   assert(isTerminalAccessAuthError({ status: 401, code: "SESSION_REVOKED" }), "revoked sessions must be terminal");
   for (const code of [
@@ -214,7 +278,7 @@ async function main() {
   assert(refreshRetryDelayMs(0, 0.5) === 300 && refreshRetryDelayMs(1, 0.5) === 600, "refresh retry must use bounded exponential backoff");
   assert(restrictedFeatureMessage("guest", "schedule-edit").includes("후보 장소 추가"), "guest schedule denial must explain the still-allowed candidate action");
   assert(apiPermissionMessage(new ApiError("Forbidden", { status: 403 }), "guest", "duri", "fallback").includes("회원 전용"), "403 messaging must combine the requested feature with guest session kind");
-  console.log("Mobile auth verification passed: expiry, single-flight, app-restart/lost-response recovery, stale pending, timeout, and terminal-code policy");
+  console.log("Mobile auth verification passed: token recovery, terminal-code policy, and account-scoped local document/OCR/TODO isolation");
 }
 
 void main();

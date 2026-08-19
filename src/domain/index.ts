@@ -15,6 +15,7 @@ export type {
 } from "./trip";
 export type { ItineraryItem, ItineraryItemType } from "./itinerary";
 export type {
+  DuriPreferenceSignals,
   PersonalPreferenceAnswers,
   PreferenceDimension,
   PreferenceScore,

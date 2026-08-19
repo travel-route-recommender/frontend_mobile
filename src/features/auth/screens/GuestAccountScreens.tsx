@@ -68,7 +68,7 @@ export function GuestUpgradeScreen() {
     try {
       const result = await authService.upgradeGuestWithPassword({ email: normalizeEmail(email), password, nickname });
       if (result.status === "error") { setServiceError(result.message); return; }
-      applyAuthSuccess(result);
+      await applyAuthSuccess(result, { verifiedGuestUpgrade: true });
       router.replace("/(tabs)/trips");
     } finally {
       setLoading(false);

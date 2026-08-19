@@ -1,7 +1,6 @@
 import type { ItineraryItem } from "../../../domain";
 import {
   DEFAULT_PLACE_DURATION_MINUTES,
-  MIN_DURATION_MINUTES,
   SLOT_HEIGHT_PX,
   SLOT_MINUTES,
   WORKSPACE_END_MINUTES,
@@ -226,6 +225,26 @@ export function addMinutesToTime(value: string, minutesToAdd: number): string | 
   return formatMinutesToTime(start + minutesToAdd);
 }
 
+function positiveModulo(value: number, divisor: number) {
+  return ((value % divisor) + divisor) % divisor;
+}
+
+/**
+ * Clamp a gesture result without changing its minute offset. If the next full
+ * 15-minute step would cross a boundary, keep the last reachable value instead
+ * of applying a shorter, surprising partial step.
+ */
+function clampTranslationToSlotOffset(
+  desired: number,
+  origin: number,
+  minimum: number,
+  maximum: number,
+) {
+  const alignedMinimum = minimum + positiveModulo(origin - minimum, SLOT_MINUTES);
+  const alignedMaximum = maximum - positiveModulo(maximum - origin, SLOT_MINUTES);
+  return Math.min(Math.max(desired, alignedMinimum), alignedMaximum);
+}
+
 export function getSnappedStartTimeFromTranslation(
   startTime: string,
   durationMinutes: number,
@@ -239,11 +258,16 @@ export function getSnappedStartTimeFromTranslation(
     || !Number.isFinite(slotHeight)
     || slotHeight <= 0
     || !Number.isInteger(durationMinutes)
-    || durationMinutes < MIN_DURATION_MINUTES
+    || durationMinutes < 1
+    || start < WORKSPACE_START_MINUTES
+    || start >= WORKSPACE_END_MINUTES
+    || start + durationMinutes > WORKSPACE_END_MINUTES
   ) return null;
   const slotDelta = Math.round(translationY / slotHeight);
-  const nextStart = Math.min(
-    Math.max(start + slotDelta * SLOT_MINUTES, WORKSPACE_START_MINUTES),
+  const nextStart = clampTranslationToSlotOffset(
+    start + slotDelta * SLOT_MINUTES,
+    start,
+    WORKSPACE_START_MINUTES,
     WORKSPACE_END_MINUTES - durationMinutes,
   );
   return formatMinutesToTime(nextStart);
@@ -262,11 +286,16 @@ export function getSnappedDurationFromTranslation(
     || !Number.isFinite(slotHeight)
     || slotHeight <= 0
     || !Number.isInteger(durationMinutes)
-    || durationMinutes < MIN_DURATION_MINUTES
+    || durationMinutes < 1
+    || start < WORKSPACE_START_MINUTES
+    || start >= WORKSPACE_END_MINUTES
+    || start + durationMinutes > WORKSPACE_END_MINUTES
   ) return null;
   const slotDelta = Math.round(translationY / slotHeight);
-  return Math.min(
-    Math.max(durationMinutes + slotDelta * SLOT_MINUTES, MIN_DURATION_MINUTES),
+  return clampTranslationToSlotOffset(
+    durationMinutes + slotDelta * SLOT_MINUTES,
+    durationMinutes,
+    1,
     WORKSPACE_END_MINUTES - start,
   );
 }
@@ -287,13 +316,10 @@ export function validateTimeRange(startTime: string, endTime: string): TimeRange
   const end = parseTimeToMinutes(endTime);
   if (start === null || end === null) return { valid: false, message: "시간을 HH:mm 형식으로 입력해 주세요." };
   if (start < WORKSPACE_START_MINUTES || start >= WORKSPACE_END_MINUTES || end > WORKSPACE_END_MINUTES) {
-    return { valid: false, message: "일정 시간은 08:00부터 24:00 사이에서 설정해 주세요." };
-  }
-  if (start % SLOT_MINUTES !== 0 || end % SLOT_MINUTES !== 0) {
-    return { valid: false, message: `시간은 ${SLOT_MINUTES}분 단위로 설정해 주세요.` };
+    return { valid: false, message: "일정 시간은 00:00부터 24:00 사이에서 설정해 주세요." };
   }
   const durationMinutes = end - start;
-  if (durationMinutes < MIN_DURATION_MINUTES) return { valid: false, message: `종료 시간은 시작 시간보다 ${MIN_DURATION_MINUTES}분 이상 뒤여야 해요.` };
+  if (durationMinutes < 1) return { valid: false, message: "종료 시간은 시작 시간보다 1분 이상 뒤여야 해요." };
   return { valid: true, durationMinutes };
 }
 
@@ -340,7 +366,7 @@ export function getDefaultScheduleRange(items: readonly ItineraryItem[], date: s
     date,
     durationMinutes: DEFAULT_PLACE_DURATION_MINUTES,
     fromMinutes: WORKSPACE_START_MINUTES,
-  }) ?? formatMinutesToTime(WORKSPACE_START_MINUTES) ?? "08:00";
+  }) ?? formatMinutesToTime(WORKSPACE_START_MINUTES) ?? "00:00";
   return {
     startTime,
     endTime: addMinutesToTime(startTime, DEFAULT_PLACE_DURATION_MINUTES) ?? "09:00",

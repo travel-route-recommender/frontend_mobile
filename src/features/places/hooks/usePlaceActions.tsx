@@ -1,15 +1,22 @@
 import { useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useShallow } from "zustand/react/shallow";
 import type { EntityId } from "../../../domain";
+import { environment } from "../../../config/environment";
+import { queryKeys } from "../../../query/keys";
+import { apiClient } from "../../../services/apiClient";
 import { useDuriStore } from "../../../store/useDuriStore";
 import { useAuthSessionStore } from "../../auth/store/useAuthSessionStore";
 import { useMemberGate } from "../../auth/hooks/useMemberGate";
+import { useExploreSearchStore } from "../../explore/store/useExploreSearchStore";
 import { canAddPlaceCandidate, canSavePlace } from "../logic/placeCapabilities";
 import { selectCandidateStateForPlace, selectEligibleTripsForPlaceCandidate } from "../selectors/placeSelectors";
 import type { PlaceActionFeedback } from "../types";
 
 export function usePlaceActions() {
+  const queryClient = useQueryClient();
   const sessionKind = useAuthSessionStore((state) => state.sessionKind);
+  const apiTripContext = useExploreSearchStore((state) => state.activeTripRegionContext);
   const { requireMember, memberGatePrompt } = useMemberGate();
   const source = useDuriStore(useShallow((state) => ({
     currentUserId: state.currentUserId,
@@ -81,6 +88,43 @@ export function usePlaceActions() {
       return;
     }
     if (!source.placesById[placeId]) { setFeedback({ message: "장소 정보를 찾을 수 없어요." }); return; }
+    if (environment.dataSource === "api") {
+      const tripId = apiTripContext?.tripId;
+      if (!tripId || !/^[a-f\d]{24}$/i.test(tripId)) {
+        setFeedback({ message: "여행방의 ‘장소 더 찾기’에서 접근하면 서버 후보로 추가할 수 있어요." });
+        return;
+      }
+      const place = source.placesById[placeId];
+      const tourContentId = place.id.match(/^tour:(\d+)$/)?.[1]
+        ?? (/^\d+$/.test(place.id) ? place.id : undefined);
+      const body = tourContentId
+        ? {
+          tourContentId,
+          ...([12, 14, 15, 25, 28, 32, 38, 39].includes(place.contentTypeId ?? -1)
+            ? { contentTypeId: place.contentTypeId }
+            : {}),
+        }
+        : /^[a-f\d]{24}$/i.test(place.id) ? { placeId: place.id } : undefined;
+      if (!body) {
+        setFeedback({ message: "이 장소는 현재 서버 후보 계약으로 추가할 수 없어요." });
+        return;
+      }
+      setFeedback({ message: "서버 여행방 후보에 추가하고 있어요.", tripId });
+      void apiClient.request<unknown>({
+        path: `/rooms/${encodeURIComponent(tripId)}/candidates`,
+        method: "POST",
+        body,
+        auth: true,
+      }).then((payload) => {
+        if (!Array.isArray(payload)) throw new Error("후보 추가 응답 형식이 올바르지 않아요.");
+        setFeedback({ message: "여행방 후보에 담았어요.", tripId });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.trips.all });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.trips.detail(tripId) });
+      }).catch((reason: unknown) => {
+        setFeedback({ message: reason instanceof Error ? reason.message : "서버 여행방 후보에 추가하지 못했어요." });
+      });
+      return;
+    }
     const activeTrip = source.tripsById[source.activeTripId];
     const canUseActiveTrip = activeTrip && activeTrip.status !== "completed" && activeTrip.members.some((member) => member.userId === source.currentUserId);
     if (canUseActiveTrip) {

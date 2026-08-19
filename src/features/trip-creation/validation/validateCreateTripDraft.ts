@@ -1,14 +1,14 @@
 import type { EntityId, Region, User } from "../../../domain";
 import { isValidISODate } from "../../../utils/formatters";
+import { isValidClockTime } from "../../../utils/schedule";
 import type { CreateTripDraft, CreateTripEndConditionDraft, CreateTripStep } from "../types";
 
-const FIFTEEN_MINUTE_TIME = /^([01]\d|2[0-3]):(?:00|15|30|45)$/;
 const WHOLE_MINUTES = /^\d{1,4}$/;
 
 export function validateEndConditionDraft(condition: CreateTripEndConditionDraft): string | undefined {
   if (!condition.location.trim()) return "여행 종료 지점을 입력해 주세요.";
   if (condition.location.trim().length > 100) return "여행 종료 지점은 100자 이하로 입력해 주세요.";
-  if (!FIFTEEN_MINUTE_TIME.test(condition.deadline)) return "여행 종료 시각은 15분 단위의 HH:mm 형식으로 입력해 주세요.";
+  if (!isValidClockTime(condition.deadline)) return "여행 종료 시각은 HH:mm 형식으로 입력해 주세요.";
   if (!WHOLE_MINUTES.test(condition.travelMinutes.trim())) return "종료 지점까지 예상 이동시간을 분 단위로 입력해 주세요.";
   const travelMinutes = Number(condition.travelMinutes);
   if (!Number.isInteger(travelMinutes) || travelMinutes < 0 || travelMinutes > 1440) return "예상 이동시간은 0~1440분으로 입력해 주세요.";

@@ -21,10 +21,4 @@ export const DURI_ANALYSIS_CONFIG = {
     minimumReflectionRatio: 0.25,
     reflectionCountDifferenceWarning: 3,
   },
-  route: {
-    // 좌표가 생길 경우 실제 도로 거리가 아닌 직선거리 부담 기준으로만 사용한다.
-    longStraightSegmentKm: 12,
-    highDailyStraightDistanceKm: 30,
-    excessiveRegionTransitions: 3,
-  },
 } as const;

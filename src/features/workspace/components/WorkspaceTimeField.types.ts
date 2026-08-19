@@ -4,4 +4,5 @@ export type WorkspaceTimeFieldProps = {
   onChange: (value: string) => void;
   error?: string;
   allowEndOfDay?: boolean;
+  minuteInterval?: 1 | 15;
 };

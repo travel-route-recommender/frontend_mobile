@@ -89,6 +89,10 @@ function apiError(response: Response, payload: unknown) {
   });
 }
 
+function isFormDataBody(body: unknown): body is FormData {
+  return typeof FormData !== "undefined" && body instanceof FormData;
+}
+
 export class NativeApiClient implements ApiClient {
   private readonly baseUrl: string;
 
@@ -109,14 +113,15 @@ export class NativeApiClient implements ApiClient {
     const execute = async () => {
       const headers = new Headers(inputHeaders);
       headers.set("Accept", "application/json");
-      if (body !== undefined) headers.set("Content-Type", "application/json");
+      const multipart = isFormDataBody(body);
+      if (body !== undefined && !multipart) headers.set("Content-Type", "application/json");
       const accessToken = auth ? await authBindings?.getAccessToken() : null;
       if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
       const response = await fetch(this.buildUrl(path, query), {
         method,
         headers,
         signal,
-        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        ...(body !== undefined ? { body: multipart ? body : JSON.stringify(body) } : {}),
       });
       return { response, payload: await parseResponse(response) };
     };

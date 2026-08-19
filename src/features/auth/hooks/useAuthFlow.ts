@@ -3,9 +3,19 @@ import { queryClient } from "../../../query/queryClient";
 import { useDuriStore } from "../../../store/useDuriStore";
 import type { AuthSuccess } from "../types";
 import { authService } from "../services/authService";
+import { activateLocalPrivateDataForUser, deactivateLocalPrivateData, transferLocalPrivateDataForVerifiedUpgrade } from "../services/localPrivateData";
 import { useAuthSessionStore } from "../store/useAuthSessionStore";
 
-export function applyAuthSuccessToStores(result: AuthSuccess) {
+export async function applyAuthSuccessToStores(
+  result: AuthSuccess,
+  options?: { verifiedGuestUpgrade?: boolean },
+) {
+  const previousUserId = useAuthSessionStore.getState().currentSessionUserId;
+  if (options?.verifiedGuestUpgrade && previousUserId) {
+    await transferLocalPrivateDataForVerifiedUpgrade(previousUserId, result.user.id);
+  } else {
+    await activateLocalPrivateDataForUser(result.user.id);
+  }
   const domain = useDuriStore.getState();
   domain.upsertUser(result.user);
   domain.setCurrentUser(result.user.id);
@@ -21,14 +31,15 @@ export function applyAuthSuccessToStores(result: AuthSuccess) {
 }
 
 export function clearAuthStores() {
+  deactivateLocalPrivateData();
   useAuthSessionStore.getState().clearSession();
   useDuriStore.getState().setCurrentUser(null);
   queryClient.clear();
 }
 
 export function useAuthFlow() {
-  const applyAuthSuccess = useCallback((result: AuthSuccess) => {
-    applyAuthSuccessToStores(result);
+  const applyAuthSuccess = useCallback(async (result: AuthSuccess, options?: { verifiedGuestUpgrade?: boolean }) => {
+    await applyAuthSuccessToStores(result, options);
   }, []);
 
   const logout = useCallback(async () => {

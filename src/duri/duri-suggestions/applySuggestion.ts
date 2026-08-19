@@ -1,8 +1,11 @@
 import type { ItineraryItem } from "../../domain";
+import { MIN_DURATION_MINUTES, SLOT_MINUTES } from "../../data/workspaceSchedule";
 import {
   findOverlappingItem,
+  isValidGridScheduleRange,
   isValidScheduleRange,
   sortItineraryItemsByDateAndTime,
+  timeStringToMinutes,
 } from "../../utils/schedule";
 import { buildItineraryFingerprint, generateSuggestionId } from "./fingerprint";
 import type {
@@ -21,7 +24,11 @@ function stateMatches(item: ItineraryItem, expected?: ScheduleChangeState) {
     (expected.startTime === undefined || expected.startTime === item.startTime) &&
     (expected.durationMinutes === undefined || expected.durationMinutes === item.durationMinutes) &&
     (expected.placeId === undefined || expected.placeId === item.placeId) &&
-    (expected.itemType === undefined || expected.itemType === item.itemType)
+    (expected.itemType === undefined || expected.itemType === item.itemType) &&
+    (!Object.prototype.hasOwnProperty.call(expected, "preferredByUserIds")
+      || JSON.stringify([...(expected.preferredByUserIds ?? [])].sort()) === JSON.stringify([...item.preferredByUserIds].sort())) &&
+    (!Object.prototype.hasOwnProperty.call(expected, "note") || expected.note === item.note) &&
+    (!Object.prototype.hasOwnProperty.call(expected, "lockedForDuri") || Boolean(expected.lockedForDuri) === Boolean(item.lockedForDuri))
   );
 }
 
@@ -30,15 +37,12 @@ function validateFinalItinerary(
   context: SuggestionChangeContext,
 ): "conflict" | "invalid" | undefined {
   const ids = new Set<string>();
-  const placeIds = new Set<string>();
   for (const item of itinerary) {
     if (item.tripId !== context.tripId || ids.has(item.id)) return "invalid";
     ids.add(item.id);
     if (!context.tripDates.includes(item.date) || !isValidScheduleRange(item)) return "invalid";
     if (item.placeId) {
       if (!context.placesById[item.placeId]) return "invalid";
-      if (placeIds.has(item.placeId)) return "invalid";
-      placeIds.add(item.placeId);
     }
     if (findOverlappingItem(itinerary, item, item.id)) return "conflict";
   }
@@ -67,6 +71,10 @@ export function applySuggestionChanges(
       if (!change.itemId || !after?.date || !after.startTime || !after.durationMinutes || !after.itemType) {
         return failed("invalid", "추가할 일정 정보가 올바르지 않아요.");
       }
+      if (!isValidGridScheduleRange({ date: after.date, startTime: after.startTime, durationMinutes: after.durationMinutes })) {
+        return failed("invalid", "두리가 추가하는 일정은 15분 단위여야 해요.");
+      }
+      if (after.lockedForDuri) return failed("invalid", "두리는 새 일정을 사용자 잠금 상태로 만들 수 없어요.");
       if (next.some((item) => item.id === change.itemId)) return failed("invalid", "같은 일정 ID가 이미 존재해요.");
       if (
         after.placeId &&
@@ -85,6 +93,7 @@ export function applySuggestionChanges(
         itemType: after.itemType,
         preferredByUserIds: [...(after.preferredByUserIds ?? [])],
         note: after.note,
+        ...(after.lockedForDuri ? { lockedForDuri: true } : {}),
       });
       continue;
     }
@@ -92,6 +101,7 @@ export function applySuggestionChanges(
     if (!change.itemId) return failed("invalid", "변경할 일정 ID가 없어요.");
     const index = next.findIndex((item) => item.id === change.itemId);
     if (index < 0 || !stateMatches(next[index], change.before)) return failed("invalid", "변경 대상 일정이 없거나 내용이 달라졌어요.");
+    if (next[index].lockedForDuri) return failed("not-applicable", "사용자가 두리 변경 잠금으로 보호한 일정은 변경할 수 없어요.");
     if (change.action === "remove") {
       next = next.filter((item) => item.id !== change.itemId);
       continue;
@@ -107,6 +117,8 @@ export function applySuggestionChanges(
     }
     if (change.action === "move") {
       if (!after.date || !after.startTime) return failed("invalid", "이동할 날짜와 시간이 없어요.");
+      const movedStart = timeStringToMinutes(after.startTime);
+      if (!Number.isFinite(movedStart) || movedStart % SLOT_MINUTES !== 0) return failed("invalid", "두리가 이동하는 시작 시각은 15분 단위여야 해요.");
       next[index] = {
         ...next[index],
         ...(after.date !== undefined ? { date: after.date } : {}),
@@ -114,6 +126,7 @@ export function applySuggestionChanges(
       };
     } else if (change.action === "resize") {
       if (!after.durationMinutes) return failed("invalid", "변경할 체류시간이 없어요.");
+      if (!Number.isInteger(after.durationMinutes) || after.durationMinutes < MIN_DURATION_MINUTES || after.durationMinutes % SLOT_MINUTES !== 0) return failed("invalid", "두리가 바꾸는 체류시간은 15분 단위여야 해요.");
       next[index] = {
         ...next[index],
         ...(after.durationMinutes !== undefined ? { durationMinutes: after.durationMinutes } : {}),
@@ -168,6 +181,7 @@ export function createInverseSuggestion(
     itemType: item.itemType,
     preferredByUserIds: [...item.preferredByUserIds],
     note: item.note,
+    lockedForDuri: Boolean(item.lockedForDuri),
   });
   const changes: ScheduleChangePreview[] = [];
   for (const change of [...suggestion.changes].reverse()) {

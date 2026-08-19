@@ -9,7 +9,7 @@ import type {
   GroupPreferenceDiagnosis,
 } from "./types";
 
-const planningDimensions: GroupPlanningDimension[] = ["pace", "mobility", "activity", "mealStyle", "planningStyle"];
+const planningDimensions: GroupPlanningDimension[] = ["pace", "budget", "mobility", "activity", "mealStyle", "planningStyle"];
 
 export function diagnoseGroupPreferences(
   trip: TripRoom,

@@ -10,6 +10,7 @@ import { findNextAvailableSlot, getTripDates, sortItineraryItemsByDateAndTime, t
 import { DURI_SUGGESTION_VERSION } from "../constants";
 import type { DuriAnalysisSession, DuriReportIssue, DuriSuggestionEnvelope } from "../types";
 import { analyzeTripEndCondition, buildTripEndConditionAdjustment } from "../../workspace/logic/tripEndCondition";
+import { getDuriItemProtection, validateDuriSuggestionProtection } from "./suggestionProtection";
 
 function itemState(item: ItineraryItem): ScheduleChangeState {
   return {
@@ -20,6 +21,7 @@ function itemState(item: ItineraryItem): ScheduleChangeState {
     itemType: item.itemType,
     preferredByUserIds: [...item.preferredByUserIds],
     note: item.note,
+    lockedForDuri: Boolean(item.lockedForDuri),
   };
 }
 
@@ -27,6 +29,8 @@ function finalizeSuggestion(session: DuriAnalysisSession, draft: Omit<DuriSugges
   const itineraryFingerprint = buildItineraryFingerprint(session.snapshot.itinerary);
   const base = { ...draft, itineraryFingerprint, canApply: draft.changes.length > 0 };
   const suggestion = { ...base, id: generateSuggestionId(base) };
+  const protection = validateDuriSuggestionProtection(session.snapshot, suggestion);
+  if (!protection.valid) return undefined;
   const validation = applySuggestionChanges(session.snapshot.itinerary, suggestion, {
     tripId: session.tripId,
     tripDates: getTripDates(session.snapshot.trip.startDate, session.snapshot.trip.endDate),
@@ -42,17 +46,24 @@ function buildConflictSuggestion(session: DuriAnalysisSession, issue: DuriReport
     .map((id) => session.snapshot.itinerary.find((item) => item.id === id))
     .filter((item): item is ItineraryItem => Boolean(item))
     .sort((left, right) => timeStringToMinutes(right.startTime) - timeStringToMinutes(left.startTime) || right.id.localeCompare(left.id));
-  const target = pair[0];
-  if (!target) return undefined;
   const pairEnd = Math.max(...pair.map((item) => timeStringToMinutes(item.startTime) + item.durationMinutes));
-  const startTime = findNextAvailableSlot({
-    items: session.snapshot.itinerary,
-    date: issue.date,
-    durationMinutes: target.durationMinutes,
-    fromMinutes: pairEnd,
-    excludeItemId: target.id,
-  });
-  if (!startTime || startTime === target.startTime) return undefined;
+  const targetWithSlot = pair.flatMap((target) => {
+    const startTime = findNextAvailableSlot({
+      items: session.snapshot.itinerary,
+      date: issue.date as string,
+      durationMinutes: target.durationMinutes,
+      fromMinutes: pairEnd,
+      excludeItemId: target.id,
+    });
+    if (!startTime || startTime === target.startTime) return [];
+    const protection = getDuriItemProtection(session.snapshot, target, {
+      action: "move",
+      after: { date: issue.date, startTime },
+    });
+    return protection.blocked ? [] : [{ target, startTime }];
+  })[0];
+  if (!targetWithSlot) return undefined;
+  const { target, startTime } = targetWithSlot;
   const placeName = target.placeId ? session.snapshot.placesById[target.placeId]?.name : undefined;
   return finalizeSuggestion(session, {
     tripId: session.tripId,
@@ -73,10 +84,19 @@ function buildDayBalanceSuggestion(session: DuriAnalysisSession, issue: DuriRepo
   const busiest = [...session.dayMetrics].sort((left, right) => right.itemCount - left.itemCount || left.date.localeCompare(right.date))[0];
   const lightest = [...session.dayMetrics].sort((left, right) => left.itemCount - right.itemCount || left.date.localeCompare(right.date))[0];
   if (!busiest || !lightest || busiest.date === lightest.date) return undefined;
-  const target = sortItineraryItemsByDateAndTime(session.snapshot.itinerary.filter((item) => item.date === busiest.date)).at(-1);
-  if (!target) return undefined;
-  const startTime = findNextAvailableSlot({ items: session.snapshot.itinerary, date: lightest.date, durationMinutes: target.durationMinutes });
-  if (!startTime) return undefined;
+  const targetWithSlot = sortItineraryItemsByDateAndTime(session.snapshot.itinerary.filter((item) => item.date === busiest.date))
+    .reverse()
+    .flatMap((target) => {
+      const startTime = findNextAvailableSlot({ items: session.snapshot.itinerary, date: lightest.date, durationMinutes: target.durationMinutes });
+      if (!startTime) return [];
+      const protection = getDuriItemProtection(session.snapshot, target, {
+        action: "move",
+        after: { date: lightest.date, startTime },
+      });
+      return protection.blocked ? [] : [{ target, startTime }];
+    })[0];
+  if (!targetWithSlot) return undefined;
+  const { target, startTime } = targetWithSlot;
   const placeName = target.placeId ? session.snapshot.placesById[target.placeId]?.name : undefined;
   return finalizeSuggestion(session, {
     tripId: session.tripId,
@@ -95,7 +115,14 @@ function buildDayBalanceSuggestion(session: DuriAnalysisSession, issue: DuriRepo
 function buildEndConditionSuggestion(session: DuriAnalysisSession, issue: DuriReportIssue) {
   const condition = session.snapshot.trip.endCondition;
   if (!condition || !session.snapshot.trip.endDate) return undefined;
-  const adjustment = buildTripEndConditionAdjustment(session.snapshot.trip, session.snapshot.itinerary);
+  const protectedItinerary = session.snapshot.itinerary.map((item) => {
+    const protection = getDuriItemProtection(session.snapshot, item, {
+      action: "move",
+      after: { date: item.date, startTime: item.startTime },
+    });
+    return protection.blocked ? { ...item, lockedForDuri: true } : item;
+  });
+  const adjustment = buildTripEndConditionAdjustment(session.snapshot.trip, protectedItinerary);
   if (adjustment.status === "adjusted") {
     const changes = adjustment.movedItemIds.flatMap((itemId) => {
       const before = session.snapshot.itinerary.find((item) => item.id === itemId);
@@ -128,7 +155,9 @@ function buildEndConditionSuggestion(session: DuriAnalysisSession, issue: DuriRe
 
   const lastDayItems = sortItineraryItemsByDateAndTime(
     session.snapshot.itinerary.filter((item) => item.date === session.snapshot.trip.endDate),
-  ).filter((item) => item.itemType === "place" && Boolean(item.placeId));
+  ).filter((item) => item.itemType === "place"
+    && Boolean(item.placeId)
+    && !getDuriItemProtection(session.snapshot, item, { action: "remove" }).blocked);
   const remaining = [...session.snapshot.itinerary];
   const removed: ItineraryItem[] = [];
   while (lastDayItems.length) {
@@ -170,6 +199,7 @@ export function generateDuriSuggestions(session: DuriAnalysisSession, createdAt:
   });
   const seen = new Set<string>();
   const suggestions = [...supplemental, ...webSuggestions].filter((suggestion) => {
+    if (!validateDuriSuggestionProtection(session.snapshot, suggestion).valid) return false;
     const key = JSON.stringify(suggestion.changes);
     if (seen.has(key)) return false;
     seen.add(key);

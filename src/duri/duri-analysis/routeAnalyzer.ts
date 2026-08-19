@@ -1,8 +1,6 @@
 import type { Place } from "../../domain";
-import { DURI_ANALYSIS_CONFIG } from "./config";
 import { categoryStatusFromIssues, getValidPlaceEntries, groupItineraryByDate, insufficientCategory } from "./shared";
 import type { AnalysisIssue, CategoryAnalysisResult, DuriAnalysisInput } from "./types";
-import { buildGroupProfileEvidence, canAdjustGroupThreshold, getGroupDimensionTone } from "../group-preferences";
 
 type Coordinates = { latitude: number; longitude: number };
 
@@ -36,22 +34,6 @@ export function haversineDistanceKm(left: Coordinates, right: Coordinates) {
 export function analyzeRoute(input: DuriAnalysisInput): CategoryAnalysisResult {
   const issues: AnalysisIssue[] = [];
   let analyzableDayCount = 0;
-  const mobilityTone = getGroupDimensionTone(input.groupPlanningProfile, "mobility");
-  let transitionThreshold: number = DURI_ANALYSIS_CONFIG.route.excessiveRegionTransitions;
-  let longSegmentKm: number = DURI_ANALYSIS_CONFIG.route.longStraightSegmentKm;
-  let dailyDistanceKm: number = DURI_ANALYSIS_CONFIG.route.highDailyStraightDistanceKm;
-  if (canAdjustGroupThreshold(input.groupPlanningProfile, "mobility")) {
-    if (mobilityTone === "low") {
-      transitionThreshold = Math.max(transitionThreshold - 1, 2);
-      longSegmentKm *= 0.85;
-      dailyDistanceKm *= 0.85;
-    } else if (mobilityTone === "high") {
-      transitionThreshold += 1;
-      longSegmentKm *= 1.15;
-      dailyDistanceKm *= 1.15;
-    }
-  }
-  const groupEvidence = buildGroupProfileEvidence(input.groupPlanningProfile, "mobility");
 
   for (const [date, items] of groupItineraryByDate(input.itinerary)) {
     const entries = getValidPlaceEntries(items, input.placesById);
@@ -63,15 +45,13 @@ export function analyzeRoute(input: DuriAnalysisInput): CategoryAnalysisResult {
       const distances = coordinates.slice(1).map((right, index) => haversineDistanceKm(coordinates[index] as Coordinates, right as Coordinates));
       const total = distances.reduce((sum, distance) => sum + distance, 0);
       const longest = Math.max(...distances);
-      const severe = total >= dailyDistanceKm || longest >= longSegmentKm;
-      const severity = severe && mobilityTone === "low" && canAdjustGroupThreshold(input.groupPlanningProfile, "mobility") ? "high" : severe ? "medium" : "info";
       issues.push({
         id: `route-distance-${date}`,
         category: "route",
-        status: severe ? "attention" : "good",
-        severity,
-        title: severe ? "공간적 이동 부담을 확인해 주세요" : "직선거리 기준 이동 흐름이 안정적이에요",
-        summary: severe ? `${date} 일정에 직선거리 기준 긴 이동 구간이 있어요.` : `${date} 일정은 직선거리 기준 큰 이동 부담이 감지되지 않았어요.`,
+        status: "good",
+        severity: "info",
+        title: "장소 좌표의 직선거리 흐름을 참고할 수 있어요",
+        summary: `${date}의 직선거리는 공간 흐름만 보여줘요. 이동시간 부족 판정에는 외부 경로 결과만 사용하고 직선거리에 임의 임계값을 적용하지 않았어요.`,
         date,
         affectedItemIds: entries.map(({ item }) => item.id),
         affectedPlaceIds: entries.map(({ place }) => place.id),
@@ -79,7 +59,6 @@ export function analyzeRoute(input: DuriAnalysisInput): CategoryAnalysisResult {
         evidence: [
           { label: "하루 총 예상 직선거리", value: `${total.toFixed(1)}km`, itemIds: entries.map(({ item }) => item.id), placeIds: entries.map(({ place }) => place.id) },
           { label: "가장 긴 연속 구간", value: `${longest.toFixed(1)}km` },
-          ...groupEvidence,
         ],
       });
       continue;
@@ -93,17 +72,16 @@ export function analyzeRoute(input: DuriAnalysisInput): CategoryAnalysisResult {
     const roundTripIndexes = stableAreas.flatMap((area, index) =>
       index >= 2 && area === stableAreas[index - 2] && area !== stableAreas[index - 1] ? [index] : [],
     );
-    const warning = transitions >= transitionThreshold || roundTripIndexes.length > 0;
-    const severity = warning && mobilityTone === "low" && canAdjustGroupThreshold(input.groupPlanningProfile, "mobility") ? "high" : warning ? "medium" : "info";
+    const warning = roundTripIndexes.length > 0;
     const affectedIndexes = new Set(roundTripIndexes.flatMap((index) => [index - 2, index - 1, index]));
     const affectedEntries = affectedIndexes.size ? entries.filter((_, index) => affectedIndexes.has(index)) : entries;
     issues.push({
       id: `route-area-${date}`,
       category: "route",
-      status: warning ? "attention" : "good",
-      severity,
-      title: roundTripIndexes.length ? "같은 권역을 다시 방문하는 흐름이 있어요" : warning ? "권역 전환이 잦아요" : "권역 흐름이 단순해요",
-      summary: warning ? `${date}에 권역 전환 ${transitions}회${roundTripIndexes.length ? `, 왕복 패턴 ${roundTripIndexes.length}개` : ""}가 감지됐어요.` : `${date} 일정은 주소 권역 기준으로 자연스럽게 이어져요.`,
+      status: "good",
+      severity: "info",
+      title: warning ? "같은 주소 권역으로 되돌아오는 흐름이 있어요" : "주소 권역 흐름을 참고할 수 있어요",
+      summary: warning ? `${date}에 A→B→A 형태의 권역 재방문이 있어요. 실제 비효율 여부는 외부 경로 결과로만 별도 판단해요.` : `${date} 일정에서 명시적인 A→B→A 권역 재방문은 찾지 못했어요.`,
       date,
       affectedItemIds: affectedEntries.map(({ item }) => item.id),
       affectedPlaceIds: affectedEntries.map(({ place }) => place.id),
@@ -112,7 +90,6 @@ export function analyzeRoute(input: DuriAnalysisInput): CategoryAnalysisResult {
         { label: "주소 권역", value: [...new Set(stableAreas)].join(" → "), itemIds: entries.map(({ item }) => item.id), placeIds: entries.map(({ place }) => place.id) },
         { label: "권역 전환", value: `${transitions}회` },
         { label: "A→B→A 왕복 패턴", value: `${roundTripIndexes.length}개` },
-        ...groupEvidence,
       ],
     });
   }
@@ -122,7 +99,7 @@ export function analyzeRoute(input: DuriAnalysisInput): CategoryAnalysisResult {
   return {
     category: "route",
     status,
-    summary: status === "good" ? "현재 일정은 권역 이동이 비교적 단순해요." : "같은 날의 권역 전환이나 왕복 흐름을 확인해 보세요.",
+    summary: status === "good" ? "직선거리·주소 권역은 참고 정보로만 표시해요." : "주소상 재방문 흐름이 있어 실제 경로 결과와 함께 확인해 보세요.",
     issues,
   };
 }

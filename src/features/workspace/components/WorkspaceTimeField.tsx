@@ -1,8 +1,8 @@
 import { TextField } from "../../../components/common";
-import { SLOT_MINUTES } from "../../../data/workspaceSchedule";
 import type { WorkspaceTimeFieldProps } from "./WorkspaceTimeField.types";
 
-export function WorkspaceTimeField({ label, value, onChange, error }: WorkspaceTimeFieldProps) {
+export function WorkspaceTimeField({ label, value, onChange, error, allowEndOfDay = false, minuteInterval = 1 }: WorkspaceTimeFieldProps) {
+  const maximum = allowEndOfDay ? "24:00" : "23:59";
   return <TextField
     label={label}
     value={value}
@@ -11,6 +11,6 @@ export function WorkspaceTimeField({ label, value, onChange, error }: WorkspaceT
     keyboardType="numbers-and-punctuation"
     maxLength={5}
     error={error}
-    helperText={`08:00~24:00 · ${SLOT_MINUTES}분 단위`}
+    helperText={`00:00~${maximum} · ${minuteInterval}분 단위 직접 설정`}
   />;
 }

@@ -167,3 +167,20 @@ export function calculateLegacyPreferenceProjection(
 ) {
   return calculatePersonalPreferenceResult(userId, deriveLegacyPreferenceAnswers(answers), completedAt);
 }
+
+export function buildDuriPreferenceSignals(result: TravelPreferenceSurveyResult) {
+  return {
+    surveyVersion: result.surveyVersion,
+    algorithmVersion: result.algorithmVersion,
+    staminaScore: result.staminaPreference.score,
+    densityScore: result.itineraryMessagePreference.densityScore,
+    scheduleStyle: result.scheduleStylePreference.type,
+    preferredDailyScheduledMinutes: result.scheduleFeatures.averageDailyScheduledMinutes,
+    preferredAverageStayMinutes: result.scheduleFeatures.averageStayMinutes,
+    mobilityModes: [...(result.answers.mobilityModes ?? [])],
+    categoryScores: { ...result.itineraryMessagePreference.categoryScores },
+    budgetRanking: [...result.spendingPriority.ranking],
+    landmarkImportance: result.discoveryPreference.landmarkImportance,
+    localInterest: result.discoveryPreference.localInterest,
+  };
+}

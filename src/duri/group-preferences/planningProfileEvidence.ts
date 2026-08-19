@@ -3,6 +3,7 @@ import type { GroupPlanningDimension, GroupPlanningProfile } from "./types";
 
 const labels: Record<GroupPlanningDimension, { average: string; difference: string; low: string; middle: string; high: string }> = {
   pace: { average: "그룹 일정 밀도 성향", difference: "일정 밀도 선호 차이", low: "여유형", middle: "균형형", high: "알찬형" },
+  budget: { average: "그룹 예산 성향", difference: "지출 선호 차이", low: "절약 우선", middle: "균형 지출", high: "경험 중심" },
   mobility: { average: "이동 부담 성향", difference: "이동 범위 선호 차이", low: "가까운 동선 선호", middle: "적당한 이동 선호", high: "넓은 이동도 괜찮음" },
   activity: { average: "그룹 활동 강도", difference: "활동 강도 선호 차이", low: "머무는 활동 선호", middle: "관광과 휴식 균형", high: "활동적인 흐름 선호" },
   mealStyle: { average: "그룹 식사 방식", difference: "맛집 대기 기준", low: "대기 부담 최소화", middle: "상황에 맞춘 식사", high: "후보 맛집 선호" },

@@ -4,6 +4,7 @@ import {
   MIN_DURATION_MINUTES,
   SLOT_HEIGHT_PX,
   SLOT_MINUTES,
+  WORKSPACE_HOUR_LABEL_COUNT,
 } from "../src/data/workspaceSchedule";
 import { canEditTripWorkspace } from "../src/features/workspace/logic/workspaceCapabilities";
 import {
@@ -55,13 +56,35 @@ import {
   selectCandidateScheduleState,
   selectItineraryItemsForDate,
 } from "../src/features/workspace/selectors/workspaceSelectors";
-import { validateCreateItineraryItem } from "../src/features/workspace/validation/workspaceValidation";
+import { resolveScheduleDocumentLinkMutation, validateCreateItineraryItem } from "../src/features/workspace/validation/workspaceValidation";
 import { normalizePersistedState } from "../src/store/normalizePersistedState";
-import { findNextAvailableSlot, isValidScheduleRange } from "../src/utils/schedule";
+import { findNextAvailableSlot, isValidGridScheduleRange, isValidScheduleRange } from "../src/utils/schedule";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
+
+assert(resolveScheduleDocumentLinkMutation({
+  documentsHydrated: false,
+  requestedDocumentIds: [],
+  availableDocumentIds: new Set(),
+}) === "preserve-unavailable", "문서 hydration 실패가 문서와 무관한 일정 저장을 막지 않고 기존 연결을 보존한다");
+assert(resolveScheduleDocumentLinkMutation({
+  documentsHydrated: false,
+  requestedDocumentIds: ["unknown-document"],
+  availableDocumentIds: new Set(),
+}) === "invalid", "문서 저장소가 unavailable일 때 확인할 수 없는 새 연결은 거부한다");
+assert(resolveScheduleDocumentLinkMutation({
+  documentsHydrated: true,
+  requestedDocumentIds: ["known-document"],
+  availableDocumentIds: new Set(["known-document"]),
+}) === "apply", "문서 hydration 성공 후 검증된 연결만 적용한다");
+assert(resolveScheduleDocumentLinkMutation({
+  documentsHydrated: true,
+  requestedDocumentIds: [],
+  availableDocumentIds: new Set(["existing-document"]),
+  preserveExistingLinksWhenEmpty: true,
+}) === "preserve-unavailable", "편집창을 연 뒤 hydration이 끝나는 race에서도 로드하지 못한 기존 연결을 빈 선택으로 덮어쓰지 않는다");
 
 const users: Record<string, User> = {
   owner: { id: "owner", name: "수민", initial: "수" },
@@ -147,6 +170,18 @@ assert(canEditTripWorkspace({ sessionKind: "guest", currentUserId: "guest", trip
 const demo = createDemoData();
 const restored = normalizePersistedState(demo);
 assert(restored.itineraryByTripId[demo.activeTripId]?.length === demo.itineraryByTripId[demo.activeTripId]?.length && restored.candidatesByTripId[demo.activeTripId]?.length === demo.candidatesByTripId[demo.activeTripId]?.length, "29. 앱 재시작 정규화 후 후보·일정 유지");
+const lockItem = demo.itineraryByTripId[demo.activeTripId]?.[0];
+assert(lockItem, "29a. 잠금 복원 검증용 일정 존재");
+const lockPersisted = normalizePersistedState({
+  ...demo,
+  itineraryByTripId: {
+    ...demo.itineraryByTripId,
+    [demo.activeTripId]: (demo.itineraryByTripId[demo.activeTripId] ?? []).map((entry) => entry.id === lockItem.id ? { ...entry, lockedForDuri: true } : entry),
+  },
+});
+assert(lockPersisted.itineraryByTripId[demo.activeTripId]?.find((entry) => entry.id === lockItem.id)?.lockedForDuri === true, "29b. 두리 일정 잠금 재시작 복원");
+const lockedTrip = lockPersisted.tripsById[demo.activeTripId];
+assert(buildItineraryItemViewModels(lockPersisted, demo.activeTripId, lockItem.date, buildTripDateRange(lockedTrip.startDate, lockedTrip.endDate).map((entry) => entry.date)).find((entry) => entry.id === lockItem.id)?.lockedForDuri === true, "29c. 워크스페이스 일정 잠금 표시 모델 전달");
 
 const orderedThree = [...ordered, item("third", "cafe", "2026-07-18", "14:00")];
 const draggedToEnd = moveItemToIndexWithinDate(orderedThree, "first", 2);
@@ -207,11 +242,17 @@ assert(filterCandidatePlaceViewModels(relationshipCandidates, "", "companion", "
 const conflictValidation = validateCreateItineraryItem({ sessionKind: "member", currentUserId: "owner", trip: trip(), candidate: candidate("market"), place: places.market, itinerary: [item("existing", "cafe", "2026-07-18", "10:00", 90)], date: "2026-07-18", startTime: "11:00", endTime: "12:00" });
 assert(!conflictValidation.valid && conflictValidation.conflictItemIds[0] === "existing", "추가 validation은 겹치는 item ID를 반환해야 한다");
 assert(getSnappedStartTimeFromTranslation("10:00", 60, SLOT_HEIGHT_PX) === "10:15", "43. 일정 블록 한 슬롯 아래 이동");
-assert(getSnappedStartTimeFromTranslation("08:00", 60, -400) === "08:00", "44. 일정 블록 시작 경계");
+assert(getSnappedStartTimeFromTranslation("00:00", 60, -400) === "00:00", "44. 일정 블록의 실제 날짜 시작 경계");
 assert(getSnappedStartTimeFromTranslation("23:00", 60, 400) === "23:00", "45. 일정 블록 종료 경계");
 assert(getSnappedDurationFromTranslation("10:00", 60, SLOT_HEIGHT_PX) === 75, "46. 체류시간 한 슬롯 늘리기");
 assert(getSnappedDurationFromTranslation("10:00", MIN_DURATION_MINUTES, -400) === MIN_DURATION_MINUTES, "47. 최소 체류시간 경계");
 assert(getSnappedDurationFromTranslation("10:00", MIN_DURATION_MINUTES, SLOT_HEIGHT_PX) === 30, "47b. 15분 일정 하단 손잡이를 아래로 한 슬롯 끌면 30분으로 확대");
+assert(getSnappedStartTimeFromTranslation("10:01", 1, SLOT_HEIGHT_PX) === "10:16", "47c. 1분 직접 입력 일정도 드래그 이동량은 정확히 15분");
+assert(getSnappedDurationFromTranslation("10:01", 1, SLOT_HEIGHT_PX) === 16, "47d. 1분 직접 입력 일정도 resize 변화량은 정확히 15분");
+assert(getSnappedDurationFromTranslation("10:01", 16, -SLOT_HEIGHT_PX) === 1, "47e. 비격자 체류시간 축소도 16분에서 1분으로 정확히 15분 변화");
+assert(getSnappedDurationFromTranslation("10:01", 20, -SLOT_HEIGHT_PX) === 5, "47f. 체류시간의 분 오프셋을 resize 중 보존");
+assert(getSnappedStartTimeFromTranslation("10:01", 1, -10_000) === "00:01", "47g. 시작 경계 clamp도 원래 분 오프셋 보존");
+assert(getSnappedDurationFromTranslation("23:30", 16, SLOT_HEIGHT_PX) === 16, "47h. 자정 전 15분 전체 증가가 불가능하면 부분 증가하지 않음");
 assert(getSnappedDurationFromTranslation("23:00", 60, 400) === 60, "48. 자정 종료 경계");
 
 const threeDaySchedule = [
@@ -263,8 +304,10 @@ assert(draggedToMiddle.status === "success" && draggedToMiddle.items.find((entry
 
 const quarterHourRange = validateTimeRange("10:15", "10:30");
 assert(quarterHourRange.valid && quarterHourRange.durationMinutes === 15, "72. 15분 일정 범위 허용");
-assert(!validateTimeRange("10:10", "10:25").valid, "73. 15분 슬롯 밖 시간 거부");
-assert(!isValidScheduleRange(item("off-slot", "cafe", "2026-07-18", "10:10", 15)), "73b. 중앙 Store 검증도 15분 밖 시작 시각 거부");
+assert(validateTimeRange("10:10", "10:25").valid && validateTimeRange("10:10", "10:11").valid, "73. 직접 입력은 시작·종료를 1분 단위로 허용");
+assert(isValidScheduleRange(item("one-minute", "cafe", "2026-07-18", "23:58", 1)), "73a. 하루 끝의 1분 일정도 일반 일정 유효성에서 보존");
+assert(isValidScheduleRange(item("off-slot", "cafe", "2026-07-18", "10:10", 15)), "73b. Backend HH:mm 1분 단위 일정은 읽기·분석 유효성에서 보존");
+assert(!isValidGridScheduleRange(item("off-slot", "cafe", "2026-07-18", "10:10", 15)), "73c. 두리 자동 생성처럼 격자가 필요한 경로는 별도 15분 검증 사용");
 assert(findNextAvailableSlot({
   items: [item("quarter", "cafe", "2026-07-18", "10:00", 15)],
   date: "2026-07-18",
@@ -272,6 +315,7 @@ assert(findNextAvailableSlot({
   fromMinutes: 10 * 60,
 }) === "10:15", "74. 15분 다음 빈 슬롯 검색");
 assert(SLOT_MINUTES === 15 && SLOT_HEIGHT_PX === 20 && MIN_DURATION_MINUTES === 15, "75. 15분 시간축 상수");
+assert(WORKSPACE_HOUR_LABEL_COUNT === 25, "75b. 00:00부터 24:00까지 모든 정시 라벨 표시");
 
 const boardBounds = getWorkspaceBoardHeightBounds(900, 20, 30);
 const boardInitialHeight = getInitialWorkspaceBoardHeight(900, boardBounds);
@@ -314,7 +358,7 @@ const roundedTimeline = buildTripEndConditionTimelineEntry({
   ...constrainedTrip,
   endCondition: { ...constrainedTrip.endCondition!, travelMinutes: 47, serviceBufferMinutes: 20 },
 });
-assert(roundedTimeline?.cutoffMinutes === 16 * 60 + 45, "85. 이동·준비시간을 뺀 복귀 출발을 이전 15분 슬롯으로 보수적 정렬");
+assert(roundedTimeline?.cutoffMinutes === 16 * 60 + 53, "85. 복귀 마감·이동·준비시간 계산도 1분 정밀도를 보존");
 const exactCutoffAddition = [item("exact-end", "cafe", "2026-07-19", "15:30", 60)];
 const exactAdditionResolution = resolveTripEndConditionAddition(constrainedTrip, exactCutoffAddition);
 assert(exactAdditionResolution.status === "accepted" && exactAdditionResolution.itinerary[0]?.startTime === "15:30", "86. cutoff에 정확히 끝나는 추가는 시간 변경 없이 허용");
@@ -322,11 +366,11 @@ const lateAddition = [item("late-end", "cafe", "2026-07-19", "15:45", 60)];
 const lateAdditionResolution = resolveTripEndConditionAddition(constrainedTrip, lateAddition);
 assert(lateAdditionResolution.status === "rejected" && lateAdditionResolution.itinerary[0]?.startTime === "15:45", "87. cutoff를 15분 넘는 추가는 자동 앞당김 없이 거부");
 assert(resolveTripEndConditionAddition(constrainedTrip, [...lateAddition, item("earlier-day", "market", "2026-07-18", "20:00")], "2026-07-18").status === "accepted", "88. 기존 마지막 DAY가 위반 상태여도 다른 DAY의 일정 추가는 종료 조건으로 차단하지 않음");
-assert(getScheduleBlockDisplayMode(15) === "micro" && getScheduleBlockDisplayMode(30) === "compact" && getScheduleBlockDisplayMode(45) === "compact" && getScheduleBlockDisplayMode(60) === "full", "89. 짧은 일정 표시 밀도를 15분·30/45분·60분 이상으로 구분");
-assert(shouldShowScheduleResizeHandle(true, 15) && shouldShowScheduleResizeHandle(true, 30) && !shouldShowScheduleResizeHandle(false, 15), "89b. 편집 가능한 15분 일정도 하단 resize 손잡이를 유지");
+assert(getScheduleBlockDisplayMode(1) === "micro" && getScheduleBlockDisplayMode(15) === "micro" && getScheduleBlockDisplayMode(30) === "compact" && getScheduleBlockDisplayMode(45) === "compact" && getScheduleBlockDisplayMode(60) === "full", "89. 짧은 일정 표시 밀도를 1~15분·30/45분·60분 이상으로 구분");
+assert(shouldShowScheduleResizeHandle(true, 1) && shouldShowScheduleResizeHandle(true, 15) && shouldShowScheduleResizeHandle(true, 30) && !shouldShowScheduleResizeHandle(false, 1), "89b. 편집 가능한 1분·15분 일정도 하단 resize 손잡이를 유지");
 const modalBounds = getWorkspaceModalHeightBounds(900, 20, 30);
 const modalInitialHeight = getInitialWorkspaceModalHeight(900, modalBounds);
 assert(modalBounds.minHeight === 320 && modalBounds.maxHeight === 802 && modalInitialHeight === 612, "90. 후보 선택 창의 safe area 기반 연속 높이 경계");
 assert(resizeWorkspaceModalHeight(modalInitialHeight, -37, modalBounds) === modalInitialHeight + 37 && resizeWorkspaceModalHeight(modalInitialHeight, 10_000, modalBounds) === modalBounds.minHeight && stepWorkspaceModalHeight(modalInitialHeight, 1, modalBounds) === modalInitialHeight + 20, "91. 후보 선택 창 위 손잡이 연속 확대·최소 clamp·접근성 증분");
 
-console.log("Workspace editor verification passed: 91 scenarios + conflict validation");
+console.log("Workspace editor verification passed: 100 scenarios + conflict validation");

@@ -12,12 +12,14 @@
     "sourceMap": false
   },
   "include": [
+    "expo-env.d.ts",
     "scripts/verify-place-flow.ts",
     "src/domain/**/*.ts",
     "src/features/auth/types/**/*.ts",
     "src/features/places/types.ts",
     "src/features/places/logic/**/*.ts",
     "src/features/places/selectors/**/*.ts",
+    "src/features/places/services/placeApi.ts",
     "src/features/explore/logic/**/*.ts",
     "src/utils/entityRelations.ts"
   ]

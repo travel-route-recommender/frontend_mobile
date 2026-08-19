@@ -1,14 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { BackHandler, Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
+import { useQuery } from "@tanstack/react-query";
 import type { EntityId, TripEndConditionType, User } from "../../../domain";
 import { AppHeader, Avatar, Card, Chip, PrimaryButton, RemoteImage, Screen, SecondaryButton, TextField } from "../../../components/common";
 import { ErrorState, LoadingState } from "../../../components/feedback";
 import { environment } from "../../../config/environment";
+import { queryKeys } from "../../../query/keys";
 import { useDuriStore } from "../../../store/useDuriStore";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import { formatTripDateRange } from "../../../utils/formatters";
 import { useMemberGate } from "../../auth/hooks/useMemberGate";
+import { useAuthSessionStore } from "../../auth/store/useAuthSessionStore";
+import { fetchApiUserDirectory } from "../../trips/tripRoomApi";
 import { formatTripDurationLabel } from "../../trips/utils/tripDateUtils";
 import { companionTypeOptions, createTripSteps, endConditionOptions, transportOptions } from "../config";
 import { TripCreationSuccess } from "../components/TripCreationSuccess";
@@ -49,8 +53,22 @@ const editTitles: Record<EditableTripStep, string> = {
 export function CreateTripWizardScreen() {
   const router = useRouter();
   const { isMember, requireMember, memberGatePrompt } = useMemberGate();
-  const currentUserId = useDuriStore((state) => state.currentUserId);
-  const usersById = useDuriStore((state) => state.usersById);
+  const domainCurrentUserId = useDuriStore((state) => state.currentUserId);
+  const domainUsersById = useDuriStore((state) => state.usersById);
+  const sessionUserId = useAuthSessionStore((state) => state.currentSessionUserId);
+  const currentUserId = environment.dataSource === "api" ? sessionUserId ?? domainCurrentUserId : domainCurrentUserId;
+  const apiUsersQuery = useQuery({
+    queryKey: queryKeys.users.directory(),
+    queryFn: ({ signal }) => fetchApiUserDirectory(signal),
+    enabled: environment.dataSource === "api",
+    staleTime: 5 * 60 * 1000,
+  });
+  const usersById = useMemo(() => environment.dataSource === "api"
+    ? {
+      ...(apiUsersQuery.data ?? {}),
+      ...(domainUsersById[currentUserId] ? { [currentUserId]: domainUsersById[currentUserId] } : {}),
+    }
+    : domainUsersById, [apiUsersQuery.data, currentUserId, domainUsersById]);
   const regionsById = useDuriStore((state) => state.regionsById);
   const createTrip = useDuriStore((state) => state.createTrip);
   const draft = useCreateTripDraftStore((state) => state.draft);
@@ -87,7 +105,7 @@ export function CreateTripWizardScreen() {
     companionType: request.companionType,
     expectedMemberCount: request.expectedMemberCount,
     invitedUserIds: request.invitedUserIds,
-  })), [createTrip]);
+  }), currentUserId), [createTrip, currentUserId]);
   const creation = useCreateTripRoomMutation(roomService);
 
   const findRegionOption = useCallback((regionId: string): RegionOption | undefined => {
@@ -131,8 +149,8 @@ export function CreateTripWizardScreen() {
     return () => subscription.remove();
   }, [requestExit]));
 
-  if (environment.dataSource !== "mock") {
-    return <Screen><AppHeader title="새 여행 만들기" onBack={() => router.back()} /><ErrorState message={environment.dataSource === "api" ? "Rooms API 계약이 연결되기 전에는 여행방을 만들 수 없어요. mock 여행방으로 자동 전환하지 않았어요." : "서버 roomId와 로컬 roomId의 연결 계약이 필요해요. 확인 전에는 로컬 여행방을 생성하지 않아요."} /></Screen>;
+  if (environment.dataSource === "hybrid") {
+    return <Screen><AppHeader title="새 여행 만들기" onBack={() => router.back()} /><ErrorState message="hybrid 모드에서는 서버 여행방과 로컬 여행방을 섞어 만들지 않아요." /></Screen>;
   }
   if (!isMember) return <Screen><AppHeader title="새 여행 만들기" onBack={() => router.back()} /><Card style={styles.memberGate}><Text style={styles.sectionTitle}>회원 계정이 필요해요</Text><Text style={styles.body}>여행방 생성과 동행자 선택은 회원으로 로그인한 뒤 사용할 수 있어요.</Text><PrimaryButton label="로그인 또는 가입" onPress={() => requireMember(() => undefined, "여행방 만들기")} /></Card>{memberGatePrompt}</Screen>;
   if (creation.state.status === "success") {
@@ -270,7 +288,7 @@ function ConditionsStep({ draft, onChange }: { draft: CreateTripDraft; onChange(
     onChange({ endCondition: { ...draft.endCondition, ...patch } });
   };
   return <View style={styles.stack}>
-    <Card style={styles.factNotice}><Text style={styles.bodyStrong}>여기서는 여행방의 사실 정보만 기록해요.</Text><Text style={styles.caption}>예산과 일정 속도 같은 개인 성향은 방을 만든 뒤 각 동행자가 따로 응답합니다.</Text></Card>
+    <Card style={styles.factNotice}><Text style={styles.bodyStrong}>여기서는 여행방의 사실 정보만 기록해요.</Text><Text style={styles.caption}>{environment.dataSource === "api" ? "이동 방식·숙소·종료 조건은 아직 서버 필드가 없어 현재 계정의 이 기기에 보관합니다. 예산과 일정 속도 같은 개인 성향은 각 동행자가 따로 응답합니다." : "예산과 일정 속도 같은 개인 성향은 방을 만든 뒤 각 동행자가 따로 응답합니다."}</Text></Card>
     <OptionGroup title="이동 방식" options={transportOptions} selected={draft.transport} onSelect={(transport) => onChange({ transport })} />
     <TextField label="숙소 위치 (선택)" value={draft.accommodationLocation} onChangeText={(accommodationLocation) => onChange({ accommodationLocation })} placeholder="예: 부산역 근처 호텔" maxLength={100} helperText="예약했거나 머물 예정인 숙소가 있을 때만 입력해 주세요." />
     {draft.dateUndecided
@@ -279,7 +297,7 @@ function ConditionsStep({ draft, onChange }: { draft: CreateTripDraft; onChange(
           <OptionGroup title="마지막 날 종료 조건" options={endConditionSelectionOptions} selected={draft.endCondition?.type ?? "none"} onSelect={selectEndCondition} />
           {draft.endCondition ? <Card style={styles.endConditionFields}>
             <TextField label="종료 지점" value={draft.endCondition.location} onChangeText={(location) => updateEndCondition({ location })} placeholder="예: 부산역, 렌터카 반납 지점" maxLength={100} />
-            <TextField label="도착 또는 반납 마감 시각" value={draft.endCondition.deadline} onChangeText={(deadline) => updateEndCondition({ deadline })} placeholder="예: 17:30" maxLength={5} helperText="마지막 여행 날짜 기준, 15분 단위 HH:mm" />
+            <TextField label="도착 또는 반납 마감 시각" value={draft.endCondition.deadline} onChangeText={(deadline) => updateEndCondition({ deadline })} placeholder="예: 17:30" maxLength={5} helperText="마지막 여행 날짜 기준, 1분 단위 HH:mm" />
             <TextField label="마지막 일정에서 종료 지점까지 예상 이동시간 (분)" value={draft.endCondition.travelMinutes} onChangeText={(travelMinutes) => updateEndCondition({ travelMinutes: travelMinutes.replace(/\D/g, "") })} placeholder="예: 45" keyboardType="number-pad" maxLength={4} helperText="실제 경로를 확인한 예상값을 입력해 주세요. 현재 앱은 이동시간 API를 사용하지 않습니다." />
             <TextField label="승차 준비 또는 반납에 필요한 시간 (분)" value={draft.endCondition.serviceBufferMinutes} onChangeText={(serviceBufferMinutes) => updateEndCondition({ serviceBufferMinutes: serviceBufferMinutes.replace(/\D/g, "") })} placeholder="예: 30" keyboardType="number-pad" maxLength={3} />
             <TextField label="종료 조건 메모 (선택)" value={draft.endCondition.note} onChangeText={(note) => updateEndCondition({ note })} placeholder="예: 렌터카 연료 충전 후 반납" maxLength={300} multiline />
@@ -298,7 +316,7 @@ function CompanionStep({ owner, users, companionType, selectedIds, onTypeChange,
     {owner ? <Card style={styles.member}><Avatar name={owner.name} uri={owner.profileImageUrl} /><View style={styles.optionCopy}><Text style={styles.bodyStrong}>{owner.name} (나)</Text><Text style={styles.caption}>방장으로 자동 포함</Text></View><Chip label="방장" selected /></Card> : null}
     <Text style={styles.sectionTitle}>데모 동행자 선택</Text>
     {users.length ? users.map((user) => { const selected = selectedIds.includes(user.id); return <Pressable key={user.id} accessibilityRole="checkbox" accessibilityState={{ checked: selected }} accessibilityLabel={`${user.name} 동행자 ${selected ? "선택 해제" : "선택"}`} onPress={() => onToggle(user.id)} style={({ pressed }) => [styles.member, styles.memberPressable, selected && styles.selectedCard, pressed && styles.pressed]}><Avatar name={user.name} uri={user.profileImageUrl} /><View style={styles.optionCopy}><Text style={styles.bodyStrong}>{user.name}</Text><Text style={styles.caption}>데모 동행자</Text></View><Text style={[styles.checkbox, selected && styles.checkboxSelected]}>{selected ? "✓" : ""}</Text></Pressable>; }) : <Card><Text style={styles.body}>선택할 수 있는 동행자가 없어요. 나 혼자 여행방을 만들 수 있어요.</Text></Card>}
-    <Text style={styles.caption}>동행 유형은 프론트 mock 값이며 실제 사용자 검색과 초대는 Rooms/Invite API 계약 후 연결합니다.</Text>
+    <Text style={styles.caption}>{environment.dataSource === "api" ? "선택한 회원은 서버 여행방 멤버로 바로 추가돼요. 동행 유형은 Backend 필드가 없어 이 기기에만 보관합니다." : "동행 유형과 동행자는 데모 데이터로 저장됩니다."}</Text>
   </View>;
 }
 

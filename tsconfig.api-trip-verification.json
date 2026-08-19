@@ -1,0 +1,35 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "customConditions": [],
+    "target": "ES2022",
+    "types": ["node"],
+    "rootDir": ".",
+    "outDir": ".api-trip-verification",
+    "declaration": false,
+    "sourceMap": false
+  },
+  "include": [
+    "scripts/verify-api-trip-contract.ts",
+    "src/config/environment.ts",
+    "src/domain/**/*.ts",
+    "src/features/auth/services/authTokenState.ts",
+    "src/features/trips/tripRoomApi.ts",
+    "src/features/trips/selectors/**/*.ts",
+    "src/features/trips/types.ts",
+    "src/features/trips/utils/**/*.ts",
+    "src/features/trip-creation/services/apiTripFactsStorage.ts",
+    "src/features/workspace/services/workspaceScheduleApi.ts",
+    "src/features/workspace/services/workspaceScheduleContract.ts",
+    "src/features/workspace/logic/workspaceDateTime.ts",
+    "src/features/workspace/types.ts",
+    "src/features/trip-documents/**/*.ts",
+    "src/features/duri/**/*.ts",
+    "src/duri/**/*.ts",
+    "src/services/apiClient.ts",
+    "src/utils/**/*.ts"
+  ]
+}

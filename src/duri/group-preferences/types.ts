@@ -5,7 +5,7 @@ import type {
   PreferenceScore,
 } from "../../domain";
 
-export type GroupPlanningDimension = "pace" | "mobility" | "activity" | "mealStyle" | "planningStyle";
+export type GroupPlanningDimension = "pace" | "budget" | "mobility" | "activity" | "mealStyle" | "planningStyle";
 export type DiagnosisCoverage = "complete" | "partial" | "insufficient";
 export type GroupDimensionStatus = "common" | "compatible" | "needs-tuning";
 
@@ -66,6 +66,7 @@ export interface GroupPlanningProfile {
   commonTags: string[];
   sharedPreferredTags: string[];
   pace: GroupPlanningDimensionProfile;
+  budget: GroupPlanningDimensionProfile;
   mobility: GroupPlanningDimensionProfile;
   activity: GroupPlanningDimensionProfile;
   mealStyle: GroupPlanningDimensionProfile;
