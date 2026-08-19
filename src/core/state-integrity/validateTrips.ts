@@ -2,6 +2,7 @@ import type { DuriDomainState } from "../../data/mock/demoData";
 import type { StateIntegrityIssue } from "./types";
 import { issue } from "./types";
 import { isValidISODate } from "../../utils/formatters";
+import { isValidClockTime } from "../../utils/schedule";
 
 export function validateTrips(domain: DuriDomainState): StateIntegrityIssue[] {
   const issues: StateIntegrityIssue[] = [];
@@ -38,7 +39,7 @@ export function validateTrips(domain: DuriDomainState): StateIntegrityIssue[] {
     }
     if (trip.endCondition) {
       if (!trip.endCondition.location.name.trim()) issues.push(issue("error", "trip.end-condition-location-invalid", "trip", "여행 종료 지점이 비어 있습니다.", tripKey));
-      if (!/^([01]\d|2[0-3]):(?:00|15|30|45)$/.test(trip.endCondition.deadline)) issues.push(issue("error", "trip.end-condition-deadline-invalid", "trip", "여행 종료 시각이 올바른 15분 단위가 아닙니다.", tripKey));
+      if (!isValidClockTime(trip.endCondition.deadline)) issues.push(issue("error", "trip.end-condition-deadline-invalid", "trip", "여행 종료 시각이 올바른 HH:mm 형식이 아닙니다.", tripKey));
       if (!Number.isInteger(trip.endCondition.travelMinutes) || trip.endCondition.travelMinutes < 0 || trip.endCondition.travelMinutes > 1440) issues.push(issue("error", "trip.end-condition-travel-invalid", "trip", "여행 종료 지점까지 예상 이동시간이 올바르지 않습니다.", tripKey));
       if (!Number.isInteger(trip.endCondition.serviceBufferMinutes) || trip.endCondition.serviceBufferMinutes < 0 || trip.endCondition.serviceBufferMinutes > 720) issues.push(issue("error", "trip.end-condition-buffer-invalid", "trip", "여행 종료 준비시간이 올바르지 않습니다.", tripKey));
     }

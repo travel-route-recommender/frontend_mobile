@@ -8,7 +8,7 @@ import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import { useAuthSessionStore } from "../../auth/store/useAuthSessionStore";
 import type { SessionKind } from "../../auth/types";
 import { preferenceSteps } from "../config/travel-preference-test-config";
-import { calculateLegacyPreferenceProjection } from "../logic/calculate-travel-preference-result";
+import { buildDuriPreferenceSignals, calculateLegacyPreferenceProjection } from "../logic/calculate-travel-preference-result";
 import {
   formatPreferenceStepAnswer,
   getCompletedPreferenceStepCount,
@@ -75,7 +75,7 @@ export function PersonalReviewScreen() {
         return;
       }
       const legacyProjection = calculateLegacyPreferenceProjection(sessionUserId, prepared.result.answers, completedAt);
-      const saved = saveResult(sessionUserId, legacyProjection.answers, completedAt);
+      const saved = saveResult(sessionUserId, legacyProjection.answers, completedAt, buildDuriPreferenceSignals(prepared.result));
       if (!saved) { setErrorMessage("기존 결과는 유지했지만 새 결과를 저장하지 못했어요. 다시 시도해 주세요."); return; }
       setCompletedSurvey({ owner, answers: validation.answers, completedAt });
       setPreferenceCompleted(true);

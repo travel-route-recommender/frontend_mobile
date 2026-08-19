@@ -3,6 +3,7 @@ import * as Crypto from "expo-crypto";
 import * as Device from "expo-device";
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
+import { getBrowserItem, setBrowserItem } from "./browserStorage";
 
 export type ClientPlatform = "android" | "ios" | "web" | "unknown";
 
@@ -27,10 +28,13 @@ function currentPlatform(): ClientPlatform {
 }
 
 async function loadOrCreateInstallationId() {
-  const existing = await SecureStore.getItemAsync(INSTALLATION_ID_KEY, INSTALLATION_OPTIONS);
+  const existing = Platform.OS === "web"
+    ? getBrowserItem("local", INSTALLATION_ID_KEY)
+    : await SecureStore.getItemAsync(INSTALLATION_ID_KEY, INSTALLATION_OPTIONS);
   if (existing) return existing;
   const created = Crypto.randomUUID();
-  await SecureStore.setItemAsync(INSTALLATION_ID_KEY, created, INSTALLATION_OPTIONS);
+  if (Platform.OS === "web") setBrowserItem("local", INSTALLATION_ID_KEY, created);
+  else await SecureStore.setItemAsync(INSTALLATION_ID_KEY, created, INSTALLATION_OPTIONS);
   return created;
 }
 

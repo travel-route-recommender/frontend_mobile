@@ -112,13 +112,13 @@ export function ItineraryTimelineItem({
       dragging && styles.dragging,
       { transform: [{ translateY }, { scale: dragging ? 1.01 : 1 }] },
     ]}
-    accessibilityLabel={`${order}번째 일정, ${item.startTime}부터 ${item.endTime}, ${item.placeName}`}
+    accessibilityLabel={`${order}번째 일정, ${item.startTime}부터 ${item.endTime}, ${item.placeName}${item.lockedForDuri ? ", 두리 변경 잠금" : ""}`}
     testID={`workspace-itinerary-${item.id}`}
   >
     <View style={styles.timeline}><View style={[styles.dot, item.hasTimeConflict && styles.dotConflict]}><Text style={styles.order}>{order}</Text></View>{!last ? <View style={styles.line} /> : null}</View>
     <View style={styles.card}>
       <View style={styles.heading}><View style={styles.copy}><Text style={styles.time}>{item.startTime}–{item.endTime}</Text><Text style={styles.name}>{item.placeName}</Text></View><Chip label={item.categoryLabel} /></View>
-      <Text style={styles.duration}>체류 {item.durationMinutes}분{item.preferredByNames.length ? ` · 함께 담은 사람 ${item.preferredByNames.join(", ")}` : ""}</Text>
+      <Text style={styles.duration}>체류 {item.durationMinutes}분{item.lockedForDuri ? " · 두리 변경 잠금" : ""}{item.preferredByNames.length ? ` · 함께 담은 사람 ${item.preferredByNames.join(", ")}` : ""}</Text>
       {item.note ? <Text style={styles.note}>{item.note}</Text> : null}
       {item.placeMissing ? <Text style={styles.warning}>장소 정보가 누락됐지만 시간과 메모는 편집할 수 있어요.</Text> : null}
       {item.hasTimeConflict ? <Text accessibilityRole="alert" style={styles.conflict}>다른 일정과 시간이 겹쳐요.</Text> : null}

@@ -1,5 +1,6 @@
 import type {
   EntityId,
+  DuriPreferenceSignals,
   ItineraryItem,
   ItineraryItemType,
   PersonalPreferenceAnswers,
@@ -22,9 +23,9 @@ import type {
 } from "../domain";
 import { normalizeLegacyPreferenceResult } from "../duri/preferences";
 import { createDemoData, type DuriDomainState } from "../data/mock/demoData";
-import { getTripDates, isValidScheduleRange, sortItineraryItemsByDateAndTime } from "../utils/schedule";
+import { getTripDates, isValidClockTime, isValidScheduleRange, sortItineraryItemsByDateAndTime } from "../utils/schedule";
 
-export const CURRENT_SCHEMA_VERSION = 5;
+export const CURRENT_SCHEMA_VERSION = 6;
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -34,7 +35,7 @@ const tripTransports: TripTransport[] = ["public", "car"];
 const tripEndConditionTypes: TripEndConditionType[] = ["train", "intercity-bus", "rental-car-return", "other"];
 const tripBudgets: TripBudgetLevel[] = ["budget", "standard", "premium"];
 const tripIntensities: TripIntensity[] = ["relaxed", "balanced", "packed"];
-const itineraryTypes: ItineraryItemType[] = ["place", "meal", "rest", "transport"];
+const itineraryTypes: ItineraryItemType[] = ["place", "meal", "rest", "transport", "reservation"];
 
 const isRecord = (value: unknown): value is UnknownRecord => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const asString = (value: unknown, fallback = "") => typeof value === "string" ? value : fallback;
@@ -161,7 +162,7 @@ function normalizeTripEndCondition(value: unknown): TripEndCondition | null {
   const deadline = asString(value.deadline);
   const travelMinutes = value.travelMinutes;
   const serviceBufferMinutes = value.serviceBufferMinutes;
-  if (!location || !/^([01]\d|2[0-3]):(?:00|15|30|45)$/.test(deadline)) return null;
+  if (!location || !isValidClockTime(deadline)) return null;
   if (typeof travelMinutes !== "number" || !Number.isInteger(travelMinutes) || travelMinutes < 0 || travelMinutes > 1440) return null;
   if (typeof serviceBufferMinutes !== "number" || !Number.isInteger(serviceBufferMinutes) || serviceBufferMinutes < 0 || serviceBufferMinutes > 720) return null;
   const note = asString(value.note).trim().slice(0, 300);
@@ -282,6 +283,7 @@ function normalizeItinerary(
           (userId) => Boolean(usersById[userId]) && memberIds.has(userId),
         ),
         ...(asString(entry.note) ? { note: asString(entry.note) } : {}),
+        ...(entry.lockedForDuri === true ? { lockedForDuri: true } : {}),
       };
       if (!id || seen.has(id) || !validDates.has(item.date) || !isValidScheduleRange(item)) return [];
       if (itemType === "place" && (!placeId || !placesById[placeId])) return [];
@@ -300,6 +302,32 @@ function normalizePreferenceAnswers(value: unknown): PersonalPreferenceAnswers |
   return Object.fromEntries(preferenceDimensions.map((dimension) => [dimension, value[dimension] as PreferenceScore])) as PersonalPreferenceAnswers;
 }
 
+function normalizeDuriPreferenceSignals(value: unknown): DuriPreferenceSignals | undefined {
+  if (!isRecord(value) || !isRecord(value.categoryScores)) return undefined;
+  const finite = (entry: unknown) => typeof entry === "number" && Number.isFinite(entry);
+  if (![value.surveyVersion, value.algorithmVersion, value.staminaScore, value.densityScore,
+    value.preferredDailyScheduledMinutes, value.preferredAverageStayMinutes,
+    value.landmarkImportance, value.localInterest].every(finite)) return undefined;
+  if (value.scheduleStyle !== "relaxed" && value.scheduleStyle !== "packed") return undefined;
+  const categoryScores = Object.fromEntries(Object.entries(value.categoryScores)
+    .filter((entry): entry is [string, number] => finite(entry[1]))
+    .map(([key, score]) => [key, Math.max(0, Math.min(100, score))]));
+  return {
+    surveyVersion: Math.max(0, Math.trunc(value.surveyVersion as number)),
+    algorithmVersion: Math.max(0, Math.trunc(value.algorithmVersion as number)),
+    staminaScore: Math.max(0, Math.min(100, value.staminaScore as number)),
+    densityScore: Math.max(0, Math.min(100, value.densityScore as number)),
+    scheduleStyle: value.scheduleStyle,
+    preferredDailyScheduledMinutes: Math.max(0, Math.round(value.preferredDailyScheduledMinutes as number)),
+    preferredAverageStayMinutes: Math.max(0, Math.round(value.preferredAverageStayMinutes as number)),
+    mobilityModes: unique(asStringArray(value.mobilityModes)),
+    categoryScores,
+    budgetRanking: unique(asStringArray(value.budgetRanking)),
+    landmarkImportance: Math.max(0, Math.min(100, value.landmarkImportance as number)),
+    localInterest: Math.max(0, Math.min(100, value.localInterest as number)),
+  };
+}
+
 function normalizePreferenceResults(value: unknown, usersById: Record<EntityId, User>) {
   if (!isRecord(value)) return {};
   return Object.fromEntries(Object.entries(value).flatMap(([userId, entry]) => {
@@ -307,6 +335,7 @@ function normalizePreferenceResults(value: unknown, usersById: Record<EntityId, 
     const answers = normalizePreferenceAnswers(entry.answers);
     const traits = asStringArray(entry.traits);
     const preferredTags = asStringArray(entry.preferredTags);
+    const detailedSignals = normalizeDuriPreferenceSignals(entry.detailedSignals);
     const hasLegacySignal = typeof entry.profileType === "string" || traits.length > 0 || preferredTags.length > 0;
     if (!answers && !hasLegacySignal) return [];
     if (answers) {
@@ -319,6 +348,7 @@ function normalizePreferenceResults(value: unknown, usersById: Record<EntityId, 
         completedAt: asString(entry.completedAt),
         // 명시적인 미지원 버전은 selector에서 invalid로 판정할 수 있도록 보존한다.
         version: typeof entry.version === "number" ? entry.version : 0,
+        ...(detailedSignals ? { detailedSignals } : {}),
       };
       return [[userId, result]];
     }

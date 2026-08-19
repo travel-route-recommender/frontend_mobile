@@ -16,6 +16,7 @@ import { usePreferenceDraftHydration } from "../src/features/preferences/hooks/u
 import { useCreateTripDraftHydration } from "../src/features/trip-creation/hooks/useCreateTripDraftHydration";
 import { useTripDocumentHydration } from "../src/features/trip-documents";
 import { normalizePreferenceResult } from "../src/duri/group-preferences";
+import { resolveAppHydrationPolicy } from "../src/core/state-integrity/appHydrationPolicy";
 import { queryClient } from "../src/query/queryClient";
 import { useStoreHydration } from "../src/store/useStoreHydration";
 import { useDuriStore } from "../src/store/useDuriStore";
@@ -32,23 +33,23 @@ function HydratedNavigator() {
   const preferenceDraftHydration = usePreferenceDraftHydration();
   const createTripDraftHydration = useCreateTripDraftHydration();
   const tripInviteHydration = useTripInviteHydration();
+  // 문서함은 보조 기능이다. hydration은 백그라운드에서 시작하되 실패가
+  // 로그인·여행방·Workspace의 전역 진입을 막지 않게 문서 섹션에서만 처리한다.
   const tripDocumentHydration = useTripDocumentHydration();
-  const localHydrated = domainHydration.isHydrated
-    && authHydration.isHydrated
-    && friendCompatibilityHydration.isHydrated
-    && preferenceDraftHydration.isHydrated
-    && createTripDraftHydration.isHydrated
-    && tripInviteHydration.isHydrated
-    && tripDocumentHydration.isHydrated;
+  const requiredHydration = resolveAppHydrationPolicy({
+    required: [
+      domainHydration,
+      authHydration,
+      friendCompatibilityHydration,
+      preferenceDraftHydration,
+      createTripDraftHydration,
+      tripInviteHydration,
+    ],
+    optional: [tripDocumentHydration],
+  });
+  const localHydrated = requiredHydration.isHydrated;
   const sessionBootstrap = useAuthSessionBootstrap(localHydrated);
-  const error = domainHydration.error
-    ?? authHydration.error
-    ?? friendCompatibilityHydration.error
-    ?? preferenceDraftHydration.error
-    ?? createTripDraftHydration.error
-    ?? tripInviteHydration.error
-    ?? tripDocumentHydration.error
-    ?? sessionBootstrap.error;
+  const error = requiredHydration.error ?? sessionBootstrap.error;
   if (error) return <Screen><ErrorState message={error.message} onRetry={() => {
     void Promise.all([
       domainHydration.retry(),
@@ -57,7 +58,6 @@ function HydratedNavigator() {
       preferenceDraftHydration.retry(),
       createTripDraftHydration.retry(),
       tripInviteHydration.retry(),
-      tripDocumentHydration.retry(),
     ]);
     sessionBootstrap.retry();
   }} /></Screen>;

@@ -6,3 +6,4 @@ export * from "./normalizePreferenceResult";
 export * from "./diagnosePreferenceDimension";
 export * from "./calculateGroupMatchRate";
 export * from "./summarizeGroupPreferredTags";
+export * from "./reconcileGroupPreferences";

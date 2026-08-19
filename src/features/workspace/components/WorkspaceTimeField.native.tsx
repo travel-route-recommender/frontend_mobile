@@ -2,29 +2,30 @@ import DateTimePicker from "@react-native-community/datetimepicker";
 import { useState } from "react";
 import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
-import { SLOT_MINUTES, WORKSPACE_END_MINUTES } from "../../../data/workspaceSchedule";
+import { WORKSPACE_END_MINUTES } from "../../../data/workspaceSchedule";
 import { formatMinutesToTime, parseTimeToMinutes } from "../logic/workspaceDateTime";
 import type { WorkspaceTimeFieldProps } from "./WorkspaceTimeField.types";
 
-function timeToDate(value: string) {
+function timeToDate(value: string, minuteInterval: 1 | 15) {
   const minutes = parseTimeToMinutes(value);
   const safeMinutes = minutes === null || minutes >= WORKSPACE_END_MINUTES
-    ? WORKSPACE_END_MINUTES - SLOT_MINUTES
+    ? WORKSPACE_END_MINUTES - minuteInterval
     : minutes;
   return new Date(2026, 0, 1, Math.floor(safeMinutes / 60), safeMinutes % 60, 0, 0);
 }
 
-function dateToSnappedTime(date: Date) {
+function dateToSnappedTime(date: Date, minuteInterval: 1 | 15) {
   const minutes = date.getHours() * 60 + date.getMinutes();
   const snapped = Math.min(
-    Math.round(minutes / SLOT_MINUTES) * SLOT_MINUTES,
+    Math.round(minutes / minuteInterval) * minuteInterval,
     WORKSPACE_END_MINUTES,
   );
-  return formatMinutesToTime(snapped) ?? "08:00";
+  return formatMinutesToTime(snapped) ?? "00:00";
 }
 
-export function WorkspaceTimeField({ label, value, onChange, error, allowEndOfDay = false }: WorkspaceTimeFieldProps) {
+export function WorkspaceTimeField({ label, value, onChange, error, allowEndOfDay = false, minuteInterval = 1 }: WorkspaceTimeFieldProps) {
   const [open, setOpen] = useState(false);
+  const maximum = allowEndOfDay ? "24:00" : "23:59";
   return <View style={styles.wrap}>
     <Text style={styles.label}>{label}</Text>
     <Pressable
@@ -36,15 +37,15 @@ export function WorkspaceTimeField({ label, value, onChange, error, allowEndOfDa
       <Text style={styles.value}>{value}</Text><Text style={styles.action}>시간 선택</Text>
     </Pressable>
     {open ? <DateTimePicker
-      value={timeToDate(value)}
+      value={timeToDate(value, minuteInterval)}
       mode="time"
       display={Platform.OS === "ios" ? "spinner" : "default"}
       is24Hour
-      minuteInterval={SLOT_MINUTES}
+      minuteInterval={minuteInterval}
       onChange={(event, date) => {
         if (Platform.OS === "android") setOpen(false);
         if (event.type === "set" && date) {
-          onChange(dateToSnappedTime(date));
+          onChange(dateToSnappedTime(date, minuteInterval));
         }
       }}
     /> : null}
@@ -56,7 +57,7 @@ export function WorkspaceTimeField({ label, value, onChange, error, allowEndOfDa
       onPress={() => { onChange("24:00"); setOpen(false); }}
       style={({ pressed }) => [styles.endOfDay, value === "24:00" && styles.endOfDaySelected, pressed && styles.pressed]}
     ><Text style={[styles.endOfDayText, value === "24:00" && styles.endOfDayTextSelected]}>24:00 · 자정에 종료</Text></Pressable> : null}
-    <Text style={[styles.helper, Boolean(error) && styles.error]}>{error ?? `08:00~24:00 · ${SLOT_MINUTES}분 단위`}</Text>
+    <Text style={[styles.helper, Boolean(error) && styles.error]}>{error ?? `00:00~${maximum} · ${minuteInterval}분 단위 직접 설정`}</Text>
   </View>;
 }
 

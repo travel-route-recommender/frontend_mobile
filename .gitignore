@@ -28,6 +28,9 @@ expo-env.d.ts
 .state-integrity-verification/
 .auth-verification/
 .preference-verification/
+.trip-documents-verification/
+.schedule-api-verification/
+.trip-todos-verification/
 
 # debug
 npm-debug.*

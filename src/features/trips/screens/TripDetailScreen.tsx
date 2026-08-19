@@ -24,8 +24,23 @@ import { useExploreSearchStore } from "../../explore/store/useExploreSearchStore
 import { buildTripExploreHref } from "../../explore/logic/exploreNavigation";
 import { TripInviteManagerModal } from "../../invitations/components/TripInviteManagerModal";
 import { TripDocumentSection } from "../../trip-documents";
+import { TripTodoSection } from "../../trip-todos";
+import { ApiTripDetailContent } from "./ApiTripDetailContent";
 
 export function TripHomeScreen() {
+  return environment.dataSource === "api" ? <ApiTripDetailRoute /> : <MockTripHomeScreen />;
+}
+
+function ApiTripDetailRoute() {
+  const router = useRouter();
+  const params = useLocalSearchParams<{ tripId?: string | string[]; created?: string | string[] }>();
+  const tripId = Array.isArray(params.tripId) ? params.tripId[0] : params.tripId;
+  const created = (Array.isArray(params.created) ? params.created[0] : params.created) === "1";
+  if (!tripId) return <InvalidTripScreen onBack={() => router.replace("/(tabs)/trips")} />;
+  return <ApiTripDetailContent tripId={tripId} created={created} />;
+}
+
+function MockTripHomeScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ tripId?: string | string[]; created?: string | string[] }>();
   const tripId = Array.isArray(params.tripId) ? params.tripId[0] : params.tripId;
@@ -53,11 +68,19 @@ export function TripHomeScreen() {
   const memberNamesById = useMemo(() => Object.fromEntries(summary.members.map((member) => [member.userId, member.name])), [summary.members]);
   const candidates = tripId ? source.candidatesByTripId[tripId] ?? [] : [];
   const itinerary = tripId ? source.itineraryByTripId[tripId] ?? [] : [];
+  const itineraryItemLabelsById = Object.fromEntries(itinerary.map((item) => [
+    item.id,
+    `${item.date} ${item.startTime} · ${item.placeId ? source.placesById[item.placeId]?.name ?? "장소 일정" : item.note?.trim() || "일정"}`,
+  ]));
+  const documentPlaceOptions = [...new Set(candidates.map((candidate) => candidate.placeId))].flatMap((placeId) => {
+    const place = source.placesById[placeId];
+    return place ? [{ id: place.id, label: place.name }] : [];
+  });
 
   useEffect(() => { if (tripId && trip) setActiveTrip(tripId); }, [setActiveTrip, trip, tripId]);
 
   if (environment.dataSource !== "mock") {
-    const message = environment.dataSource === "api" ? "여행방 API 계약 연결 전입니다. mock 여행방으로 자동 전환하지 않았어요." : "서버 여행방과 로컬 진단의 사용자·roomId 연결이 필요합니다. 확인 전에는 데이터를 혼합하지 않아요.";
+    const message = "서버 여행방과 로컬 진단의 사용자·roomId 연결이 필요합니다. 확인 전에는 데이터를 혼합하지 않아요.";
     return <Screen><AppHeader title="여행방" onBack={() => router.back()} /><ErrorState message={message} /></Screen>;
   }
   if (hydrationError) return <Screen><AppHeader title="여행방" onBack={() => router.back()} /><ErrorState message={hydrationError} /></Screen>;
@@ -98,8 +121,22 @@ export function TripHomeScreen() {
       tripId={tripId}
       currentUserId={source.currentUserId}
       itineraryItemIds={itinerary.map((item) => item.id)}
+      itineraryItemLabelsById={itineraryItemLabelsById}
+      placeOptions={documentPlaceOptions}
+      tripStartDate={trip.startDate ?? undefined}
+      tripEndDate={trip.endDate ?? undefined}
       readOnly={completed}
       isOwner={trip.members.some((member) => member.userId === source.currentUserId && member.role === "owner")}
+    /></SectionBlock>
+    <SectionBlock><TripTodoSection
+      tripId={tripId}
+      currentUserId={source.currentUserId}
+      members={summary.members.map((member) => ({ userId: member.userId, name: member.name }))}
+      itinerary={itinerary}
+      placesById={source.placesById}
+      tripStartDate={trip.startDate}
+      tripEndDate={trip.endDate}
+      readOnly={completed}
     /></SectionBlock>
     <SectionBlock><CandidateSummaryCard trip={trip} candidates={candidates} placesById={source.placesById} usersById={source.usersById} itinerary={itinerary} onExplore={explore} onWorkspace={openWorkspace} /></SectionBlock>
     <SectionBlock><ItinerarySummaryCard trip={trip} itinerary={itinerary} placesById={source.placesById} onWorkspace={openWorkspace} /></SectionBlock>

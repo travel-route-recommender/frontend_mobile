@@ -10,6 +10,8 @@ function clonePlace(place: Place): Place {
   return {
     ...place,
     tags: [...place.tags],
+    infoItems: place.infoItems?.map((item) => ({ ...item })),
+    classification: place.classification ? { ...place.classification } : undefined,
     ...(Number.isFinite(coordinates.latitude) ? { latitude: coordinates.latitude } : {}),
     ...(Number.isFinite(coordinates.longitude) ? { longitude: coordinates.longitude } : {}),
   } as Place;
@@ -20,6 +22,7 @@ export function createDuriAnalysisSnapshot(input: DuriAnalysisInput): DuriAnalys
   const relevantPlaceIds = [...new Set([
     ...input.itinerary.flatMap((item) => item.placeId ? [item.placeId] : []),
     ...input.candidates.map((candidate) => candidate.placeId),
+    ...(input.confirmedScheduleConstraints ?? []).flatMap((constraint) => constraint.placeId ? [constraint.placeId] : []),
   ])].sort();
   const preferenceResults = Object.fromEntries(memberIds.flatMap((userId) => {
     const result = input.preferenceResults[userId];
@@ -29,6 +32,12 @@ export function createDuriAnalysisSnapshot(input: DuriAnalysisInput): DuriAnalys
           answers: { ...result.answers },
           traits: [...result.traits],
           preferredTags: [...result.preferredTags],
+          ...(result.detailedSignals ? { detailedSignals: {
+            ...result.detailedSignals,
+            mobilityModes: [...result.detailedSignals.mobilityModes],
+            categoryScores: { ...result.detailedSignals.categoryScores },
+            budgetRanking: [...result.detailedSignals.budgetRanking],
+          } } : {}),
         } satisfies UserPreferenceResult]]
       : [];
   }));
@@ -61,6 +70,46 @@ export function createDuriAnalysisSnapshot(input: DuriAnalysisInput): DuriAnalys
       ...item,
       preferredByUserIds: [...new Set(item.preferredByUserIds)].sort(),
     }))),
+    confirmedScheduleConstraints: [...(input.confirmedScheduleConstraints ?? [])]
+      .map((constraint) => ({ ...constraint }))
+      .sort((left, right) => left.id.localeCompare(right.id)),
+    routeLegEstimates: [...(input.routeLegEstimates ?? [])]
+      .map((estimate) => ({ ...estimate }))
+      .sort((left, right) => left.date.localeCompare(right.date)
+        || left.fromItemId.localeCompare(right.fromItemId)
+        || left.toItemId.localeCompare(right.toItemId)
+        || left.fetchedAt.localeCompare(right.fetchedAt)),
+    routeOrderEvaluations: [...(input.routeOrderEvaluations ?? [])]
+      .map((evaluation) => ({
+        ...evaluation,
+        itemIds: [...evaluation.itemIds],
+        swappedItemIds: [...evaluation.swappedItemIds] as [string, string],
+        alternativeLegs: (evaluation.alternativeLegs ?? []).map((leg) => ({ ...leg })),
+      }))
+      .sort((left, right) => left.date.localeCompare(right.date)
+        || left.swappedItemIds.join(":").localeCompare(right.swappedItemIds.join(":"))),
+    placeConstraintEvidence: [...(input.placeConstraintEvidence ?? [])]
+      .map((evidence) => ({ ...evidence }))
+      .sort((left, right) => left.placeId.localeCompare(right.placeId)
+        || left.fetchedAt.localeCompare(right.fetchedAt)),
+    placeCongestionEvidence: [...(input.placeCongestionEvidence ?? [])]
+      .map((evidence) => ({ ...evidence }))
+      .sort((left, right) => left.placeId.localeCompare(right.placeId)
+        || left.date.localeCompare(right.date)
+        || left.fetchedAt.localeCompare(right.fetchedAt)),
+    documentReferences: [...(input.documentReferences ?? [])]
+      .map((reference) => ({
+        ...reference,
+        itineraryItemIds: [...new Set(reference.itineraryItemIds)].sort(),
+        confirmedFactIds: [...new Set(reference.confirmedFactIds ?? [])].sort(),
+        pendingReviewFactIds: [...new Set(reference.pendingReviewFactIds ?? [])].sort(),
+      }))
+      .sort((left, right) => left.id.localeCompare(right.id)),
+    evidenceCollection: input.evidenceCollection ? {
+      route: { ...input.evidenceCollection.route },
+      placeDetails: { ...input.evidenceCollection.placeDetails },
+      congestion: input.evidenceCollection.congestion ? { ...input.evidenceCollection.congestion } : undefined,
+    } : undefined,
     preferenceResults,
     groupPreferenceDiagnosis,
     groupPlanningProfile,
@@ -76,6 +125,7 @@ function canonicalPlace(place: Place) {
     category: place.category,
     tags: [...place.tags].sort(),
     address: place.address,
+    contentTypeId: place.contentTypeId ?? null,
     latitude: Number.isFinite(coordinates.latitude) ? coordinates.latitude : null,
     longitude: Number.isFinite(coordinates.longitude) ? coordinates.longitude : null,
   };
@@ -121,6 +171,29 @@ export function canonicalizeDuriInput(snapshot: DuriAnalysisSnapshot) {
       order,
       itemType: item.itemType,
       preferredByUserIds: [...item.preferredByUserIds].sort(),
+      note: item.note ?? null,
+      lockedForDuri: Boolean(item.lockedForDuri),
+    })),
+    confirmedScheduleConstraints: (snapshot.confirmedScheduleConstraints ?? []).map((constraint) => ({
+      id: constraint.id,
+      kind: constraint.kind,
+      label: constraint.label,
+      source: constraint.source,
+      date: constraint.date,
+      startTime: constraint.startTime ?? null,
+      endTime: constraint.endTime ?? null,
+      itineraryItemId: constraint.itineraryItemId ?? null,
+      placeId: constraint.placeId ?? null,
+      sourceDocumentId: constraint.sourceDocumentId ?? null,
+      confirmedAt: constraint.confirmedAt,
+    })),
+    documentReferences: (snapshot.documentReferences ?? []).map((reference) => ({
+      id: reference.id,
+      kind: reference.kind,
+      itineraryItemIds: [...reference.itineraryItemIds].sort(),
+      extractionStatus: reference.extractionStatus ?? "not-requested",
+      confirmedFactIds: [...(reference.confirmedFactIds ?? [])].sort(),
+      pendingReviewFactIds: [...(reference.pendingReviewFactIds ?? [])].sort(),
     })),
     candidates: snapshot.candidates.map((candidate) => ({
       tripId: candidate.tripId,
@@ -135,6 +208,12 @@ export function canonicalizeDuriInput(snapshot: DuriAnalysisSnapshot) {
       answers: Object.fromEntries(Object.entries(result.answers).sort(([left], [right]) => left.localeCompare(right))),
       preferredTags: [...result.preferredTags].sort(),
       profileType: result.profileType,
+      detailedSignals: result.detailedSignals ? {
+        ...result.detailedSignals,
+        mobilityModes: [...result.detailedSignals.mobilityModes].sort(),
+        categoryScores: Object.fromEntries(Object.entries(result.detailedSignals.categoryScores).sort(([left], [right]) => left.localeCompare(right))),
+        budgetRanking: [...result.detailedSignals.budgetRanking],
+      } : null,
     })).sort((left, right) => left.userId.localeCompare(right.userId)),
     groupDiagnosis: {
       coverage: diagnosis.coverage,

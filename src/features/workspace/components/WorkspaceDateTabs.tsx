@@ -28,6 +28,7 @@ export function WorkspaceDateTabs({
   onEditDateRange,
   onMoveDay,
   addDisabled = false,
+  managementDisabledReason,
 }: {
   dates: readonly WorkspaceDate[];
   selectedDate: string;
@@ -37,6 +38,7 @@ export function WorkspaceDateTabs({
   onEditDateRange: () => void;
   onMoveDay: (date: string, targetIndex: number) => boolean;
   addDisabled?: boolean;
+  managementDisabledReason?: string;
 }) {
   const scrollRef = useRef<ScrollView | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -150,7 +152,7 @@ export function WorkspaceDateTabs({
       </ScrollView>
     </GestureDetector>
     <View style={styles.compactGuide}>
-      <Text numberOfLines={1} style={styles.dragGuide}>{dragging ? "원하는 순서에서 손을 떼세요" : "⠿ 길게 누르고 좌우로 드래그"}</Text>
+      <Text numberOfLines={managementDisabledReason ? 2 : 1} style={styles.dragGuide}>{managementDisabledReason ?? (dragging ? "원하는 순서에서 손을 떼세요" : "⠿ 길게 누르고 좌우로 드래그")}</Text>
       <Pressable accessibilityRole="button" accessibilityLabel="선택한 DAY 관리" disabled={addDisabled} onPress={() => setManageOpen(true)} style={({ pressed }) => [styles.manageTrigger, addDisabled && styles.disabled, pressed && !addDisabled && styles.pressed]}><Text style={styles.manageTriggerText}>DAY 관리 ···</Text></Pressable>
     </View>
     <DayManagementModal

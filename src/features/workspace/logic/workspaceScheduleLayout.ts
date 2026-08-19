@@ -17,5 +17,6 @@ export function shouldShowScheduleResizeHandle(
 ) {
   return canEdit
     && Number.isFinite(durationMinutes)
-    && durationMinutes >= MIN_DURATION_MINUTES;
+    && Number.isInteger(durationMinutes)
+    && durationMinutes >= 1;
 }

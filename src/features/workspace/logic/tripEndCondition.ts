@@ -3,7 +3,7 @@ import type { ItineraryItem, TripRoom } from "../../../domain";
 import { minutesToTimeString, sortItineraryItemsByDateAndTime, timeStringToMinutes } from "../../../utils/schedule";
 
 export type TripEndConditionFeasibility = {
-  status: "not-configured" | "insufficient-data" | "feasible" | "infeasible" | "invalid";
+  status: "not-configured" | "insufficient-data" | "feasible" | "infeasible" | "cross-midnight" | "invalid";
   endDate?: string;
   deadlineMinutes?: number;
   cutoffMinutes?: number;
@@ -19,7 +19,6 @@ function getCutoffMinutes(trip: TripRoom) {
   if (
     !trip.endCondition.location.name.trim()
     || !Number.isFinite(deadlineMinutes)
-    || deadlineMinutes % SLOT_MINUTES !== 0
     || !Number.isInteger(trip.endCondition.travelMinutes)
     || trip.endCondition.travelMinutes < 0
     || trip.endCondition.travelMinutes > 1440
@@ -30,7 +29,7 @@ function getCutoffMinutes(trip: TripRoom) {
   const rawCutoff = deadlineMinutes - trip.endCondition.travelMinutes - trip.endCondition.serviceBufferMinutes;
   return {
     deadlineMinutes,
-    cutoffMinutes: Math.floor(rawCutoff / SLOT_MINUTES) * SLOT_MINUTES,
+    cutoffMinutes: rawCutoff,
   };
 }
 
@@ -84,21 +83,31 @@ export function analyzeTripEndCondition(trip: TripRoom, itinerary: readonly Itin
   if (!Number.isFinite(latestEndMinutes)) {
     return { status: "invalid", endDate: trip.endDate, ...cutoff, affectedItemIds: items.map((item) => item.id), message: "마지막 날 일정 시간을 확인해 주세요." };
   }
+  if (cutoff.cutoffMinutes < WORKSPACE_START_MINUTES) {
+    const previousDayMinutes = ((cutoff.cutoffMinutes % (24 * 60)) + 24 * 60) % (24 * 60);
+    return {
+      status: "cross-midnight",
+      endDate: trip.endDate,
+      ...cutoff,
+      latestEndMinutes,
+      overflowMinutes: 0,
+      affectedItemIds: items.map((item) => item.id),
+      message: `계산상 이전 날짜 ${minutesToTimeString(previousDayMinutes)}부터 이동해야 해요. 자정을 넘기는 여행일 수 있어 자동으로 불가능하다고 단정하지 않아요.`,
+    };
+  }
   const overflowMinutes = Math.max(latestEndMinutes - cutoff.cutoffMinutes, 0);
   const affectedItemIds = items
     .filter((item) => timeStringToMinutes(item.startTime) + item.durationMinutes > cutoff.cutoffMinutes)
     .map((item) => item.id);
-  if (overflowMinutes > 0 || cutoff.cutoffMinutes < WORKSPACE_START_MINUTES) {
+  if (overflowMinutes > 0) {
     return {
       status: "infeasible",
       endDate: trip.endDate,
       ...cutoff,
       latestEndMinutes,
-      overflowMinutes: Math.max(overflowMinutes, WORKSPACE_START_MINUTES - cutoff.cutoffMinutes),
+      overflowMinutes,
       affectedItemIds,
-      message: cutoff.cutoffMinutes < WORKSPACE_START_MINUTES
-        ? "입력한 종료 시각·이동·준비시간을 함께 고려하면 일정표 시작 시각인 08:00 전부터 이동해야 해요."
-        : `종료 지점 이동과 준비시간을 빼면 마지막 일정은 ${minutesToTimeString(cutoff.cutoffMinutes)}까지 끝나야 해요.`,
+      message: `종료 지점 이동과 준비시간을 빼면 마지막 일정은 ${minutesToTimeString(cutoff.cutoffMinutes)}까지 끝나야 해요.`,
     };
   }
   return {
@@ -119,9 +128,13 @@ export type TripEndConditionAdjustment =
 
 /**
  * 마지막 날 일정의 순서, 체류시간, 일정 사이 간격을 유지한 채 전체를 같은 15분 단위만큼 앞당긴다.
- * 삭제나 체류시간 축소는 하지 않으며 08:00 이전이 필요하면 적용 불가로 반환한다.
+ * 삭제나 체류시간 축소는 하지 않으며 같은 날짜 00:00 이전이 필요하면 적용하지 않는다.
  */
-export function buildTripEndConditionAdjustment(trip: TripRoom, itinerary: readonly ItineraryItem[]): TripEndConditionAdjustment {
+export function buildTripEndConditionAdjustment(
+  trip: TripRoom,
+  itinerary: readonly ItineraryItem[],
+  automaticShiftProtectedItemIds: readonly string[] = [],
+): TripEndConditionAdjustment {
   const analysis = analyzeTripEndCondition(trip, itinerary);
   const original = itinerary.map((item) => ({ ...item, preferredByUserIds: [...item.preferredByUserIds] }));
   if (analysis.status !== "infeasible" || !trip.endDate || analysis.cutoffMinutes === undefined) {
@@ -141,13 +154,26 @@ export function buildTripEndConditionAdjustment(trip: TripRoom, itinerary: reado
         status: "cannot-fit",
         itinerary: original,
         movedItemIds: [],
-        message: "장소 사이의 기존 이동·대기 간격과 체류시간을 유지하면 08:00 이후에 종료 조건을 맞출 수 없어요. 일정 제외 또는 체류시간 조정이 필요해요.",
+        message: "장소 사이의 기존 이동·대기 간격과 체류시간을 유지하면 같은 날짜 안에서 종료 조건을 맞출 수 없어요. 자정 경계 또는 다른 일정을 직접 확인해 주세요.",
       };
     }
     startsById.set(item.id, minutesToTimeString(nextStart));
   }
   const movedItemIds = lastDayItems.filter((item) => startsById.get(item.id) !== item.startTime).map((item) => item.id);
   if (!movedItemIds.length) return { status: "cannot-fit", itinerary: original, movedItemIds: [], message: analysis.message };
+  const protectedIds = new Set(automaticShiftProtectedItemIds);
+  const movesUserLock = lastDayItems.some((item) => item.lockedForDuri && movedItemIds.includes(item.id));
+  const movesConfirmedSchedule = movedItemIds.some((itemId) => protectedIds.has(itemId));
+  if (movesUserLock || movesConfirmedSchedule) {
+    return {
+      status: "cannot-fit",
+      itinerary: original,
+      movedItemIds: [],
+      message: movesUserLock
+        ? "두리 변경 잠금 일정은 자동으로 앞당길 수 없어요. 잠금을 해제하거나 종료 조건·다른 일정을 직접 조정해 주세요."
+        : "확정 예약이나 연결된 티켓 일정은 자동으로 앞당길 수 없어요. 종료 조건이나 다른 일정을 직접 조정해 주세요.",
+    };
+  }
   return {
     status: "adjusted",
     itinerary: original.map((item) => startsById.has(item.id) ? { ...item, startTime: startsById.get(item.id) as string } : item),
@@ -167,6 +193,7 @@ export type TripEndConditionMutationResolution =
 export function resolveTripEndConditionMutation(
   trip: TripRoom,
   itinerary: readonly ItineraryItem[],
+  automaticShiftProtectedItemIds: readonly string[] = [],
 ): TripEndConditionMutationResolution {
   const original = itinerary.map((item) => ({ ...item, preferredByUserIds: [...item.preferredByUserIds] }));
   const assessment = analyzeTripEndCondition(trip, original);
@@ -176,7 +203,7 @@ export function resolveTripEndConditionMutation(
   if (assessment.status === "invalid") {
     return { status: "rejected", itinerary: original, message: assessment.message };
   }
-  const adjustment = buildTripEndConditionAdjustment(trip, original);
+  const adjustment = buildTripEndConditionAdjustment(trip, original, automaticShiftProtectedItemIds);
   if (adjustment.status !== "adjusted") {
     return { status: "rejected", itinerary: original, message: adjustment.status === "cannot-fit" ? adjustment.message : assessment.message };
   }

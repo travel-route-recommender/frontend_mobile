@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   KeyboardAvoidingView,
   Modal,
@@ -54,6 +54,7 @@ export type ScheduleEditorValue = {
   startTime: string;
   endTime: string;
   note: string;
+  lockedForDuri: boolean;
   attachmentDocumentIds?: string[];
 };
 
@@ -80,7 +81,10 @@ const resultMessages: Partial<Record<ItineraryMutationResult, string>> = {
 };
 
 function formatEndConditionCutoff(entry: TripEndConditionTimelineEntry) {
-  if (entry.cutoffMinutes < WORKSPACE_START_MINUTES) return "08:00 이전";
+  if (entry.cutoffMinutes < WORKSPACE_START_MINUTES) {
+    const previousDayMinutes = ((entry.cutoffMinutes % (24 * 60)) + 24 * 60) % (24 * 60);
+    return `이전 날짜 ${formatMinutesToTime(previousDayMinutes) ?? "--:--"}`;
+  }
   return formatMinutesToTime(entry.cutoffMinutes) ?? "--:--";
 }
 
@@ -186,6 +190,9 @@ export function ScheduleEditorModal({
   onClose,
   onSubmit,
   onRequestDelete,
+  attachmentsAvailable = true,
+  attachmentsUnavailableMessage,
+  serverAttachmentContent,
 }: {
   visible: boolean;
   editorKey: string;
@@ -201,6 +208,9 @@ export function ScheduleEditorModal({
   onClose: () => void;
   onSubmit: (value: ScheduleEditorValue, durationMinutes: number) => ItineraryMutationResult;
   onRequestDelete?: () => void;
+  attachmentsAvailable?: boolean;
+  attachmentsUnavailableMessage?: string;
+  serverAttachmentContent?: ReactNode;
 }) {
   if (!visible) return null;
   return <ScheduleEditorModalContent
@@ -217,6 +227,9 @@ export function ScheduleEditorModal({
     onClose={onClose}
     onSubmit={onSubmit}
     onRequestDelete={onRequestDelete}
+    attachmentsAvailable={attachmentsAvailable}
+    attachmentsUnavailableMessage={attachmentsUnavailableMessage}
+    serverAttachmentContent={serverAttachmentContent}
   />;
 }
 
@@ -233,6 +246,9 @@ function ScheduleEditorModalContent({
   onClose,
   onSubmit,
   onRequestDelete,
+  attachmentsAvailable,
+  attachmentsUnavailableMessage,
+  serverAttachmentContent,
 }: {
   mode: "add" | "edit";
   title: string;
@@ -246,6 +262,9 @@ function ScheduleEditorModalContent({
   onClose: () => void;
   onSubmit: (value: ScheduleEditorValue, durationMinutes: number) => ItineraryMutationResult;
   onRequestDelete?: () => void;
+  attachmentsAvailable: boolean;
+  attachmentsUnavailableMessage?: string;
+  serverAttachmentContent?: ReactNode;
 }) {
   const [value, setValue] = useState(initialValue);
   const [submitError, setSubmitError] = useState("");
@@ -304,12 +323,27 @@ function ScheduleEditorModalContent({
       <View style={styles.timeFields}><View style={styles.timeField}><WorkspaceTimeField label="시작 시간" value={value.startTime} onChange={(startTime) => setValue((current) => ({ ...current, startTime }))} error={!timeValidation.valid ? timeValidation.message : undefined} /></View><View style={styles.timeField}><WorkspaceTimeField label="종료 시간" value={value.endTime} onChange={(endTime) => setValue((current) => ({ ...current, endTime }))} allowEndOfDay /></View></View>
       <View><Text style={styles.fieldTitle}>빠른 체류 시간</Text><View style={styles.durationOptions}>{[15, 30, 60, 90, 120].map((minutes) => <Pressable key={minutes} accessibilityRole="button" accessibilityLabel={`체류 ${minutes}분`} onPress={() => setDuration(minutes)} style={({ pressed }) => [styles.duration, pressed && styles.pressed]}><Text style={styles.durationText}>{minutes}분</Text></Pressable>)}</View></View>
       <TextField label="메모" value={value.note} onChangeText={(note) => setValue((current) => ({ ...current, note }))} placeholder="동행자와 공유할 메모" maxLength={120} multiline />
-      <ItineraryAttachmentPicker
+      <Pressable
+        accessibilityRole="switch"
+        accessibilityState={{ checked: value.lockedForDuri }}
+        accessibilityLabel="두리 일정 변경 잠금"
+        accessibilityHint="켜면 두리가 이 일정을 이동하거나 삭제하거나 다른 장소로 바꾸지 않습니다"
+        onPress={() => setValue((current) => ({ ...current, lockedForDuri: !current.lockedForDuri }))}
+        style={({ pressed }) => [styles.duriLockOption, value.lockedForDuri && styles.duriLockOptionSelected, pressed && styles.pressed]}
+      >
+        <View style={styles.duriLockCopy}>
+          <Text style={styles.duriLockTitle}>두리 일정 변경 잠금</Text>
+          <Text style={styles.duriLockDescription}>분석에는 포함하되 두리의 이동·삭제·체류시간 변경·장소 교체 대상에서 제외해요.</Text>
+        </View>
+        <Text style={[styles.duriLockState, value.lockedForDuri && styles.duriLockStateSelected]}>{value.lockedForDuri ? "잠김" : "변경 가능"}</Text>
+      </Pressable>
+      {serverAttachmentContent}
+      {attachmentsAvailable ? <ItineraryAttachmentPicker
         tripId={tripId}
         currentUserId={currentUserId}
         selectedDocumentIds={value.attachmentDocumentIds ?? []}
         onChange={(attachmentDocumentIds) => setValue((current) => ({ ...current, attachmentDocumentIds }))}
-      />
+      /> : <View style={styles.factNotice}><Text style={styles.factNoticeTitle}>문서 첨부는 이 모드에서 아직 공유되지 않아요.</Text><Text style={styles.factNoticeText}>{attachmentsUnavailableMessage ?? "서버 여행방 문서 계약이 연결되기 전에는 기기 로컬 문서를 공동 일정에 첨부하지 않습니다."}</Text></View>}
       <View style={styles.existing}><Text style={styles.fieldTitle}>이 날짜의 기존 일정</Text>{itinerary.filter((item) => item.date === value.date && item.id !== editingItemId).length ? itinerary.filter((item) => item.date === value.date && item.id !== editingItemId).map((item) => <Text key={item.id} style={styles.existingText}>• {item.startTime}–{addMinutesToTime(item.startTime, item.durationMinutes) ?? "--:--"} · {item.note ?? "장소 일정"}</Text>) : <Text style={styles.existingText}>아직 일정이 없어요.</Text>}</View>
       {conflicts.length ? <View accessibilityRole="alert" style={styles.conflictBox}><Text style={styles.conflictTitle}>시간이 겹치는 일정이 있어요</Text><Text style={styles.conflictText}>겹침을 무시하고 저장하지 않습니다. 시간을 조정해 주세요.</Text>{suggestedTime ? <Pressable accessibilityRole="button" onPress={() => setValue((current) => ({ ...current, startTime: suggestedTime, endTime: addMinutesToTime(suggestedTime, timeValidation.valid ? timeValidation.durationMinutes : 60) ?? current.endTime }))} style={styles.suggestion}><Text style={styles.suggestionText}>{suggestedTime} 빈 시간 적용</Text></Pressable> : null}</View> : null}
       {submitError ? <Text accessibilityRole="alert" style={styles.submitError}>{submitError}</Text> : null}
@@ -356,8 +390,8 @@ function SelectCandidateModalContent({
       <TextField label="후보 검색" value={keyword} onChangeText={setKeyword} placeholder="장소명 또는 카테고리" returnKeyType="search" />
       <ScrollView style={styles.candidateList} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.candidateRows}>
         {filtered.map((candidate) => {
-          const disabled = candidate.scheduleState !== "unscheduled" || candidate.placeMissing;
-          return <Pressable key={candidate.placeId} accessibilityRole="button" accessibilityState={{ disabled }} disabled={disabled} onPress={() => onSelect(candidate)} style={({ pressed }) => [styles.candidateRow, disabled && styles.disabled, pressed && !disabled && styles.pressed]}><View style={styles.candidateRowCopy}><Text style={styles.candidateName}>{candidate.name}</Text><Text style={styles.candidateMeta}>{candidate.categoryLabel} · {candidate.scheduleState === "unscheduled" ? "미배치" : "이미 일정에 배치됨"}</Text></View><Text style={styles.choose}>{disabled ? "선택 불가" : "선택"}</Text></Pressable>;
+          const disabled = candidate.placeMissing;
+          return <Pressable key={candidate.placeId} accessibilityRole="button" accessibilityState={{ disabled }} disabled={disabled} onPress={() => onSelect(candidate)} style={({ pressed }) => [styles.candidateRow, disabled && styles.disabled, pressed && !disabled && styles.pressed]}><View style={styles.candidateRowCopy}><Text style={styles.candidateName}>{candidate.name}</Text><Text style={styles.candidateMeta}>{candidate.categoryLabel} · {candidate.scheduleState === "unscheduled" ? "미배치" : "다른 시간에도 추가 가능"}</Text></View><Text style={styles.choose}>{disabled ? "선택 불가" : "선택"}</Text></Pressable>;
         })}
         {!filtered.length ? <View style={styles.selectEmpty}><Text style={styles.candidateName}>선택할 후보가 없어요</Text><Text style={styles.modalSubtitle}>검색어를 바꾸거나 새 장소를 후보에 담아보세요.</Text></View> : null}
       </ScrollView>
@@ -687,6 +721,13 @@ const styles = StyleSheet.create({
   conflictText: { ...typography.caption, color: colors.textSecondary },
   suggestion: { minHeight: sizes.touch, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: colors.surface },
   suggestionText: { ...typography.bodyStrong, color: colors.primary },
+  duriLockOption: { minHeight: 72, flexDirection: "row", alignItems: "center", gap: spacing.sm, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceMuted, padding: spacing.md },
+  duriLockOptionSelected: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
+  duriLockCopy: { flex: 1, minWidth: 0, gap: spacing.xxs },
+  duriLockTitle: { ...typography.bodyStrong, color: colors.text },
+  duriLockDescription: { ...typography.caption, color: colors.textSecondary },
+  duriLockState: { ...typography.caption, color: colors.textSecondary },
+  duriLockStateSelected: { color: colors.primary },
   submitError: { ...typography.caption, color: colors.danger },
   editorActions: { gap: spacing.sm },
   selectContent: { flex: 1, minHeight: 0, gap: spacing.md, paddingHorizontal: spacing.lg },

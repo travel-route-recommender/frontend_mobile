@@ -16,6 +16,9 @@ export function buildItineraryFingerprint(itinerary: ItineraryItem[]) {
         item.durationMinutes,
         item.placeId ?? "",
         item.itemType,
+        [...item.preferredByUserIds].sort().join(","),
+        JSON.stringify(item.note ?? null),
+        item.lockedForDuri ? "locked" : "unlocked",
       ].join("|"),
     )
     .join(";");
@@ -47,4 +50,3 @@ export function generateSuggestionId({
   const stableInput = [tripId, type, [...sourceIssueIds].sort().join(","), itineraryFingerprint, changeKey].join("::");
   return `duri-${type}-${stableHash(stableInput)}`;
 }
-

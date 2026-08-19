@@ -3,11 +3,13 @@ import { Modal, Platform, Pressable, StyleSheet, Text, View } from "react-native
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Card, SecondaryButton } from "../../../components/common";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
-import { deleteStoredTravelDocument, formatTravelDocumentSize, openOrShareTravelDocument } from "../services/travelDocumentStorage";
+import { resolveDeletedDocumentOcrConfirmationTodo } from "../../trip-todos/services/tripTodoAutomationService";
+import { deleteStoredTravelDocument, formatTravelDocumentSize, openOrShareTravelDocument, shareExternalTravelDocument } from "../services/travelDocumentStorage";
 import { useTravelDocumentAvailability } from "../hooks/useTravelDocumentAvailability";
 import { useTripDocumentHydrationState, useTripDocumentStore } from "../store/useTripDocumentStore";
 import { getTravelDocumentKindLabel, type TravelDocument } from "../types";
 import { TravelDocumentAddModal } from "./TravelDocumentAddModal";
+import { TravelDocumentFactReviewModal } from "./TravelDocumentFactReviewModal";
 
 const EMPTY_DOCUMENTS: TravelDocument[] = [];
 
@@ -17,16 +19,25 @@ export function TripDocumentSection({
   itineraryItemIds,
   readOnly = false,
   isOwner = false,
+  tripStartDate,
+  tripEndDate,
+  itineraryItemLabelsById = {},
+  placeOptions = [],
 }: {
   tripId: string;
   currentUserId: string;
   itineraryItemIds: readonly string[];
   readOnly?: boolean;
   isOwner?: boolean;
+  tripStartDate?: string;
+  tripEndDate?: string;
+  itineraryItemLabelsById?: Readonly<Record<string, string>>;
+  placeOptions?: readonly { id: string; label: string }[];
 }) {
   const [addOpen, setAddOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [pendingDelete, setPendingDelete] = useState<TravelDocument>();
+  const [reviewDocumentId, setReviewDocumentId] = useState<string>();
   const documents = useTripDocumentStore((state) => state.documentsByTripId[tripId] ?? EMPTY_DOCUMENTS);
   const isHydrated = useTripDocumentHydrationState((state) => state.isHydrated);
   const hydrationError = useTripDocumentHydrationState((state) => state.hydrationError);
@@ -34,6 +45,7 @@ export function TripDocumentSection({
   const reconcileTripLinks = useTripDocumentStore((state) => state.reconcileTripLinks);
   const validItemKey = useMemo(() => JSON.stringify([...new Set(itineraryItemIds)].sort()), [itineraryItemIds]);
   const availableById = useTravelDocumentAvailability(documents);
+  const reviewDocument = documents.find((document) => document.id === reviewDocumentId);
 
   useEffect(() => {
     if (!isHydrated) return;
@@ -43,6 +55,15 @@ export function TripDocumentSection({
   const openDocument = async (document: TravelDocument) => {
     setMessage("");
     const result = await openOrShareTravelDocument(document);
+    if (!result.ok) {
+      setMessage(result.message);
+      if (document.storage === "external-url") setReviewDocumentId(document.id);
+    }
+  };
+
+  const shareDocumentLink = async (document: TravelDocument) => {
+    setMessage("");
+    const result = await shareExternalTravelDocument(document);
     if (!result.ok) setMessage(result.message);
   };
 
@@ -56,7 +77,14 @@ export function TripDocumentSection({
     setMessage("");
     const result = await deleteStoredTravelDocument(pendingDelete);
     if (!result.ok) { setMessage(result.message); return; }
-    removeDocument(tripId, pendingDelete.id);
+    const removed = removeDocument(tripId, pendingDelete.id);
+    if (!removed) {
+      setMessage("문서는 삭제했지만 목록을 갱신하지 못했어요. 화면을 다시 열어 확인해 주세요.");
+      setPendingDelete(undefined);
+      return;
+    }
+    // TODO 정리 실패가 이미 완료된 문서 삭제를 되돌리거나 Workspace를 막아서는 안 된다.
+    await resolveDeletedDocumentOcrConfirmationTodo({ tripId, documentId: pendingDelete.id }).catch(() => undefined);
     setPendingDelete(undefined);
   };
 
@@ -74,27 +102,46 @@ export function TripDocumentSection({
         <View style={styles.documentCopy}>
           <Text style={styles.kind}>{getTravelDocumentKindLabel(document.kind)}</Text>
           <Text numberOfLines={2} style={styles.documentName}>{document.displayName}</Text>
-          <Text style={styles.meta}>{formatTravelDocumentSize(document.sizeBytes)} · {document.itineraryItemIds.length ? `일정 ${document.itineraryItemIds.length}개 연결` : "여행방 문서"}</Text>
+          <Text style={styles.meta}>{document.storage === "external-url" ? "외부 예약 링크" : formatTravelDocumentSize(document.sizeBytes)} · {document.itineraryItemIds.length ? `일정 ${document.itineraryItemIds.length}개 연결` : "여행방 문서"}</Text>
+          {document.extraction?.status === "confirmed" ? <Text style={styles.confirmed}>예약 정보 확인 완료 · 일정 검증 사용 중</Text>
+            : document.extraction?.status === "needs-review" ? <Text style={styles.reviewNeeded}>추출 정보 확인 필요</Text>
+              : null}
           {checking ? <Text style={styles.checking}>파일 확인 중</Text> : !available ? <Text style={styles.unavailable}>{document.storage === "web-session" ? "웹 새로고침 후 파일 재선택 필요" : "기기에서 파일을 찾을 수 없음"}</Text> : null}
         </View>
         <View style={styles.documentActions}>
-          <Pressable accessibilityRole="button" disabled={!available} onPress={() => openDocument(document)} style={({ pressed }) => [styles.smallButton, !available && styles.disabled, pressed && styles.pressed]}><Text style={styles.smallButtonText}>열기·공유</Text></Pressable>
+          <Pressable accessibilityRole="button" disabled={!available} onPress={() => openDocument(document)} style={({ pressed }) => [styles.smallButton, !available && styles.disabled, pressed && styles.pressed]}><Text style={styles.smallButtonText}>{document.storage === "external-url" ? "링크 열기" : "열기·공유"}</Text></Pressable>
+          {document.storage === "external-url" ? <Pressable accessibilityRole="button" onPress={() => shareDocumentLink(document)} style={({ pressed }) => [styles.smallButton, pressed && styles.pressed]}><Text style={styles.smallButtonText}>링크 공유</Text></Pressable> : null}
+          {!readOnly && (isOwner || document.createdByUserId === currentUserId) ? <Pressable accessibilityRole="button" onPress={() => setReviewDocumentId(document.id)} style={({ pressed }) => [styles.smallButton, pressed && styles.pressed]}><Text style={styles.smallButtonText}>{document.storage === "external-url" ? "일정 정보 입력" : "예약 정보 확인"}</Text></Pressable> : null}
           {!readOnly && (isOwner || document.createdByUserId === currentUserId) ? <Pressable accessibilityRole="button" onPress={() => setPendingDelete(document)} style={({ pressed }) => [styles.deleteButton, pressed && styles.pressed]}><Text style={styles.deleteText}>삭제</Text></Pressable> : null}
         </View>
       </View>;
     })}</View> : <View style={styles.empty}><Text style={styles.emptyTitle}>아직 보관한 문서가 없어요</Text><Text style={styles.emptyText}>PDF와 이미지를 15MB까지 추가할 수 있어요.</Text></View>}
     {message || hydrationError ? <Text accessibilityRole="alert" style={styles.error}>{message || hydrationError}</Text> : null}
     <SecondaryButton label={readOnly ? "완료된 여행에서는 추가할 수 없어요" : "문서 추가"} disabled={!isHydrated || readOnly} onPress={() => { setMessage(""); setAddOpen(true); }} />
-    <TravelDocumentAddModal visible={addOpen} tripId={tripId} currentUserId={currentUserId} onClose={() => setAddOpen(false)} />
+    <TravelDocumentAddModal visible={addOpen} tripId={tripId} currentUserId={currentUserId} onClose={() => setAddOpen(false)} onAdded={(document) => setReviewDocumentId(document.id)} />
+    <TravelDocumentFactReviewModal
+      visible={Boolean(reviewDocument)}
+      document={reviewDocument}
+      currentUserId={currentUserId}
+      fileAvailable={reviewDocument ? availableById[reviewDocument.id] === true : false}
+      tripStartDate={tripStartDate}
+      tripEndDate={tripEndDate}
+      itineraryItemLabelsById={itineraryItemLabelsById}
+      itineraryOptions={itineraryItemIds.map((id) => ({ id, label: itineraryItemLabelsById[id] ?? "기존 일정" }))}
+      placeOptions={placeOptions}
+      onClose={() => setReviewDocumentId(undefined)}
+    />
     <Modal visible={Boolean(pendingDelete)} transparent animationType="fade" onRequestClose={() => setPendingDelete(undefined)}>
       <View style={styles.confirmOverlay}>
         <Pressable accessibilityRole="button" accessibilityLabel="문서 삭제 취소" onPress={() => setPendingDelete(undefined)} style={StyleSheet.absoluteFill} />
         <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.confirmSafeArea}>
           <View accessibilityViewIsModal style={styles.confirmCard}>
             <Text style={styles.confirmTitle}>문서를 삭제할까요?</Text>
-            <Text style={styles.confirmText}>{pendingDelete?.itineraryItemIds.length
-              ? "연결된 일정 " + pendingDelete.itineraryItemIds.length + "개에서도 해제됩니다. 기기 파일은 복구할 수 없어요."
-              : "기기에 저장된 파일도 함께 삭제되며 복구할 수 없어요."}</Text>
+            <Text style={styles.confirmText}>{pendingDelete?.extraction?.facts.some((fact) => fact.reviewState === "confirmed")
+              ? `확정한 예약 정보와 두리 검증 조건도 함께 제거됩니다.${pendingDelete.itineraryItemIds.length ? ` 연결된 일정 ${pendingDelete.itineraryItemIds.length}개는 삭제하지 않고 문서 연결만 해제합니다.` : ""} 기기 파일은 복구할 수 없어요.`
+              : pendingDelete?.itineraryItemIds.length
+                ? "연결된 일정 " + pendingDelete.itineraryItemIds.length + "개에서도 해제됩니다. 일정 자체는 삭제하지 않으며 기기 파일은 복구할 수 없어요."
+                : "기기에 저장된 파일도 함께 삭제되며 복구할 수 없어요."}</Text>
             <Pressable accessibilityRole="button" onPress={deleteDocument} style={({ pressed }) => [styles.confirmDelete, pressed && styles.pressed]}><Text style={styles.confirmDeleteText}>문서 삭제</Text></Pressable>
             <SecondaryButton label="취소" onPress={() => setPendingDelete(undefined)} />
           </View>
@@ -125,6 +172,8 @@ const styles = StyleSheet.create({
   meta: { ...typography.caption, color: colors.textSecondary },
   unavailable: { ...typography.caption, color: colors.danger },
   checking: { ...typography.caption, color: colors.textMuted },
+  confirmed: { ...typography.caption, color: colors.success },
+  reviewNeeded: { ...typography.caption, color: colors.warning },
   documentActions: { gap: spacing.xs },
   smallButton: { minHeight: 38, justifyContent: "center", borderRadius: radius.sm, backgroundColor: colors.primarySoft, paddingHorizontal: spacing.sm },
   smallButtonText: { ...typography.caption, color: colors.primary },

@@ -1,4 +1,5 @@
 import type { Region } from "../../../domain";
+import { resolveAreaCodeForRegion } from "../../places/services/placeApi";
 
 export type RegionOption = {
   id: string;
@@ -14,7 +15,7 @@ export type RegionOption = {
   description: string;
   spotCount: number;
   weatherLabel: string;
-  source: "mock";
+  source: "mock" | "reference";
 };
 
 export interface RegionService {
@@ -32,25 +33,27 @@ const parentNameByMockId: Readonly<Record<string, string>> = {
 
 const popularMockOrder = ["gyeongju", "jeju", "busan", "gangwon", "jeonnam"];
 
-export function mapRegionToOption(region: Region): RegionOption {
+export function mapRegionToOption(region: Region, source: RegionOption["source"] = "mock"): RegionOption {
   const parentName = parentNameByMockId[region.id];
+  const areaCode = source === "reference" ? resolveAreaCodeForRegion(region.id) : undefined;
   return {
     id: region.id,
     name: region.shortName || region.name,
     ...(parentName ? { parentName } : {}),
+    ...(areaCode ? { areaCode } : {}),
     ...(region.imageUrl ? { imageUrl: region.imageUrl } : {}),
     description: region.description,
     spotCount: region.spots,
     weatherLabel: region.weather,
-    source: "mock",
+    source,
   };
 }
 
 class MockRegionService implements RegionService {
   private readonly options: RegionOption[];
 
-  constructor(regions: readonly Region[]) {
-    this.options = regions.map(mapRegionToOption);
+  constructor(regions: readonly Region[], source: RegionOption["source"] = "mock") {
+    this.options = regions.map((region) => mapRegionToOption(region, source));
   }
 
   async getPopularRegions() {
@@ -67,6 +70,12 @@ class MockRegionService implements RegionService {
   }
 }
 
+class ReferenceRegionService extends MockRegionService {
+  constructor(regions: readonly Region[]) {
+    super(regions, "reference");
+  }
+}
+
 class UnavailableRegionService implements RegionService {
   async getPopularRegions(): Promise<RegionOption[]> {
     throw new Error("지역 API 계약이 연결되기 전입니다. mock 지역으로 자동 전환하지 않았어요.");
@@ -78,5 +87,7 @@ class UnavailableRegionService implements RegionService {
 }
 
 export function createRegionService(mode: "mock" | "api" | "hybrid", regions: readonly Region[]): RegionService {
-  return mode === "mock" ? new MockRegionService(regions) : new UnavailableRegionService();
+  if (mode === "mock") return new MockRegionService(regions);
+  if (mode === "api") return new ReferenceRegionService(regions);
+  return new UnavailableRegionService();
 }

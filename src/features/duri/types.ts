@@ -1,5 +1,5 @@
 import type { EntityId, ItineraryItem, Place, TripCandidate, TripRoom, User, UserPreferenceResult } from "../../domain";
-import type { AnalysisEvidence, AnalysisSeverity, AnalysisStatus, DuriAnalysisInput, DuriAnalysisResult } from "../../duri/duri-analysis";
+import type { AnalysisEvidence, AnalysisSeverity, AnalysisStatus, ConfirmedScheduleConstraint, DuriAnalysisInput, DuriAnalysisResult, DuriDocumentReference } from "../../duri/duri-analysis";
 import type { DuriSuggestion } from "../../duri/duri-suggestions";
 import type { DiagnosisCoverage, GroupPlanningProfile, GroupPreferenceDiagnosis } from "../../duri/group-preferences";
 
@@ -24,7 +24,14 @@ export interface DuriAnalysisCoverage {
   itinerary: "insufficient" | "partial" | "complete";
   preferences: DiagnosisCoverage;
   routeData: DuriRouteCoverage;
+  operatingData: DuriRouteCoverage;
+  congestionData: DuriRouteCoverage;
+  documentData: DuriRouteCoverage;
   routeMessage: string;
+  operatingMessage: string;
+  congestionMessage: string;
+  documentMessage: string;
+  limitations: string[];
 }
 
 export interface DuriAnalysisSnapshot extends DuriAnalysisInput {
@@ -40,7 +47,17 @@ export type DuriReportIssueCategory =
   | "time-conflict"
   | "day-balance"
   | "candidate-usage"
-  | "end-condition";
+  | "end-condition"
+  | "confirmed-schedule"
+  | "opening-hours"
+  | "recommended-duration"
+  | "route-optimization"
+  | "document-check"
+  | "duplicate-visit"
+  | "overnight-recovery";
+
+export type DuriConstraintType = "hard" | "soft" | "informational";
+export type DuriDataConfidence = "high" | "medium" | "low" | "unknown";
 
 export interface DuriReportIssue {
   id: string;
@@ -54,7 +71,9 @@ export interface DuriReportIssue {
   affectedMemberIds: EntityId[];
   evidence: AnalysisEvidence[];
   suggestionSupported: boolean;
-  source: "web-engine" | "mobile-context";
+  constraintType: DuriConstraintType;
+  confidence: DuriDataConfidence;
+  source: "web-engine" | "mobile-context" | "external-evidence";
 }
 
 export interface DuriDayMetric {
@@ -62,7 +81,10 @@ export interface DuriDayMetric {
   itemCount: number;
   scheduledMinutes: number;
   conflictCount: number;
-  longGapMinutes: number;
+  /** 실제 조회 이동시간을 제외하고 남는 자유시간. 경로를 못 구한 구간은 합산하지 않는다. */
+  routeAdjustedIdleMinutes: number;
+  analyzedRouteLegCount: number;
+  requiredRouteLegCount: number;
 }
 
 export interface DuriCandidateUsage {
@@ -172,6 +194,8 @@ export interface ApplyDuriSuggestionAtomicallyInput {
   envelope: DuriSuggestionEnvelope;
   expectedFingerprint: string;
   appliedByUserId: EntityId;
+  documentReferences?: DuriDocumentReference[];
+  confirmedScheduleConstraints?: ConfirmedScheduleConstraint[];
 }
 
 export type DuriInputSource = {

@@ -3,22 +3,31 @@ import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-nati
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import type { TripRoom } from "../../../domain";
 import { Card, PrimaryButton, SecondaryButton } from "../../../components/common";
+import { environment } from "../../../config/environment";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import { buildTripInviteUrl } from "../logic/tripInviteLinks";
 import { inviteShareService, type InviteSharePayload } from "../services/inviteShareService";
+import { fetchApiTripInviteLink, regenerateApiTripInviteLink, type ApiTripInviteLink } from "../services/tripInviteApi";
 import { useTripInviteHydrationState, useTripInviteStore } from "../store/useTripInviteStore";
 
 type Confirmation = "rotate" | "disable";
+type TripInviteManagerModalProps = {
+  visible: boolean;
+  trip: Pick<TripRoom, "id" | "title">;
+  onClose(): void;
+};
 
-export function TripInviteManagerModal({
+export function TripInviteManagerModal(props: TripInviteManagerModalProps) {
+  return environment.dataSource === "api"
+    ? <ApiTripInviteManagerModal {...props} />
+    : <MockTripInviteManagerModal {...props} />;
+}
+
+function MockTripInviteManagerModal({
   visible,
   trip,
   onClose,
-}: {
-  visible: boolean;
-  trip: TripRoom;
-  onClose(): void;
-}) {
+}: TripInviteManagerModalProps) {
   const isHydrated = useTripInviteHydrationState((state) => state.isHydrated);
   const record = useTripInviteStore((state) => state.linksByTripId[trip.id]);
   const ensureInviteLink = useTripInviteStore((state) => state.ensureInviteLink);
@@ -129,6 +138,106 @@ export function TripInviteManagerModal({
           <SecondaryButton label="닫기" onPress={close} />
         </ScrollView>
       </Card>
+      </SafeAreaView>
+    </SafeAreaProvider>
+  </Modal>;
+}
+
+function ApiTripInviteManagerModal({ visible, trip, onClose }: TripInviteManagerModalProps) {
+  const [record, setRecord] = useState<ApiTripInviteLink>();
+  const [feedback, setFeedback] = useState("");
+  const [busyAction, setBusyAction] = useState<string>();
+  const [confirmRotate, setConfirmRotate] = useState(false);
+
+  useEffect(() => {
+    if (!visible) return undefined;
+    const controller = new AbortController();
+    void fetchApiTripInviteLink(trip.id, controller.signal)
+      .then((nextRecord) => {
+        setRecord(nextRecord);
+        setFeedback("");
+      })
+      .catch((reason: unknown) => {
+        if (!controller.signal.aborted) setFeedback(reason instanceof Error ? reason.message : "초대 링크를 불러오지 못했어요.");
+      })
+    return () => controller.abort();
+  }, [trip.id, visible]);
+
+  const payload = useMemo<InviteSharePayload | undefined>(() => record ? {
+    inviteUrl: record.inviteLink,
+    tripTitle: trip.title,
+    code: record.inviteCode,
+  } : undefined, [record, trip.title]);
+
+  const runShareAction = async (name: string, action: (value: InviteSharePayload) => Promise<{ message: string }>) => {
+    if (!payload || busyAction) return;
+    setBusyAction(name);
+    setFeedback("");
+    try {
+      const result = await action(payload);
+      setFeedback(result.message);
+    } catch (reason: unknown) {
+      setFeedback(reason instanceof Error ? reason.message : "공유 기능을 열지 못했어요.");
+    } finally {
+      setBusyAction(undefined);
+    }
+  };
+
+  const rotate = async () => {
+    if (busyAction) return;
+    setBusyAction("rotate");
+    setFeedback("");
+    try {
+      setRecord(await regenerateApiTripInviteLink(trip.id));
+      setFeedback("새 초대 링크를 발급했어요. 이전 코드는 더 이상 사용할 수 없어요.");
+      setConfirmRotate(false);
+    } catch (reason: unknown) {
+      setFeedback(reason instanceof Error ? reason.message : "새 초대 링크를 발급하지 못했어요.");
+    } finally {
+      setBusyAction(undefined);
+    }
+  };
+
+  const close = () => {
+    setFeedback("");
+    setBusyAction(undefined);
+    setConfirmRotate(false);
+    onClose();
+  };
+
+  return <Modal visible={visible} transparent animationType="slide" navigationBarTranslucent statusBarTranslucent onRequestClose={close}>
+    <SafeAreaProvider>
+      <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.overlay}>
+        <Card style={styles.modal}>
+          <View style={styles.header}>
+            <View style={styles.flex}><Text style={styles.title}>동행자 초대</Text><Text style={styles.body}>서버에서 발급한 링크로 이 여행방에 참여할 수 있어요.</Text></View>
+            <Pressable accessibilityRole="button" accessibilityLabel="동행자 초대 닫기" onPress={close} style={styles.close}><Text style={styles.closeText}>닫기</Text></Pressable>
+          </View>
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+            {!record && !feedback ? <View style={styles.infoBox}><Text style={styles.body}>서버 초대 링크를 불러오고 있어요.</Text></View> : null}
+            {record && payload ? <>
+              <View style={styles.linkCard}>
+                <View style={styles.statusRow}><Text style={styles.codeLabel}>초대 코드</Text><Text style={styles.activeBadge}>서버 사용 중</Text></View>
+                <Text selectable style={styles.code}>{record.inviteCode}</Text>
+                <Text selectable style={styles.link}>{record.inviteLink}</Text>
+              </View>
+              <View style={styles.actions}>
+                <PrimaryButton label="초대 링크 공유" loading={busyAction === "share"} disabled={Boolean(busyAction)} onPress={() => runShareAction("share", inviteShareService.shareLink)} />
+                <SecondaryButton label="링크 복사" disabled={Boolean(busyAction)} onPress={() => runShareAction("copy", inviteShareService.copyLink)} />
+              </View>
+              {confirmRotate ? <View style={styles.warningBox}>
+                <Text style={styles.warningTitle}>새 링크로 교체할까요?</Text>
+                <Text style={styles.caption}>교체하면 기존 초대 코드는 서버에서 즉시 무효화됩니다.</Text>
+                <View style={styles.confirmRow}>
+                  <Pressable accessibilityRole="button" onPress={() => setConfirmRotate(false)} style={styles.confirmButton}><Text style={styles.cancelText}>취소</Text></Pressable>
+                  <Pressable accessibilityRole="button" onPress={() => void rotate()} style={[styles.confirmButton, styles.dangerButton]}><Text style={styles.dangerButtonText}>교체</Text></Pressable>
+                </View>
+              </View> : <SecondaryButton label="새 초대 링크 발급" disabled={Boolean(busyAction)} onPress={() => setConfirmRotate(true)} />}
+            </> : null}
+            {feedback ? <Text accessibilityRole="alert" style={styles.feedback}>{feedback}</Text> : null}
+            <SecondaryButton label="닫기" onPress={close} />
+          </ScrollView>
+        </Card>
       </SafeAreaView>
     </SafeAreaProvider>
   </Modal>;

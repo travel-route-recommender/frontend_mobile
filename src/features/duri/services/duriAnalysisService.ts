@@ -3,6 +3,7 @@ import type { DuriAnalysisInput } from "../../../duri/duri-analysis";
 import type { DuriAnalysisSession, DuriSuggestionEnvelope } from "../types";
 import { createDuriAnalysisSession } from "../logic/analysisSession";
 import { generateDuriSuggestions } from "../logic/suggestionGeneration";
+import { enrichDuriAnalysisInput } from "./duriEvidenceService";
 
 export interface DuriAnalysisService {
   readonly mode: "local" | "server";
@@ -22,7 +23,10 @@ export class DuriEngineUnavailableError extends Error {
 export const localDuriAnalysisService: DuriAnalysisService = {
   mode: "local",
   available: true,
-  analyze: async (input) => createDuriAnalysisSession(input, new Date().toISOString()),
+  analyze: async (input) => {
+    const enriched = await enrichDuriAnalysisInput(input);
+    return createDuriAnalysisSession(enriched, new Date().toISOString());
+  },
   generateSuggestions: async (session) => generateDuriSuggestions(session, new Date().toISOString()),
 };
 

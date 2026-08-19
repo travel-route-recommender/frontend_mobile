@@ -1,4 +1,5 @@
 import { validateAppState } from "../src/core/state-integrity";
+import { resolveAppHydrationPolicy } from "../src/core/state-integrity/appHydrationPolicy";
 import { createDemoData, type DuriDomainState } from "../src/data/mock/demoData";
 import { createDuriAnalysisSession } from "../src/features/duri/logic/analysisSession";
 import { buildDuriAnalysisInputFromState } from "../src/features/duri/selectors/duriSelectors";
@@ -11,6 +12,21 @@ function assert(condition: unknown, message: string): asserts condition {
 function copyDomain(value: DuriDomainState): DuriDomainState {
   return JSON.parse(JSON.stringify(value)) as DuriDomainState;
 }
+
+const optionalDocumentFailure = new Error("document metadata unavailable");
+const optionalFailureGate = resolveAppHydrationPolicy({
+  required: [{ isHydrated: true, error: null }, { isHydrated: true, error: null }],
+  optional: [{ isHydrated: false, error: optionalDocumentFailure }],
+});
+assert(optionalFailureGate.isHydrated && !optionalFailureGate.error
+  && optionalFailureGate.optionalErrors[0] === optionalDocumentFailure,
+"optional 문서 hydration 실패는 기록하되 앱 전역 진입을 막지 않는다");
+const requiredFailure = new Error("domain unavailable");
+const requiredFailureGate = resolveAppHydrationPolicy({
+  required: [{ isHydrated: false, error: requiredFailure }],
+  optional: [{ isHydrated: true, error: null }],
+});
+assert(!requiredFailureGate.isHydrated && requiredFailureGate.error === requiredFailure, "필수 도메인 hydration 실패는 기존 전역 gate로 유지한다");
 
 const base = createDemoData();
 const clean = validateAppState({
@@ -69,7 +85,7 @@ const invalidFacts = copyDomain(base);
 invalidFacts.tripsById[tripId].endCondition = {
   type: "train",
   location: { name: "" },
-  deadline: "18:10",
+  deadline: "18:60",
   travelMinutes: -1,
   serviceBufferMinutes: 721,
 };
@@ -88,10 +104,19 @@ for (const expectedCode of [
 
 const legacyFacts = copyDomain(base);
 (legacyFacts.tripsById[tripId] as unknown as Record<string, unknown>).transport = "walking";
-(legacyFacts.tripsById[tripId] as unknown as Record<string, unknown>).endCondition = { type: "train", location: { name: "부산역" }, deadline: "18:10", travelMinutes: 40, serviceBufferMinutes: 20 };
+(legacyFacts.tripsById[tripId] as unknown as Record<string, unknown>).endCondition = { type: "train", location: { name: "부산역" }, deadline: "18:60", travelMinutes: 40, serviceBufferMinutes: 20 };
 const migratedFacts = normalizePersistedState(legacyFacts);
 assert(migratedFacts.tripsById[tripId].transport === "public", "legacy walking transport must migrate to public transit and walking");
 assert(migratedFacts.tripsById[tripId].endCondition === null, "invalid persisted end condition must be discarded instead of guessed");
+
+const minutePrecisionFacts = copyDomain(base);
+(minutePrecisionFacts.tripsById[tripId] as unknown as Record<string, unknown>).endCondition = { type: "train", location: { name: "부산역" }, deadline: "18:07", travelMinutes: 40, serviceBufferMinutes: 20 };
+const normalizedMinutePrecisionFacts = normalizePersistedState(minutePrecisionFacts);
+assert(normalizedMinutePrecisionFacts.tripsById[tripId].endCondition?.deadline === "18:07", "persisted end condition must preserve arbitrary one-minute deadlines");
+assert(!validateAppState({
+  domain: normalizedMinutePrecisionFacts,
+  auth: { sessionKind: "member", currentSessionUserId: normalizedMinutePrecisionFacts.currentUserId, preferenceTestCompleted: true },
+}).errors.some((entry) => entry.code === "trip.end-condition-deadline-invalid"), "state integrity must accept arbitrary one-minute deadlines");
 
 const undecidedFacts = copyDomain(base);
 undecidedFacts.tripsById[tripId] = { ...undecidedFacts.tripsById[tripId], startDate: null, endDate: null, dateUndecided: true };

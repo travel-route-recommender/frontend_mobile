@@ -2,8 +2,12 @@ import type { TripRoom, User, UserPreferenceResult } from "../src/domain";
 import { calculatePersonalPreferenceResult } from "../src/duri/preferences";
 import {
   deriveGroupPlanningProfile,
+  calculateMinimaxPreferenceCompromise,
+  deriveConsensusRanking,
+  deriveMobilityConsensus,
   diagnoseGroupPreferences,
   diagnosePreferenceDimension,
+  normalizedKendallDistance,
   normalizePreferenceResult,
   summarizeGroupPreferredTags,
 } from "../src/duri/group-preferences";
@@ -58,7 +62,7 @@ const complete = summary(threeMemberRoom, completeResults);
 const completeDiagnosis = diagnoseGroupPreferences(threeMemberRoom, completeResults);
 assert(complete.isComplete && complete.coverage === "complete" && completeDiagnosis.coverage === "complete", "7. 3명 응답은 complete여야 한다");
 
-assert(completeDiagnosis.commonPreferences.length === 5 && completeDiagnosis.matchRate === 100, "8. 모든 계획 차원이 같으면 common, 100이어야 한다");
+assert(completeDiagnosis.commonPreferences.length === 6 && completeDiagnosis.commonPreferences.includes("예산") && completeDiagnosis.matchRate === 100, "8. 예산을 포함한 모든 계획 차원이 같으면 common, 100이어야 한다");
 
 const compatible = diagnosePreferenceDimension("pace", [{ userId: "a", score: 0 }, { userId: "b", score: 1 }]);
 assert(compatible.spread === 1 && compatible.status === "compatible", "9. spread 1은 compatible이어야 한다");
@@ -89,4 +93,29 @@ assert(partialDiagnosis.sharedPreferredTags.includes("카페"), "태그는 완�
 const profile = deriveGroupPlanningProfile(partialDiagnosis);
 assert(profile.dataStatus === "partial" && profile.pace.spread === 0 && profile.sharedPreferredTags.includes("카페"), "GroupPlanningProfile은 partial 차원과 태그를 파생해야 한다");
 
-console.log("Group preference verification passed: 15 scenarios + tag/profile assertions");
+const fairCompromise = calculateMinimaxPreferenceCompromise([
+  { userId: "a", score: 0 },
+  { userId: "b", score: 0 },
+  { userId: "c", score: 2 },
+]);
+assert(fairCompromise.recommendedScore === 1 && fairCompromise.maximumRegret === 0.5, "16. 다수 평균보다 최대 후회를 먼저 줄여 소수의 극단 선호를 보호한다");
+const minimaxTie = calculateMinimaxPreferenceCompromise([
+  { userId: "a", score: 0 },
+  { userId: "b", score: 1 },
+  { userId: "c", score: 1 },
+]);
+assert(minimaxTie.recommendedScore === 1 && minimaxTie.equallyFairScores.join(",") === "0,1", "16a. 평균 후회 tie-break와 별개로 같은 최대 후회의 모든 선택지를 조율 범위에 보존한다");
+const mobilityConsensus = deriveMobilityConsensus([
+  { userId: "a", modes: ["bus", "walk"] },
+  { userId: "b", modes: ["subway", "walk"] },
+  { userId: "c", modes: ["taxi"] },
+]);
+assert(mobilityConsensus.commonModes.length === 0 && mobilityConsensus.mostSupportedModes[0] === "walk", "17. 교집합이 없으면 최다 지지 이동수단을 조율 대안으로 계산한다");
+assert(normalizedKendallDistance(["food", "stay", "activity"], ["activity", "stay", "food"]) === 1, "18. 완전 역순 예산 선호는 Kendall 거리 1이다");
+const consensusRanking = deriveConsensusRanking([
+  { userId: "a", ranking: ["food", "stay", "activity"] },
+  { userId: "b", ranking: ["stay", "food", "activity"] },
+]);
+assert(consensusRanking[0].item === "food" && consensusRanking[1].item === "stay", "19. Borda 평균 순위는 동률을 안정적으로 정렬한다");
+
+console.log("Group preference verification passed: 20 scenarios + tag/profile assertions");

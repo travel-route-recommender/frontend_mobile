@@ -65,7 +65,7 @@ export function LoginScreen() {
     try {
       const result = await authService.login({ email: normalizeEmail(email), password });
       if (result.status === "error") { setServiceError(result.message); return; }
-      applyAuthSuccess(result);
+      await applyAuthSuccess(result);
       router.replace((safeReturnTo(returnTo, false) ?? destinationAfterLogin(result.profileCompleted, result.onboardingIntroSeen)) as never);
     } finally { setLoading(false); }
   };
@@ -75,7 +75,7 @@ export function LoginScreen() {
     try {
       const result = await authService.loginWithSocial(provider);
       if (result.status === "error") { setServiceError(result.message); return; }
-      applyAuthSuccess(result);
+      await applyAuthSuccess(result);
       router.replace((safeReturnTo(returnTo, false) ?? destinationAfterLogin(result.profileCompleted, result.onboardingIntroSeen)) as never);
     } finally { setLoading(false); }
   };
@@ -107,7 +107,7 @@ export function SignupChoiceScreen() {
     try {
       const result = await authService.loginWithSocial(provider);
       if (result.status === "error") { setServiceError(result.message); return; }
-      applyAuthSuccess(result);
+      await applyAuthSuccess(result);
       router.replace(destinationAfterLogin(result.profileCompleted, result.onboardingIntroSeen));
     } finally { setLoading(false); }
   };
@@ -149,7 +149,7 @@ export function SignupEmailScreen() {
     try {
       const result = await authService.signup({ nickname: nickname.trim(), email: normalizeEmail(email), password });
       if (result.status === "error") { setServiceError(result.message); return; }
-      applyAuthSuccess(result);
+      await applyAuthSuccess(result);
       router.replace(destinationAfterLogin(result.profileCompleted, result.onboardingIntroSeen));
     } finally { setLoading(false); }
   };
@@ -290,7 +290,7 @@ export function InviteJoinScreen() {
             tripId: resolution.trip.id,
           });
           if (result.status === "error") { setServiceError(result.message); return; }
-          applyAuthSuccess(result);
+          await applyAuthSuccess(result);
         }
 
         const joinedState = useDuriStore.getState();
@@ -329,7 +329,7 @@ export function InviteJoinScreen() {
         setServiceError(result.message);
         return;
       }
-      applyAuthSuccess(result);
+      await applyAuthSuccess(result);
       router.replace(destinationAfterLogin(true, true, true));
     } finally { setLoading(false); }
   };

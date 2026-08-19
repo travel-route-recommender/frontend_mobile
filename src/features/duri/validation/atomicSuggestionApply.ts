@@ -2,8 +2,8 @@ import type { ItineraryItem } from "../../../domain";
 import { applySuggestionChanges, buildItineraryFingerprint } from "../../../duri/duri-suggestions";
 import { findOverlappingItem, getTripDates, isValidScheduleRange } from "../../../utils/schedule";
 import { DURI_SUGGESTION_VERSION } from "../constants";
+import { buildDuriAnalysisInputWithDocuments } from "../logic/analysisInput";
 import { createDuriAnalysisSnapshot, createDuriInputFingerprint } from "../logic/analysisSnapshot";
-import { buildDuriAnalysisInputFromState } from "../selectors/duriSelectors";
 import type {
   ApplyDuriSuggestionAtomicallyInput,
   ApplyDuriSuggestionAtomicallyResult,
@@ -12,6 +12,7 @@ import type {
   DuriSuggestionApplyReceipt,
 } from "../types";
 import { analyzeTripEndCondition } from "../../workspace/logic/tripEndCondition";
+import { validateDuriSuggestionProtection } from "../logic/suggestionProtection";
 
 type ValidationResult = { valid: true } | { valid: false; reason: DuriApplyFailureReason; message: string };
 
@@ -24,15 +25,12 @@ export function validateFinalItinerary(
   if (!trip) return { valid: false, reason: "invalid-change", message: "여행방을 찾을 수 없어요." };
   const dates = new Set(getTripDates(trip.startDate, trip.endDate));
   const itemIds = new Set<string>();
-  const placeIds = new Set<string>();
   for (const item of itinerary) {
     if (itemIds.has(item.id) || item.tripId !== tripId) return { valid: false, reason: "invalid-change", message: "중복되었거나 다른 여행방의 일정 항목이 있어요." };
     itemIds.add(item.id);
     if (!dates.has(item.date) || !isValidScheduleRange(item)) return { valid: false, reason: "invalid-time", message: "여행 기간 또는 일정 시간이 올바르지 않아요." };
     if (item.placeId) {
       if (!state.placesById[item.placeId]) return { valid: false, reason: "invalid-change", message: "제안에 필요한 장소를 찾을 수 없어요." };
-      if (placeIds.has(item.placeId)) return { valid: false, reason: "invalid-change", message: "같은 장소가 일정에 중복되어 있어요." };
-      placeIds.add(item.placeId);
     }
     if (item.itemType === "place" && !item.placeId) return { valid: false, reason: "invalid-change", message: "장소 일정에 placeId가 없어요." };
     if (findOverlappingItem(itinerary, item, item.id)) return { valid: false, reason: "invalid-time", message: "적용 후 시간이 다른 일정과 겹쳐요." };
@@ -59,7 +57,9 @@ export function validateDuriSuggestion(
   if (!envelope.suggestion.canApply || !envelope.suggestion.changes.length) return { valid: false, reason: "invalid-change", message: envelope.suggestion.unavailableReason ?? "적용할 수 없는 제안이에요." };
   const supportedTypes = new Set(["reorder-route", "move-item", "insert-rest", "insert-meal", "add-preference-place", "remove-overload-item", "replace-place"]);
   if (!supportedTypes.has(envelope.suggestion.type)) return { valid: false, reason: "invalid-change", message: "지원하지 않는 제안 타입이에요." };
-  const currentIds = new Set((state.itineraryByTripId[input.tripId] ?? []).map((item) => item.id));
+  const currentItinerary = state.itineraryByTripId[input.tripId] ?? [];
+  const currentIds = new Set(currentItinerary.map((item) => item.id));
+  const lockedItemIds = new Set(currentItinerary.filter((item) => item.lockedForDuri).map((item) => item.id));
   const candidatePlaceIds = new Set((state.candidatesByTripId[input.tripId] ?? []).map((candidate) => candidate.placeId));
   const supportedActions = new Set(["add", "remove", "move", "resize", "replace"]);
   const changeIds = new Set<string>();
@@ -69,10 +69,16 @@ export function validateDuriSuggestion(
     if (changeIds.has(change.itemId)) return { valid: false, reason: "invalid-change", message: "같은 일정 항목을 한 제안에서 두 번 변경할 수 없어요." };
     changeIds.add(change.itemId);
     if (change.action !== "add" && !currentIds.has(change.itemId)) return { valid: false, reason: "missing-item", message: "변경 대상 일정이 사라졌어요. 다시 분석해 주세요." };
+    if (change.action !== "add" && lockedItemIds.has(change.itemId)) return { valid: false, reason: "invalid-change", message: "사용자가 두리 변경 잠금으로 보호한 일정은 변경할 수 없어요." };
+    if (change.action === "add" && change.after?.lockedForDuri) return { valid: false, reason: "invalid-change", message: "두리는 새 일정을 사용자 잠금 상태로 만들 수 없어요." };
     const afterPlaceId = change.after?.placeId;
     if (afterPlaceId && !state.placesById[afterPlaceId]) return { valid: false, reason: "invalid-change", message: "제안에 필요한 장소를 찾을 수 없어요." };
     if (afterPlaceId && (change.action === "add" || change.action === "replace") && !candidatePlaceIds.has(afterPlaceId)) return { valid: false, reason: "invalid-change", message: "추가하거나 대체할 후보 장소 관계를 찾을 수 없어요." };
   }
+  const protectionInput = buildDuriAnalysisInputWithDocuments(state, input.tripId, input.documentReferences ?? [], input.confirmedScheduleConstraints ?? []);
+  if (!protectionInput) return { valid: false, reason: "invalid-change", message: "보호된 일정 정보를 확인할 수 없어요." };
+  const protection = validateDuriSuggestionProtection(protectionInput, envelope.suggestion);
+  if (!protection.valid) return { valid: false, reason: "invalid-change", message: protection.message };
   return { valid: true };
 }
 
@@ -87,7 +93,7 @@ export function prepareDuriSuggestionAtomicApply(
 ): PreparedAtomicDuriApply {
   const initialValidation = validateDuriSuggestion(state, input);
   if (!initialValidation.valid) return { ok: false, result: { ok: false, reason: initialValidation.reason, message: initialValidation.message } };
-  const currentInput = buildDuriAnalysisInputFromState(state, input.tripId);
+  const currentInput = buildDuriAnalysisInputWithDocuments(state, input.tripId, input.documentReferences ?? [], input.confirmedScheduleConstraints ?? []);
   if (!currentInput) return { ok: false, result: { ok: false, reason: "invalid-change", message: "분석 입력을 구성할 수 없어요." } };
   const currentFingerprint = createDuriInputFingerprint(createDuriAnalysisSnapshot(currentInput));
   if (currentFingerprint !== input.expectedFingerprint || currentFingerprint !== input.envelope.baseFingerprint) {
@@ -113,7 +119,13 @@ export function prepareDuriSuggestionAtomicApply(
     ...state,
     itineraryByTripId: { ...state.itineraryByTripId, [input.tripId]: changed.itinerary },
   };
-  const afterInput = buildDuriAnalysisInputFromState(afterState, input.tripId);
+  const detachedItemIds = new Set(input.envelope.suggestion.changes.flatMap((change) =>
+    (change.action === "remove" || change.action === "replace") && change.itemId ? [change.itemId] : []));
+  const afterDocumentReferences = (input.documentReferences ?? []).map((reference) => ({
+    ...reference,
+    itineraryItemIds: reference.itineraryItemIds.filter((itemId) => !detachedItemIds.has(itemId)),
+  }));
+  const afterInput = buildDuriAnalysisInputWithDocuments(afterState, input.tripId, afterDocumentReferences, input.confirmedScheduleConstraints ?? []);
   if (!afterInput) return { ok: false, result: { ok: false, reason: "unknown", message: "적용 결과를 확인할 수 없어 일정은 변경하지 않았어요." } };
   const affectedDates = [...new Set(input.envelope.suggestion.changes.flatMap((change) => [change.before?.date, change.after?.date].filter((date): date is string => Boolean(date))))].sort();
   return {

@@ -36,6 +36,7 @@ export function mapDraftToCreateTripRoomRequest(
   return {
     name: draft.roomName.trim(),
     regionId: region.id,
+    regionName: region.parentName ?? region.name,
     ...(region.areaCode ? { areaCode: region.areaCode } : {}),
     ...(region.sigunguCode ? { sigunguCode: region.sigunguCode } : {}),
     startDate: draft.dateUndecided ? null : draft.startDate,

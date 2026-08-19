@@ -17,6 +17,7 @@ import { buildPlaceLocationOptions, getPlaceLocationDisplayLabel, getPlaceLocati
 import { enrichPlaceClassificationTags } from "../src/features/places/logic/placeClassification";
 import { dedupePlacesForDisplay, filterPlaces, findSimilarPlaces, getPlaceDistanceProximityLabel, normalizeSearchKeyword, parsePlaceCoordinate, searchPlaces } from "../src/features/places/logic/placeSearch";
 import { buildPlaceCardViewModel, selectCandidateStateForPlace, selectResolvedSavedPlaces } from "../src/features/places/selectors/placeSelectors";
+import { buildTourSearchPath, mapTourPlaceToPlace } from "../src/features/places/services/placeApi";
 import { toggleUniqueId } from "../src/utils/entityRelations";
 
 function assert(condition: unknown, message: string): asserts condition { if (!condition) throw new Error(message); }
@@ -136,5 +137,19 @@ assert(
   resolveMapSheetPosition(projectMapSheetHeight(360, 150, 900, mapSnapPoints), mapSnapPoints) === "collapsed",
   "33. 아래쪽 플릭은 접힌 상태로 스냅해야 한다",
 );
+
+const commonPlaceCoordinates = mapTourPlaceToPlace({
+  id: "tour:126508",
+  source: "tour",
+  externalId: "126508",
+  name: "경복궁",
+  address: "서울 종로구",
+  contentTypeId: 12,
+  lat: 37.5796,
+  lng: 126.977,
+});
+assert(commonPlaceCoordinates?.latitude === 37.5796 && commonPlaceCoordinates.longitude === 126.977, "34. Backend CommonPlace lat/lng를 프론트 좌표로 보존해야 한다");
+assert(buildTourSearchPath({ areaCode: "1", page: 1, limit: 50 }) === "/tour/places?areaCode=1&page=1&size=50", "35. 지역 목록은 존재하는 Tour places 계약을 호출해야 한다");
+assert(buildTourSearchPath({ keyword: "서울", areaCode: "1", page: 1, limit: 50 }) === "/tour/places/search?keyword=%EC%84%9C%EC%9A%B8&areaCode=1&page=1&size=50", "36. 검색어가 있으면 Tour places/search 계약을 호출해야 한다");
 
 console.log("Place flow verification passed: search, region, classification, sorting, scheduled, and alias assertions");

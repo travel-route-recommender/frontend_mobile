@@ -1,7 +1,8 @@
 import * as DocumentPicker from "expo-document-picker";
 import { Directory, File, Paths } from "expo-file-system";
 import * as Sharing from "expo-sharing";
-import { Linking, Platform } from "react-native";
+import { Linking, Platform, Share } from "react-native";
+import { normalizeExternalTravelDocumentUrl } from "../logic/externalDocumentUrl";
 import { TRAVEL_DOCUMENT_SESSION_ID, type TravelDocument, type TravelDocumentKind, type TravelDocumentPickResult } from "../types";
 
 const MAX_DOCUMENT_BYTES = 15 * 1024 * 1024;
@@ -59,6 +60,46 @@ function isKnownFileSize(value: unknown): value is number {
 
 function createDocumentId() {
   return `travel-document-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export function createExternalTravelDocument({
+  tripId,
+  kind,
+  createdByUserId,
+  url,
+  displayName,
+  createdAt,
+}: {
+  tripId: string;
+  kind: TravelDocumentKind;
+  createdByUserId: string;
+  url: string;
+  displayName?: string;
+  createdAt?: string;
+}): TravelDocumentPickResult {
+  const normalizedUrl = normalizeExternalTravelDocumentUrl(url);
+  if (!normalizedUrl) {
+    return { status: "rejected", message: "http:// 또는 https://로 시작하는 올바른 예약 링크를 입력해 주세요." };
+  }
+  const id = createDocumentId();
+  const host = new URL(normalizedUrl).hostname.replace(/^www\./, "");
+  return {
+    status: "selected",
+    document: {
+      id,
+      tripId,
+      itineraryItemIds: [],
+      kind,
+      displayName: displayName?.trim().slice(0, 80) || host,
+      fileName: `${safeSegment(host, "reservation-link")}.url`,
+      mimeType: "text/uri-list",
+      sizeBytes: 0,
+      localUri: normalizedUrl,
+      storage: "external-url",
+      createdByUserId,
+      createdAt: createdAt ?? new Date().toISOString(),
+    },
+  };
 }
 
 function managedDocumentRootUri() {
@@ -172,6 +213,9 @@ export async function pickTravelDocument({
 }
 
 export function isTravelDocumentAvailable(document: TravelDocument) {
+  if (document.storage === "external-url") {
+    return normalizeExternalTravelDocumentUrl(document.localUri) !== undefined;
+  }
   if (document.storage === "web-session") {
     return document.sessionId === TRAVEL_DOCUMENT_SESSION_ID && Boolean(document.localUri);
   }
@@ -189,6 +233,14 @@ export async function openOrShareTravelDocument(document: TravelDocument) {
     return { ok: false as const, message: document.storage === "web-session" ? "웹을 새로고침한 뒤에는 이 파일을 다시 선택해야 해요." : "기기에서 파일을 찾을 수 없어요." };
   }
   try {
+    if (document.storage === "external-url") {
+      // canOpenURL은 Android manifest/iOS query 설정 때문에 reject될 수도 있다.
+      // 그 경우에도 표준 http(s)는 openURL을 직접 시도하고 실제 실패만 값으로 격리한다.
+      const canOpen = Platform.OS === "web" ? true : await Linking.canOpenURL(document.localUri).catch(() => true);
+      if (!canOpen) return { ok: false as const, message: "이 기기에서 예약 링크를 열 수 없어요. 아래에서 일정 정보를 직접 입력해 주세요." };
+      await Linking.openURL(document.localUri);
+      return { ok: true as const };
+    }
     if (Platform.OS === "web") {
       await Linking.openURL(document.localUri);
       return { ok: true as const };
@@ -203,11 +255,33 @@ export async function openOrShareTravelDocument(document: TravelDocument) {
     });
     return { ok: true as const };
   } catch {
-    return { ok: false as const, message: "파일을 열거나 공유하지 못했어요." };
+    return {
+      ok: false as const,
+      message: document.storage === "external-url"
+        ? "예약 링크를 열지 못했어요. 아래에서 일정 정보를 직접 입력해 주세요."
+        : "파일을 열거나 공유하지 못했어요.",
+    };
+  }
+}
+
+export async function shareExternalTravelDocument(document: TravelDocument) {
+  if (document.storage !== "external-url" || !normalizeExternalTravelDocumentUrl(document.localUri)) {
+    return { ok: false as const, message: "공유할 수 있는 예약 링크가 아니에요." };
+  }
+  try {
+    await Share.share({
+      title: document.displayName,
+      message: `${document.displayName}\n${document.localUri}`,
+      url: document.localUri,
+    });
+    return { ok: true as const };
+  } catch {
+    return { ok: false as const, message: "예약 링크를 공유하지 못했어요." };
   }
 }
 
 export async function deleteStoredTravelDocument(document: TravelDocument) {
+  if (document.storage === "external-url") return { ok: true as const };
   if (document.storage === "web-session") {
     if (document.localUri.startsWith("blob:") && typeof globalThis.URL?.revokeObjectURL === "function") {
       globalThis.URL.revokeObjectURL(document.localUri);

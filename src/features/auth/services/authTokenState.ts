@@ -30,9 +30,11 @@ export function createAccessTokenState(
   expiresInSeconds: number,
   monotonicNow: number,
 ): AccessTokenState {
-  const lifetimeMs = Number.isFinite(expiresInSeconds) && expiresInSeconds > 0
-    ? expiresInSeconds * 1_000
-    : 0;
+  const lifetimeMs = expiresInSeconds === Number.POSITIVE_INFINITY
+    ? Number.POSITIVE_INFINITY
+    : Number.isFinite(expiresInSeconds) && expiresInSeconds > 0
+      ? expiresInSeconds * 1_000
+      : 0;
   return {
     accessToken,
     expiresAtMonotonic: monotonicNow + lifetimeMs,

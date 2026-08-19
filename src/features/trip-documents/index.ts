@@ -1,6 +1,36 @@
 export { ItineraryAttachmentPicker } from "./components/ItineraryAttachmentPicker";
 export { TravelDocumentAddModal } from "./components/TravelDocumentAddModal";
+export { TravelDocumentFactReviewModal } from "./components/TravelDocumentFactReviewModal";
 export { TripDocumentSection } from "./components/TripDocumentSection";
-export { useTripDocumentHydration } from "./hooks/useTripDocumentHydration";
+export { ensureTripDocumentStoreHydrated, useTripDocumentHydration } from "./hooks/useTripDocumentHydration";
+export { normalizeExternalTravelDocumentUrl } from "./logic/externalDocumentUrl";
 export { useTripDocumentHydrationState, useTripDocumentStore } from "./store/useTripDocumentStore";
-export type { TravelDocument, TravelDocumentKind } from "./types";
+export {
+  buildConfirmedScheduleConstraintsFromDocuments,
+  buildDuriDocumentReferencesFromDocuments,
+  confirmTravelDocumentFact,
+  createManualTravelDocumentExtraction,
+  createUnavailableTextRecognizer,
+  extractTravelDocumentFactsFromText,
+  normalizeTravelDocumentExtraction,
+  reconcileExtractionItineraryTargets,
+  runTravelDocumentTextExtraction,
+} from "./logic/documentExtraction";
+export type {
+  ConfirmedDocumentConstraintBuildResult,
+  DuriDocumentReferenceWithExtraction,
+  TravelDocumentExtractionContext,
+  TravelDocumentFactConfirmationInput,
+  TravelDocumentFactConfirmationResult,
+  TravelDocumentRecognizedPage,
+  TravelDocumentTextRecognitionAvailability,
+  TravelDocumentTextRecognizer,
+} from "./logic/documentExtraction";
+export type {
+  TravelDocument,
+  TravelDocumentExtraction,
+  TravelDocumentExtractionFailureCode,
+  TravelDocumentFact,
+  TravelDocumentFactKind,
+  TravelDocumentKind,
+} from "./types";

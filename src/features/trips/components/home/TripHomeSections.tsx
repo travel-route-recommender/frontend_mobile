@@ -8,7 +8,9 @@ import type { RoomPreferenceResponseSummary } from "../../selectors";
 import type { TripPreparationProgress } from "../../types";
 import { formatTripDurationLabel, getTripTimingLabel } from "../../utils/tripDateUtils";
 
-export function TripHomeHero({ trip, region, usersById, currentUserId, onBack }: { trip: TripRoom; region?: Region; usersById: Record<EntityId, User>; currentUserId: EntityId; onBack(): void }) {
+type TripHomePresentation = Pick<TripRoom, "id" | "title" | "status" | "startDate" | "endDate" | "members">;
+
+export function TripHomeHero({ trip, region, usersById, currentUserId, onBack }: { trip: TripHomePresentation; region?: Region; usersById: Record<EntityId, User>; currentUserId: EntityId; onBack(): void }) {
   const owner = trip.members.find((member) => member.role === "owner");
   const members = trip.members.flatMap((member) => usersById[member.userId] ? [usersById[member.userId]] : []);
   return <View style={styles.heroWrap}>
@@ -48,7 +50,7 @@ export function TripPreparationCard({ preparation, onAction, readOnly }: { prepa
   </Card>;
 }
 
-export function CandidateSummaryCard({ trip, candidates, placesById, usersById, itinerary, onExplore, onWorkspace }: { trip: TripRoom; candidates: TripCandidate[]; placesById: Record<EntityId, Place>; usersById: Record<EntityId, User>; itinerary: ItineraryItem[]; onExplore(): void; onWorkspace(): void }) {
+export function CandidateSummaryCard({ trip, candidates, placesById, usersById, itinerary, onExplore, onWorkspace }: { trip: Pick<TripRoom, "members" | "status">; candidates: TripCandidate[]; placesById: Record<EntityId, Place>; usersById: Record<EntityId, User>; itinerary: ItineraryItem[]; onExplore(): void; onWorkspace(): void }) {
   const scheduledIds = new Set(itinerary.flatMap((item) => item.placeId ? [item.placeId] : []));
   const commonCount = candidates.filter((candidate) => trip.members.length > 0 && new Set(candidate.addedByUserIds).size >= trip.members.length).length;
   const recent = [...candidates].sort((left, right) => (right.addedAt ?? "").localeCompare(left.addedAt ?? "") || left.placeId.localeCompare(right.placeId)).slice(0, 3);
@@ -59,7 +61,7 @@ export function CandidateSummaryCard({ trip, candidates, placesById, usersById, 
   </Card>;
 }
 
-export function ItinerarySummaryCard({ trip, itinerary, placesById, onWorkspace }: { trip: TripRoom; itinerary: ItineraryItem[]; placesById: Record<EntityId, Place>; onWorkspace(): void }) {
+export function ItinerarySummaryCard({ trip, itinerary, placesById, onWorkspace }: { trip: Pick<TripRoom, "status" | "startDate">; itinerary: ItineraryItem[]; placesById: Record<EntityId, Place>; onWorkspace(): void }) {
   const sorted = sortItineraryItemsByDateAndTime(itinerary);
   const dates = [...new Set(sorted.map((item) => item.date))];
   return <Card style={styles.stack}>
