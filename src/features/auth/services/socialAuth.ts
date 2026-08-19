@@ -1,78 +1,57 @@
-import * as AuthSession from "expo-auth-session";
 import { Platform } from "react-native";
 import { environment } from "../../../config/environment";
-import type { SocialChallenge, SocialProvider } from "../types";
+import { kakaoAuthErrorMessage } from "./kakaoAuthError";
 
-const googleDiscovery: AuthSession.DiscoveryDocument = {
-  authorizationEndpoint: "https://accounts.google.com/o/oauth2/v2/auth",
-  tokenEndpoint: "https://oauth2.googleapis.com/token",
-  revocationEndpoint: "https://oauth2.googleapis.com/revoke",
-};
+import type KakaoCore from "@react-native-kakao/core";
+import type * as KakaoUser from "@react-native-kakao/user";
 
-const kakaoDiscovery: AuthSession.DiscoveryDocument = {
-  authorizationEndpoint: "https://kauth.kakao.com/oauth/authorize",
-  tokenEndpoint: "https://kauth.kakao.com/oauth/token",
-};
-
-function providerConfiguration(provider: SocialProvider) {
-  if (Platform.OS !== "android" && Platform.OS !== "ios") {
-    throw new Error("소셜 로그인은 Android/iOS 개발 빌드에서 확인해 주세요.");
-  }
-  const clientId = provider === "google"
-    ? (Platform.OS === "ios" ? environment.googleIosClientId : environment.googleAndroidClientId)
-    : environment.kakaoRestApiKey;
-  if (!clientId) {
-    const key = provider === "google"
-      ? (Platform.OS === "ios" ? "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID" : "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID")
-      : "EXPO_PUBLIC_KAKAO_REST_API_KEY";
-    throw new Error(`${key} 설정이 필요해요.`);
-  }
-  const configuredRedirectUri = provider === "google"
-    ? (Platform.OS === "ios" ? environment.googleIosRedirectUri : environment.googleAndroidRedirectUri)
-    : environment.kakaoRedirectUri;
+// Kakao Native SDK는 Redirect URI를 쓰지 않는다.
+// Kakao Developers에는 플랫폼(iOS 번들 ID / Android 패키지명)만 등록하면 된다.
+//
+// 두 패키지는 import 시점에 네이티브 모듈을 강제로 해석한다. top-level에서 부르면
+// 재빌드 전 번들에서 앱 전체가 죽으므로, 카카오 로그인을 실제로 시도할 때 불러온다.
+function loadKakaoSdk() {
   return {
-    clientId,
-    discovery: provider === "google" ? googleDiscovery : kakaoDiscovery,
-    scopes: provider === "google" ? ["openid", "profile", "email"] : ["openid", "profile_nickname", "profile_image", "account_email"],
-    redirectUri: configuredRedirectUri ?? AuthSession.makeRedirectUri({ scheme: "tripmatch", path: `auth/callback/${provider}` }),
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    core: require("@react-native-kakao/core") as typeof KakaoCore,
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    user: require("@react-native-kakao/user") as typeof KakaoUser,
   };
 }
 
-export async function requestProviderIdToken(provider: SocialProvider, challenge: SocialChallenge) {
-  const configuration = providerConfiguration(provider);
-  const request = new AuthSession.AuthRequest({
-    clientId: configuration.clientId,
-    redirectUri: configuration.redirectUri,
-    responseType: AuthSession.ResponseType.Code,
-    scopes: configuration.scopes,
-    state: challenge.state,
-    usePKCE: true,
-    extraParams: {
-      nonce: challenge.nonce,
-      ...(provider === "google" ? { prompt: "select_account" } : {}),
-    },
-  });
-  const result = await request.promptAsync(configuration.discovery);
-  if (result.type === "cancel" || result.type === "dismiss") throw new Error("소셜 로그인이 취소됐어요.");
-  if (result.type !== "success") throw new Error("소셜 로그인 응답을 받지 못했어요.");
-  if (result.params.state !== challenge.state) throw new Error("소셜 로그인 state 검증에 실패했어요.");
-  const code = result.params.code;
-  if (!code || !request.codeVerifier) throw new Error("소셜 로그인 인가 코드를 확인하지 못했어요.");
-  if (provider === "kakao") {
-    return {
-      kind: "authorization-code" as const,
-      code,
-      state: result.params.state,
-      codeVerifier: request.codeVerifier,
-      redirectUri: configuration.redirectUri,
-    };
+let initialization: Promise<void> | undefined;
+
+function kakaoNativeAppKey() {
+  const nativeAppKey = environment.kakaoNativeAppKey?.trim();
+  if (!nativeAppKey) {
+    throw new Error("EXPO_PUBLIC_KAKAO_NATIVE_APP_KEY 설정이 필요해요.");
   }
-  const token = await AuthSession.exchangeCodeAsync({
-    clientId: configuration.clientId,
-    code,
-    redirectUri: configuration.redirectUri,
-    extraParams: { code_verifier: request.codeVerifier },
-  }, configuration.discovery);
-  if (!token.idToken) throw new Error("소셜 제공자가 ID Token을 반환하지 않았어요.");
-  return { kind: "id-token" as const, idToken: token.idToken };
+  return nativeAppKey;
+}
+
+function ensureKakaoSdk(core: typeof KakaoCore) {
+  if (!initialization) {
+    initialization = core.initializeKakaoSDK(kakaoNativeAppKey()).catch((error: unknown) => {
+      // 실패한 초기화를 캐시하면 이후 시도가 전부 막힌다.
+      initialization = undefined;
+      throw error;
+    });
+  }
+  return initialization;
+}
+
+export async function requestKakaoAccessToken() {
+  if (Platform.OS !== "android" && Platform.OS !== "ios") {
+    throw new Error("카카오 로그인은 Android/iOS 개발 빌드에서 확인해 주세요.");
+  }
+  let accessToken: string | undefined;
+  try {
+    const { core, user } = loadKakaoSdk();
+    await ensureKakaoSdk(core);
+    accessToken = (await user.login()).accessToken;
+  } catch (error) {
+    throw new Error(kakaoAuthErrorMessage(error));
+  }
+  if (!accessToken) throw new Error("카카오 Access Token을 발급받지 못했어요.");
+  return accessToken;
 }

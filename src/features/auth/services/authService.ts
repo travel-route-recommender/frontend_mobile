@@ -4,12 +4,13 @@ import { ApiError, ApiNetworkError, apiClient, configureApiAuth } from "../../..
 import { createRequestId, getClientMetadata } from "../../../services/clientMetadata";
 import { nativeTokenStorage } from "../../../services/tokenStorage";
 import { DEMO_GUEST_USER_ID, DEMO_INVITED_TRIP_ID, DEMO_INVITE_CODE, DEMO_MEMBER_EMAIL, DEMO_MEMBER_ID, DEMO_MEMBER_PASSWORD } from "../config";
-import type { AuthProvider, AuthResult, AuthSuccess, GuestUpgradeInput, InviteJoinInput, InvitePreview, LoginInput, SignupInput, SocialChallenge, SocialProvider } from "../types";
+import type { AuthProvider, AuthResult, AuthSuccess, GuestUpgradeInput, InviteJoinInput, InvitePreview, LoginInput, SignupInput, SocialProvider } from "../types";
 import { createStableMockUserId } from "../utils/stableUserId";
 import { normalizeEmail, normalizeInviteCode } from "../validation";
 import {
   isRetryableRefreshStatus,
   isTerminalRefreshError,
+  getJwtExpiresInSeconds,
   pendingRefreshRemainingMs,
   REFRESH_REQUEST_TIMEOUT_SAFETY_MS,
   refreshRequestTimeoutMs,
@@ -17,7 +18,7 @@ import {
   shouldRefreshAccessToken,
   SingleFlight,
 } from "./authTokenState";
-import { requestProviderIdToken } from "./socialAuth";
+import { requestKakaoAccessToken } from "./socialAuth";
 
 type BackendUser = {
   id: string;
@@ -27,16 +28,11 @@ type BackendUser = {
   onboardingCompleted?: boolean;
   travelType?: unknown;
   isGuest: boolean;
-  accountType: "member" | "guest";
 };
 
 type BackendSession = {
   accessToken: string;
   refreshToken: string;
-  tokenType: "Bearer";
-  expiresIn: number;
-  refreshExpiresAt: string;
-  sessionId: string;
   user: BackendUser;
 };
 
@@ -71,7 +67,7 @@ function initial(value: string) {
 }
 
 function mapSession(session: BackendSession, provider: AuthProvider): AuthSuccess {
-  const guest = session.user.isGuest || session.user.accountType === "guest";
+  const guest = session.user.isGuest;
   const onboardingCompleted = Boolean(session.user.onboardingCompleted);
   return {
     status: "success",
@@ -89,7 +85,7 @@ function mapSession(session: BackendSession, provider: AuthProvider): AuthSucces
   };
 }
 
-function failure(error: unknown): AuthResult {
+function failure(error: unknown, operation: "login" | "invite" | "social" | "other" = "other"): AuthResult {
   if (error instanceof ApiNetworkError) return { status: "error", code: "network", message: error.message };
   if (error instanceof ApiError) {
     if (error.code === "GUEST_ROOM_LIMIT") {
@@ -109,16 +105,29 @@ function failure(error: unknown): AuthResult {
     if (error.code === "INVITE_RATE_LIMITED" || error.status === 429) return { status: "error", code: "rate-limited", message: "요청을 너무 많이 보냈어요. 잠시 후 다시 시도해 주세요." };
     if (error.code === "ACCOUNT_LINK_REQUIRED" || error.code === "ACCOUNT_MERGE_REQUIRED") return { status: "error", code: "account-link-required", message: "같은 이메일의 기존 계정이 있어요. 기존 방식으로 로그인한 뒤 소셜 계정을 연결해 주세요." };
     if (error.status === 409) return { status: "error", code: "account-exists", message: "이미 가입된 이메일이거나 다른 계정에 연결된 정보예요." };
-    if (error.status === 401) return { status: "error", code: "invalid-credentials", message: "이메일 또는 비밀번호가 올바르지 않아요." };
+    if (error.status === 401 && operation === "invite") return { status: "error", code: "invalid-invite", message: "유효하지 않거나 더 이상 사용할 수 없는 초대 코드예요." };
+    if (error.status === 401 && operation === "social") return { status: "error", code: "provider-unavailable", message: "카카오 인증 정보가 유효하지 않아요. 다시 시도해 주세요." };
+    if (error.status === 401 && operation === "login") return { status: "error", code: "invalid-credentials", message: "이메일 또는 비밀번호가 올바르지 않아요." };
     return { status: "error", code: "unknown", message: error.message };
   }
   return { status: "error", code: "unknown", message: error instanceof Error ? error.message : "인증 처리 중 오류가 발생했어요." };
 }
 
 async function persistSession(session: BackendSession) {
+  const expiresIn = getJwtExpiresInSeconds(session.accessToken);
+  if (expiresIn === null || expiresIn <= 0) {
+    throw new ApiError("서버 로그인 응답의 Access Token 만료 정보를 확인할 수 없어요.", {
+      status: 502,
+      code: "INVALID_AUTH_RESPONSE",
+    });
+  }
   // 로그인 응답도 Refresh Token을 먼저 안전하게 저장한 뒤 Access Token을 활성화한다.
   await nativeTokenStorage.setRefreshToken(session.refreshToken);
-  await nativeTokenStorage.setAccessToken(session.accessToken, session.expiresIn);
+  await nativeTokenStorage.setAccessToken(session.accessToken, expiresIn);
+}
+
+export function isSocialProviderSupported(provider: SocialProvider, mode = environment.dataSource) {
+  return mode === "mock" || provider === "kakao";
 }
 
 const MAX_REFRESH_ATTEMPTS = 3;
@@ -187,17 +196,17 @@ class ApiAuthService implements AuthService {
   async login(input: LoginInput): Promise<AuthResult> {
     try {
       this.cancelInFlightRefresh();
-      const session = await apiClient.request<BackendSession>({ path: "/auth/login", method: "POST", auth: false, body: { email: normalizeEmail(input.email), password: input.password, ...(await getClientMetadata()) } });
+      const session = await apiClient.request<BackendSession>({ path: "/auth/login", method: "POST", auth: false, body: { email: normalizeEmail(input.email), password: input.password } });
       this.lastProvider = "email";
       await persistSession(session);
       return mapSession(session, "email");
-    } catch (error) { return failure(error); }
+    } catch (error) { return failure(error, "login"); }
   }
 
   async signup(input: SignupInput): Promise<AuthResult> {
     try {
       this.cancelInFlightRefresh();
-      const session = await apiClient.request<BackendSession>({ path: "/auth/signup", method: "POST", auth: false, body: { nickname: input.nickname.trim(), email: normalizeEmail(input.email), password: input.password, ...(await getClientMetadata()) } });
+      const session = await apiClient.request<BackendSession>({ path: "/auth/signup", method: "POST", auth: false, body: { nickname: input.nickname.trim(), email: normalizeEmail(input.email), password: input.password } });
       this.lastProvider = "email";
       await persistSession(session);
       return mapSession(session, "email");
@@ -205,22 +214,20 @@ class ApiAuthService implements AuthService {
   }
 
   async previewInvite(code: string) {
-    const metadata = await getClientMetadata();
     return apiClient.request<InvitePreview>({
-      path: `/auth/invites/${encodeURIComponent(normalizeInviteCode(code))}/preview`,
+      path: `/invites/${encodeURIComponent(normalizeInviteCode(code))}/preview`,
       auth: false,
-      query: { installationId: metadata.installationId, platform: metadata.platform },
     });
   }
 
   async joinByInvite(input: InviteJoinInput): Promise<AuthResult> {
     try {
       this.cancelInFlightRefresh();
-      const session = await apiClient.request<BackendGuestSession>({ path: "/auth/join-by-invite", method: "POST", auth: false, body: { inviteCode: normalizeInviteCode(input.code), nickname: input.nickname.trim(), ...(await getClientMetadata()) } });
+      const session = await apiClient.request<BackendGuestSession>({ path: "/auth/join-by-invite", method: "POST", auth: false, body: { inviteCode: normalizeInviteCode(input.code), nickname: input.nickname.trim() } });
       this.lastProvider = "guest";
       await persistSession(session);
       return { ...mapSession(session, "guest"), invitedTripId: session.roomId };
-    } catch (error) { return failure(error); }
+    } catch (error) { return failure(error, "invite"); }
   }
 
   async acceptInvite(code: string) {
@@ -229,18 +236,22 @@ class ApiAuthService implements AuthService {
   }
 
   async loginWithSocial(provider: SocialProvider): Promise<AuthResult> {
+    if (!isSocialProviderSupported(provider, "api")) {
+      return { status: "error", code: "provider-unavailable", message: "현재 백엔드는 Google 로그인을 지원하지 않아요." };
+    }
     try {
       this.cancelInFlightRefresh();
-      const metadata = await getClientMetadata();
-      const challenge = await apiClient.request<SocialChallenge>({ path: "/auth/social/challenge", method: "POST", auth: false, body: { provider, installationId: metadata.installationId } });
-      const authorization = await requestProviderIdToken(provider, challenge);
-      const session = authorization.kind === "id-token"
-        ? await apiClient.request<BackendSession>({ path: `/auth/social/${provider}`, method: "POST", auth: false, body: { idToken: authorization.idToken, challengeId: challenge.challengeId, ...metadata } })
-        : await apiClient.request<BackendSession>({ path: "/auth/social/kakao/code", method: "POST", auth: false, body: { code: authorization.code, state: authorization.state, codeVerifier: authorization.codeVerifier, redirectUri: authorization.redirectUri, challengeId: challenge.challengeId, ...metadata } });
+      const accessToken = await requestKakaoAccessToken();
+      const session = await apiClient.request<BackendSession>({
+        path: "/auth/oauth/kakao",
+        method: "POST",
+        auth: false,
+        body: { accessToken },
+      });
       this.lastProvider = provider;
       await persistSession(session);
       return mapSession(session, provider);
-    } catch (error) { return failure(error); }
+    } catch (error) { return failure(error, "social"); }
   }
 
   async upgradeGuestWithPassword(input: GuestUpgradeInput): Promise<AuthResult> {
@@ -283,9 +294,12 @@ class ApiAuthService implements AuthService {
 
   async logout() {
     this.cancelInFlightRefresh();
-    const refreshToken = await nativeTokenStorage.getRefreshToken();
     try {
-      if (refreshToken) await apiClient.request({ path: "/auth/logout-by-refresh", method: "POST", auth: false, body: { refreshToken } });
+      if (await nativeTokenStorage.getRefreshToken()) {
+        await this.getValidAccessTokenForApiClient();
+        const refreshToken = await nativeTokenStorage.getRefreshToken();
+        if (refreshToken) await apiClient.request({ path: "/auth/logout", method: "POST", body: { refreshToken } });
+      }
     } finally {
       await nativeTokenStorage.clearTokens();
     }
@@ -331,7 +345,6 @@ class ApiAuthService implements AuthService {
   private async executeRefresh(generation: number, signal: AbortSignal) {
     const pending = await nativeTokenStorage.getOrCreatePendingRefresh(createRequestId(), Date.now());
     if (!pending) throw new ApiError("저장된 로그인 정보가 없어요.", { status: 401, code: "REFRESH_TOKEN_MISSING" });
-    const metadata = await getClientMetadata();
 
     for (let attempt = 0; attempt < MAX_REFRESH_ATTEMPTS; attempt += 1) {
       const timeoutMs = refreshRequestTimeoutMs(pending, Date.now());
@@ -347,14 +360,20 @@ class ApiAuthService implements AuthService {
           auth: false,
           retryUnauthorized: false,
           signal: attemptSignal.signal,
-          headers: { "Idempotency-Key": pending.operationId },
-          body: { refreshToken: pending.refreshToken, requestId: pending.operationId, ...metadata },
+          body: { refreshToken: pending.refreshToken },
         });
         if (signal.aborted || generation !== this.sessionGeneration) throw createAbortError();
-        // R1과 pending 제거를 한 SecureStore 값으로 기록한 다음 A1을 메모리에 활성화한다.
+        const expiresIn = getJwtExpiresInSeconds(session.accessToken);
+        if (expiresIn === null || expiresIn <= 0) {
+          throw new ApiError("서버 갱신 응답의 Access Token 만료 정보를 확인할 수 없어요.", {
+            status: 502,
+            code: "INVALID_AUTH_RESPONSE",
+          });
+        }
+        // 응답을 먼저 검증한 뒤 새 Refresh Token과 Access Token을 순서대로 활성화한다.
         await nativeTokenStorage.commitRefresh(pending.operationId, session.refreshToken);
         if (signal.aborted || generation !== this.sessionGeneration) throw createAbortError();
-        await nativeTokenStorage.setAccessToken(session.accessToken, session.expiresIn);
+        await nativeTokenStorage.setAccessToken(session.accessToken, expiresIn);
         return session;
       } catch (error) {
         const normalizedError = attemptSignal.didTimeout() && !signal.aborted

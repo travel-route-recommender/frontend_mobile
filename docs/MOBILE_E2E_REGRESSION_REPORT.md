@@ -129,7 +129,7 @@ owner 누락, 누락된 user/place/date/result는 의미를 추정할 수 없어
 
 ## 10. 남은 문제와 blocker
 
-- 실제 backend OpenAPI, auth/token refresh, Rooms/Places/Saves/Candidates/Schedule/Quiz 계약이 없으므로 API E2E는 의도적으로 unavailable이다.
+- Auth는 현재 Backend의 login/signup/refresh/logout/Kakao/invite 계약에 연결했다. 실제 계정·Kakao 콘솔·실기기를 사용하는 API E2E는 이 보고서 범위에서 아직 실행하지 않았다. Rooms/Places/Saves/Candidates/Schedule/Quiz의 미연결 범위는 별도로 검증해야 한다.
 - server Duri analyze/suggest/apply batch 계약과 idempotency/version 정책이 없다.
 - Place 좌표/Directions 데이터가 없어 실제 map과 이동 시간은 검증하지 않는다.
 - EAS development build, 실제 Android/iOS 기기, accessibility 큰 글자, keyboard, deep-link, process kill 기반 검증은 별도 기기 단계가 필요하다.

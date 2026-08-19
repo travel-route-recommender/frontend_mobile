@@ -25,6 +25,25 @@ function isRecord(value: unknown): value is UnknownRecord {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+export function getJwtExpiresInSeconds(
+  token: string,
+  nowEpochSeconds = Date.now() / 1_000,
+): number | null {
+  try {
+    const payload = token.split(".")[1];
+    if (!payload) return null;
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    const decoded = JSON.parse(globalThis.atob(padded)) as unknown;
+    if (!isRecord(decoded) || typeof decoded.exp !== "number" || !Number.isFinite(decoded.exp)) {
+      return null;
+    }
+    return Math.max(0, Math.floor(decoded.exp - nowEpochSeconds));
+  } catch {
+    return null;
+  }
+}
+
 export function createAccessTokenState(
   accessToken: string,
   expiresInSeconds: number,
@@ -143,20 +162,20 @@ export type AuthErrorShape = {
 };
 
 export function isAccessTokenExpiredError(error: AuthErrorShape): boolean {
-  return error.status === 401 && error.code === "TOKEN_EXPIRED";
+  return error.status === 401 && (!error.code || error.code === "TOKEN_EXPIRED");
 }
 
 export function isTerminalAccessAuthError(error: AuthErrorShape): boolean {
-  return error.status === 401 && [
+  return error.status === 401 && (!error.code || [
     "TOKEN_INVALID",
     "SESSION_REVOKED",
     "TOKEN_OBSOLETE",
     "ACCOUNT_UNAVAILABLE",
-  ].includes(error.code ?? "");
+  ].includes(error.code));
 }
 
 export function isTerminalRefreshError(error: AuthErrorShape): boolean {
-  return error.status === 401 && [
+  return error.status === 401 && (!error.code || [
     "REFRESH_INVALID",
     "REFRESH_TOKEN_MISSING",
     "REFRESH_RECOVERY_EXPIRED",
@@ -164,7 +183,7 @@ export function isTerminalRefreshError(error: AuthErrorShape): boolean {
     "SESSION_REVOKED",
     "TOKEN_OBSOLETE",
     "ACCOUNT_UNAVAILABLE",
-  ].includes(error.code ?? "");
+  ].includes(error.code));
 }
 
 export function isRetryableRefreshStatus(status: number): boolean {

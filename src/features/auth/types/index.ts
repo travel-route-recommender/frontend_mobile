@@ -10,15 +10,8 @@ export type SignupInput = { nickname: string; email: string; password: string };
 export type GuestUpgradeInput = { email: string; password: string; nickname: string };
 export type InviteJoinInput = { code: string; nickname: string; tripId?: EntityId };
 
-export type SocialChallenge = {
-  challengeId: string;
-  nonce: string;
-  state: string;
-  expiresIn: number;
-};
-
 export type InvitePreview = {
-  roomId: string;
+  roomId?: string;
   title: string;
   destination?: string;
   startDate?: string;

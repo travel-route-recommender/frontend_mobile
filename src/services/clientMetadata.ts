@@ -2,6 +2,7 @@ import Constants from "expo-constants";
 import * as Crypto from "expo-crypto";
 import * as Device from "expo-device";
 import * as SecureStore from "expo-secure-store";
+import { deviceStorage } from "./platformStorage";
 import { Platform } from "react-native";
 
 export type ClientPlatform = "android" | "ios" | "web" | "unknown";
@@ -27,10 +28,10 @@ function currentPlatform(): ClientPlatform {
 }
 
 async function loadOrCreateInstallationId() {
-  const existing = await SecureStore.getItemAsync(INSTALLATION_ID_KEY, INSTALLATION_OPTIONS);
+  const existing = await deviceStorage.getItemAsync(INSTALLATION_ID_KEY, INSTALLATION_OPTIONS);
   if (existing) return existing;
   const created = Crypto.randomUUID();
-  await SecureStore.setItemAsync(INSTALLATION_ID_KEY, created, INSTALLATION_OPTIONS);
+  await deviceStorage.setItemAsync(INSTALLATION_ID_KEY, created, INSTALLATION_OPTIONS);
   return created;
 }
 

@@ -1,12 +1,12 @@
 # 모바일 인증·온보딩
 
-이 문서는 `Frontend_mobile`의 프론트엔드 인증 프로토타입 범위와 서버 연결 경계를 설명한다. 현재 인증은 실제 운영 인증이 아니며 `EXPO_PUBLIC_DATA_SOURCE`에 따라 mock 데모 또는 계약 대기 상태로 동작한다.
+이 문서는 `Frontend_mobile`의 인증·온보딩 흐름과 서버 연결 경계를 설명한다. 인증은 `EXPO_PUBLIC_DATA_SOURCE`에 따라 mock 데모 또는 현재 `Backend`의 `/api/v1` 계약을 사용한다.
 
 ## 1. 인증 route
 
 | route | 화면 | 역할 |
 |---|---|---|
-| `/(auth)/login` | `LoginScreen` | 이메일·Kakao mock 로그인, 익명 둘러보기 |
+| `/(auth)/login` | `LoginScreen` | 이메일·Kakao 로그인 |
 | `/(auth)/signup-choice` | `SignupChoiceScreen` | 이메일 또는 Kakao 시작 방식 선택 |
 | `/(auth)/signup-email` | `SignupEmailScreen` | 이메일·비밀번호와 필수 약관 동의 |
 | `/(auth)/invite` | `InviteJoinScreen` | 링크 preview, 활성 상태 검증, member 또는 guest 참여 |
@@ -30,8 +30,8 @@ route 파일은 `src/features/auth/screens`의 화면만 export한다. 긴 화�
 ## 3. sessionKind
 
 - `anonymous`: 로그인 없이 홈·탐색·장소 상세를 둘러보는 세션. 가짜 User를 만들지 않는다.
-- `guest`: mock 초대 링크로 특정 여행방에 바로 참여한 임시 사용자. guest → member 병합은 구현하지 않는다.
-- `member`: 이메일 또는 Kakao mock으로 시작한 회원 세션.
+- `guest`: 초대 링크로 특정 여행방에 바로 참여한 임시 사용자. guest → member 병합은 현재 백엔드에 없다.
+- `member`: 이메일 또는 Kakao로 시작한 회원 세션.
 - `null`: 아직 시작 방법을 선택하지 않았거나 로그아웃한 상태.
 
 ## 4. 권한
@@ -53,8 +53,8 @@ route 파일은 `src/features/auth/screens`의 화면만 export한다. 긴 화�
 | mode | 인증 동작 |
 |---|---|
 | `mock` | 고정 데모 로그인, 안정적인 ID의 이메일 가입, 여행방별 로컬 링크/code 참여가 동작한다. 운영 token은 만들지 않는다. |
-| `api` | 실제 DTO와 endpoint를 추측하지 않는다. 제출 시 계약 연결 전 오류를 반환하고 네트워크를 호출하지 않는다. |
-| `hybrid` | 공개·로컬 기능은 기존 설정을 따르되 Auth는 `api`와 동일하게 계약 대기 상태다. mock으로 fallback하지 않는다. |
+| `api` | `Backend/FRONTEND_API_CONTRACT.md`의 login/signup/refresh/logout/Kakao/join-by-invite 및 invite preview/accept 계약을 호출한다. |
+| `hybrid` | 공개·로컬 기능은 기존 설정을 따르되 Auth는 `api`와 같은 실제 서버 계약을 사용한다. mock으로 fallback하지 않는다. |
 
 개발 빌드의 인증 레이아웃 오른쪽 위에 현재 데이터 모드를 작게 표시한다.
 
@@ -73,19 +73,22 @@ route 파일은 `src/features/auth/screens`의 화면만 export한다. 긴 화�
 
 ## 7. SecureStore
 
-`nativeTokenStorage` adapter와 로그아웃 시 `clearTokens()` 호출은 유지한다. 현재는 access/refresh token을 생성하거나 저장하지 않으므로 SecureStore에 새 인증 값이 기록되지 않는다. 실제 계약이 확정되면 token만 이 adapter를 통해 저장하고 AsyncStorage에는 넣지 않는다.
+Refresh Token은 `expo-secure-store`에 저장하고 Access Token은 프로세스 메모리에만 둔다. 앱 재시작 또는 Access Token 만료 시 `/auth/refresh`로 두 토큰을 갱신한다. 백엔드 응답에는 `expiresIn`이 없으므로 Access JWT의 `exp`를 읽어 선제 갱신 시점을 계산한다. 로그아웃은 Bearer Access Token과 JSON body의 Refresh Token을 `/auth/logout`에 전달한 뒤 로컬 토큰을 비운다.
 
-## 8. 실제 Auth API 계약 대기
+## 8. 실제 Auth API 계약
 
-- login/signup/join-by-invite request·response DTO
-- access/refresh token 수명과 갱신 정책
-- Kakao native SDK와 서버 exchange
-- guest 계정 수명 및 member 병합
-- 초대 코드 형식, 만료, 재사용, 오류 코드
-- 이메일·비밀번호·닉네임의 서버 검증 규칙
-- 약관 버전과 동의 이력
+- 이메일 로그인: `POST /auth/login`에 `email`, `password`만 전송한다.
+- 이메일 가입: `POST /auth/signup`에 `nickname`, `email`, `password`만 전송한다.
+- 갱신: `POST /auth/refresh`에 JSON body `{ refreshToken }`만 전송한다.
+- 로그아웃: Bearer 인증과 함께 `POST /auth/logout`에 `{ refreshToken }`을 전송한다.
+- Kakao: Kakao Access Token을 `POST /auth/oauth/kakao`의 `{ accessToken }`으로 교환한다.
+- 초대: 비회원은 `POST /auth/join-by-invite`, 기존 회원은 `POST /invites/:code/accept`를 사용한다. 미리보기는 `GET /invites/:code/preview`다.
+- 성공 응답은 `{ accessToken, refreshToken, user }`, 게스트 참여는 여기에 `roomId`가 추가된다.
+- 현재 백엔드 오류에는 커스텀 `code`가 없으므로 보호 API의 무코드 401은 한 번 갱신·재시도하고, refresh의 무코드 401은 세션 만료로 처리한다.
 
-`UnavailableApiAuthService`는 `fetch`를 호출하지 않고 명시적인 unavailable 결과를 반환한다.
+현재 백엔드에 없는 Google 로그인, guest → member 업그레이드, 계정 삭제는 별도 계약이 필요하다. API/hybrid 로그인·가입 화면에서는 Google 버튼을 노출하지 않는다.
+
+Kakao 로그인은 Native SDK(`@react-native-kakao/user`)를 사용하며 `EXPO_PUBLIC_KAKAO_NATIVE_APP_KEY`가 필요하다. Kakao Developers의 Redirect URI는 http/https만 허용해 `tripmatch://` 같은 앱 스킴을 등록할 수 없으므로, 브라우저 OAuth 대신 Native SDK로 access token을 직접 받아 `/auth/oauth/kakao`에 넘긴다. Redirect URI 등록은 필요 없고 대신 [앱 설정] > [플랫폼]에 iOS 번들 ID(`com.tripmatch.duri`)와 Android 패키지명을 등록해야 한다. 앱 키가 바뀌면 config plugin이 Info.plist의 URL scheme(`kakao{NATIVE_APP_KEY}`)을 다시 써야 하므로 네이티브 재빌드가 필요하다. 로그인 취소는 `Cancelled`/`AccessDenied` 코드로 돌아온다.
 
 프런트 mock 링크 관리, OS/Kakao 공유 경계와 추후 API 계약은 `MOBILE_INVITE_LINK_FLOW.md`를 따른다.
 

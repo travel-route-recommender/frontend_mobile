@@ -1,4 +1,5 @@
 import * as SecureStore from "expo-secure-store";
+import { credentialStorage } from "./platformStorage";
 import {
   completePendingRefresh,
   createAccessTokenState,
@@ -46,11 +47,11 @@ function withSecureStateLock<Result>(operation: () => Promise<Result>): Promise<
 }
 
 async function writeStoredAuthState(state: StoredAuthState) {
-  await SecureStore.setItemAsync(AUTH_STATE_KEY, JSON.stringify(state), SECURE_STORE_OPTIONS);
+  await credentialStorage.setItemAsync(AUTH_STATE_KEY, JSON.stringify(state), SECURE_STORE_OPTIONS);
 }
 
 async function readStoredAuthState(): Promise<StoredAuthState | null> {
-  const serialized = await SecureStore.getItemAsync(AUTH_STATE_KEY, SECURE_STORE_OPTIONS);
+  const serialized = await credentialStorage.getItemAsync(AUTH_STATE_KEY, SECURE_STORE_OPTIONS);
   if (serialized) {
     try {
       return parseStoredAuthState(JSON.parse(serialized) as unknown);
@@ -60,16 +61,16 @@ async function readStoredAuthState(): Promise<StoredAuthState | null> {
   }
 
   // 출시 전 계약을 교체했으므로 이전 JWT Refresh Token은 복구하거나 이전하지 않는다.
-  await SecureStore.deleteItemAsync(LEGACY_REFRESH_TOKEN_KEY, SECURE_STORE_OPTIONS);
+  await credentialStorage.deleteItemAsync(LEGACY_REFRESH_TOKEN_KEY, SECURE_STORE_OPTIONS);
   return null;
 }
 
 async function clearStoredCredentials() {
   inMemoryAccessToken = null;
   await Promise.all([
-    SecureStore.deleteItemAsync(AUTH_STATE_KEY, SECURE_STORE_OPTIONS),
-    SecureStore.deleteItemAsync(LEGACY_REFRESH_TOKEN_KEY, SECURE_STORE_OPTIONS),
-    SecureStore.deleteItemAsync(LEGACY_ACCESS_TOKEN_KEY),
+    credentialStorage.deleteItemAsync(AUTH_STATE_KEY, SECURE_STORE_OPTIONS),
+    credentialStorage.deleteItemAsync(LEGACY_REFRESH_TOKEN_KEY, SECURE_STORE_OPTIONS),
+    credentialStorage.deleteItemAsync(LEGACY_ACCESS_TOKEN_KEY),
   ]);
 }
 
@@ -91,7 +92,7 @@ export const nativeTokenStorage: TokenStorage = {
   setRefreshToken: (token) => withSecureStateLock(async () => {
     await writeStoredAuthState({ refreshToken: token });
     // 새 로그인 성공 뒤 이전 앱 버전의 토큰이 다시 복구되지 않게 함께 제거한다.
-    await SecureStore.deleteItemAsync(LEGACY_REFRESH_TOKEN_KEY, SECURE_STORE_OPTIONS);
+    await credentialStorage.deleteItemAsync(LEGACY_REFRESH_TOKEN_KEY, SECURE_STORE_OPTIONS);
   }),
   getOrCreatePendingRefresh: (operationId, startedAt) => withSecureStateLock(async () => {
     const current = await readStoredAuthState();
@@ -108,7 +109,7 @@ export const nativeTokenStorage: TokenStorage = {
   commitRefresh: (operationId, nextRefreshToken) => withSecureStateLock(async () => {
     const current = await readStoredAuthState();
     await writeStoredAuthState(completePendingRefresh(current, operationId, nextRefreshToken));
-    await SecureStore.deleteItemAsync(LEGACY_REFRESH_TOKEN_KEY, SECURE_STORE_OPTIONS);
+    await credentialStorage.deleteItemAsync(LEGACY_REFRESH_TOKEN_KEY, SECURE_STORE_OPTIONS);
   }),
   clearTokens: async () => {
     await withSecureStateLock(async () => {

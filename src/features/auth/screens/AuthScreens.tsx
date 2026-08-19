@@ -14,7 +14,7 @@ import { AuthLayout } from "../components/AuthLayout";
 import { DuriLogo } from "../components/DuriLogo";
 import { DEMO_INVITE_CODE, DEMO_MEMBER_EMAIL, DEMO_MEMBER_PASSWORD } from "../config";
 import { useAuthFlow } from "../hooks/useAuthFlow";
-import { authService } from "../services/authService";
+import { authService, isSocialProviderSupported } from "../services/authService";
 import { apiPermissionMessage } from "../services/guestAccessPolicy";
 import { useAuthSessionStore } from "../store/useAuthSessionStore";
 import type { InvitePreview, SocialProvider } from "../types";
@@ -85,7 +85,7 @@ export function LoginScreen() {
   return <AuthLayout testID="login-screen">
     <DuriLogo />
     <View><Text style={styles.heroTitle}>여행의 시작을 함께해요</Text><Text style={styles.heroSubtitle}>로그인하고 친구들과 여행을 계획해 보세요.</Text></View>
-    <GoogleButton disabled={loading} onPress={() => finishSocial("google")} />
+    {isSocialProviderSupported("google") ? <GoogleButton disabled={loading} onPress={() => finishSocial("google")} /> : null}
     <KakaoButton disabled={loading} onPress={() => finishSocial("kakao")} />
     <AuthDivider />
     <AuthTextField ref={emailRef} label="이메일" value={email} onChangeText={(value) => { setEmail(value); setEmailError(undefined); }} error={emailError} keyboardType="email-address" autoCapitalize="none" autoComplete="email" returnKeyType="next" onSubmitEditing={() => passwordRef.current?.focus()} />
@@ -113,7 +113,7 @@ export function SignupChoiceScreen() {
   };
   return <AuthLayout title="두리 시작하기" subtitle="나에게 편한 방법으로 가입하세요." onBack={() => router.back()}>
     <DuriLogo compact />
-    <GoogleButton disabled={loading} onPress={() => social("google")} />
+    {isSocialProviderSupported("google") ? <GoogleButton disabled={loading} onPress={() => social("google")} /> : null}
     <KakaoButton disabled={loading} onPress={() => social("kakao")} />
     <AuthDivider />
     <PrimaryButton label="이메일로 가입하기" onPress={() => router.push("/(auth)/signup-email")} />

@@ -2,6 +2,7 @@ import {
   beginPendingRefresh,
   completePendingRefresh,
   createAccessTokenState,
+  getJwtExpiresInSeconds,
   isAccessTokenExpiredError,
   isPendingRefreshRecoverable,
   isRetryableRefreshStatus,
@@ -18,6 +19,7 @@ import {
 } from "../src/features/auth/services/authTokenState";
 import { ApiError, NativeApiClient, configureApiAuth } from "../src/services/apiClient";
 import { apiPermissionMessage, restrictedFeatureMessage } from "../src/features/auth/services/guestAccessPolicy";
+import { kakaoAuthErrorMessage } from "../src/features/auth/services/kakaoAuthError";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -42,6 +44,13 @@ function jsonResponse(status: number, body: unknown) {
 }
 
 async function verifyTokenState() {
+  const jwtPayload = globalThis.btoa(JSON.stringify({ sub: "user-1", exp: 1_900 }))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+  assert(getJwtExpiresInSeconds(`header.${jwtPayload}.signature`, 1_000) === 900, "JWT exp must supply the backend access-token lifetime");
+  assert(getJwtExpiresInSeconds("not-a-jwt", 1_000) === null, "malformed backend tokens must not invent an expiry");
+
   const access = createAccessTokenState("A1", 900, 1_000);
   assert(!shouldRefreshAccessToken(access, 800_000), "valid access token must not refresh early");
   assert(shouldRefreshAccessToken(access, 841_000), "access token inside the 60 second margin must refresh");
@@ -174,16 +183,23 @@ async function verifyApi401Policy() {
     assert(recovered.ok && refreshCalls === 1 && calls === 2, "TOKEN_EXPIRED must refresh and retry exactly once");
 
     refreshCalls = 0;
-    globalThis.fetch = (async () => jsonResponse(401, { message: "Invalid credentials" })) as typeof fetch;
-    await expectApiError(client.request({ path: "/auth/account", method: "DELETE" }));
-    assert(refreshCalls === 0, "an unstructured 401 such as a wrong password must not refresh");
+    calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return calls === 1
+        ? jsonResponse(401, { message: "Unauthorized" })
+        : jsonResponse(200, { ok: true });
+    }) as typeof fetch;
+    const recoveredFromBackend401 = await client.request<{ ok: boolean }>({ path: "/protected" });
+    assert(recoveredFromBackend401.ok && refreshCalls === 1 && calls === 2, "the backend's unstructured protected 401 must refresh and retry once");
 
+    refreshCalls = 0;
     for (const code of ["TOKEN_INVALID", "SESSION_REVOKED", "TOKEN_OBSOLETE", "ACCOUNT_UNAVAILABLE"]) {
       const invalidationsBeforeRequest = invalidationCalls;
       globalThis.fetch = (async () => jsonResponse(401, { code, message: "terminal" })) as typeof fetch;
       await expectApiError(client.request({ path: "/protected" }), code);
       assert(
-        refreshCalls === 0 && invalidationCalls === invalidationsBeforeRequest + 1,
+        Number(refreshCalls) === 0 && invalidationCalls === invalidationsBeforeRequest + 1,
         `${code} must invalidate local session without refresh`,
       );
     }
@@ -214,7 +230,20 @@ async function main() {
   assert(refreshRetryDelayMs(0, 0.5) === 300 && refreshRetryDelayMs(1, 0.5) === 600, "refresh retry must use bounded exponential backoff");
   assert(restrictedFeatureMessage("guest", "schedule-edit").includes("후보 장소 추가"), "guest schedule denial must explain the still-allowed candidate action");
   assert(apiPermissionMessage(new ApiError("Forbidden", { status: 403 }), "guest", "duri", "fallback").includes("회원 전용"), "403 messaging must combine the requested feature with guest session kind");
-  console.log("Mobile auth verification passed: expiry, single-flight, app-restart/lost-response recovery, stale pending, timeout, and terminal-code policy");
+  assert(
+    kakaoAuthErrorMessage({ code: "invalid_client", description: "Bad client credentials", params: { error_code: "KOE010" } }).includes("Client Secret")
+      && kakaoAuthErrorMessage({ params: { error_code: "KOE010" } }).includes("OFF"),
+    "KOE010 must explain that this client-side flow requires Client Secret to be disabled",
+  );
+  assert(
+    kakaoAuthErrorMessage({ params: { error_code: "KOE303" } }).includes("Redirect URI"),
+    "Kakao redirect mismatch must have an actionable message",
+  );
+  assert(
+    kakaoAuthErrorMessage({ params: { error_code: "KOE101" } }).includes("REST API 키"),
+    "Kakao invalid-client-id errors must identify the REST API key",
+  );
+  console.log("Mobile auth verification passed: expiry, refresh recovery, terminal policy, and Kakao OAuth diagnostics");
 }
 
 void main();

@@ -78,12 +78,12 @@
 - anonymous/guest/member 세션 분리와 hydration bootstrap
 - AsyncStorage 비민감 Auth Session persist와 SecureStore clear 경계
 - 장소 저장, 후보 추가, 새 여행, 저장 탭, 마이페이지 Member Gate
-- mock/api/hybrid Auth 동작 분리와 API 계약 대기 오류
+- mock/api/hybrid Auth 동작 분리와 현재 Backend 인증 계약 연결
 
 ## 부분 완료
 
 - workspace 두리 분석: report·제안 preview·atomic local apply까지 완료, 실제 server API와 Directions는 대기
-- auth API: UI와 adapter 경계는 완료, 실제 서버 계약은 대기
+- auth API: 현재 Backend의 이메일 login/signup, JWT refresh/logout, Kakao token 교환, 초대 참여 계약 연결 완료
 - Quiz API: 로컬 기준 로직과 adapter 경계는 완료, 실제 서버 계약은 대기
 - 초대 딥링크: code를 native 초대 화면으로 전달
 - 앱 아이콘·splash: 공식 템플릿 placeholder를 사용
@@ -101,7 +101,7 @@
 
 ## 백엔드 계약 대기
 
-- 로그인, 회원가입, OAuth, JWT refresh
+- Google 로그인, guest → member 계정 업그레이드, 계정 삭제
 - 여행방·장소·저장·후보·일정 API
 - 초대 코드 조회와 수락
 - Duri server engine 요청·응답
