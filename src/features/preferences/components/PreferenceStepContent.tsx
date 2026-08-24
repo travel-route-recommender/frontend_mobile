@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
+import { getPreferenceStoryCharacter } from "../assets/preference-character-assets";
 import {
   accommodationAxes,
   accommodationScaleValues,
@@ -73,6 +74,7 @@ function StoryPreferenceStep({ answers, onChange, onComplete }: Omit<Props, "ste
 
   if (entry.kind === "challenge") {
     const question = entry.question;
+    const character = getPreferenceStoryCharacter(question.id);
     const selectOption = (value: FivePointScaleValue) => onChange({
       challengeStyleAnswers: {
         ...answers.challengeStyleAnswers,
@@ -87,11 +89,12 @@ function StoryPreferenceStep({ answers, onChange, onComplete }: Omit<Props, "ste
       selectedOptionId: answers.challengeStyleAnswers?.[question.id],
     };
     return question.presentation.kind === "chat"
-      ? <PreferenceMessageQuestion {...questionProps} senderName={question.senderName} senderStatus={question.senderStatus} />
-      : <PreferenceSceneQuestion {...questionProps} presentation={question.presentation} />;
+      ? <PreferenceMessageQuestion {...questionProps} character={character} senderName={character.name} senderStatus={question.senderStatus} />
+      : <PreferenceSceneQuestion {...questionProps} character={character} presentation={question.presentation} />;
   }
 
   const question = entry.question;
+  const character = getPreferenceStoryCharacter(question.id);
   const selectOption = (level: ItineraryPreferenceLevel) => onChange({
     itineraryMessageAnswers: {
       ...answers.itineraryMessageAnswers,
@@ -106,8 +109,8 @@ function StoryPreferenceStep({ answers, onChange, onComplete }: Omit<Props, "ste
     selectedOptionId: answers.itineraryMessageAnswers?.[question.id],
   };
   return question.presentation.kind === "chat"
-    ? <PreferenceMessageQuestion {...questionProps} senderName={question.senderName} senderStatus={question.senderStatus} />
-    : <PreferenceSceneQuestion {...questionProps} presentation={question.presentation} />;
+    ? <PreferenceMessageQuestion {...questionProps} character={character} senderName={character.name} senderStatus={question.senderStatus} />
+    : <PreferenceSceneQuestion {...questionProps} character={character} presentation={question.presentation} />;
 }
 
 function MobilityStep({ answers, onChange }: Omit<Props, "stepId">) {

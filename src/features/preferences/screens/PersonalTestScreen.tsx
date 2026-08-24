@@ -6,6 +6,8 @@ import { ErrorState, LoadingState } from "../../../components/feedback";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import type { SessionKind } from "../../auth/types";
 import { useAuthSessionStore } from "../../auth/store/useAuthSessionStore";
+import { getPreferenceStepCharacter } from "../assets/preference-character-assets";
+import { PreferenceCharacterQuestion } from "../components/preference-character-question";
 import { PreferenceExitModal, PreferenceRestartModal } from "../components/PreferenceModals";
 import { PreferenceProgressBar } from "../components/PreferenceProgressBar";
 import { PreferenceStepContent } from "../components/PreferenceStepContent";
@@ -101,7 +103,7 @@ export function PersonalTestScreen() {
     ) : (
       <Card style={styles.questionCard}>
         <Text accessibilityRole="header" style={styles.question}>{step.title}</Text>
-        <Text style={styles.description}>{step.description}</Text>
+        <PreferenceCharacterQuestion character={getPreferenceStepCharacter(step.id)} compact message={step.description} />
         <PreferenceStepContent stepId={step.id} answers={draft.answers} onChange={updateAnswers} />
       </Card>
     )}

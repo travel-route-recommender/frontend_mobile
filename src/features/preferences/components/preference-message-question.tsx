@@ -1,10 +1,13 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
+import type { PreferenceCharacterPresentation } from "../assets/preference-character-assets";
 import type { PreferenceMessageOption } from "../config/itinerary-message-questions";
+import { PreferenceCharacterAvatar, PreferenceCharacterQuestion } from "./preference-character-question";
 
 type Props<OptionId extends string | number> = {
   senderName: string;
   senderStatus: string;
+  character: PreferenceCharacterPresentation;
   message: string;
   options: readonly PreferenceMessageOption<OptionId>[];
   current: number;
@@ -19,6 +22,7 @@ type Props<OptionId extends string | number> = {
 export function PreferenceMessageQuestion<OptionId extends string | number>({
   senderName,
   senderStatus,
+  character,
   message,
   options,
   current,
@@ -30,14 +34,10 @@ export function PreferenceMessageQuestion<OptionId extends string | number>({
   completionMessage,
 }: Props<OptionId>) {
   const selectedOption = options.find((option) => option.id === selectedOptionId);
-  const senderInitial = senderName.trim().slice(0, 1) || "?";
-
   return (
     <View style={styles.chat}>
       <View style={styles.chatHeader}>
-        <View accessibilityLabel={`${senderName} 프로필`} style={styles.headerAvatar}>
-          <Text style={styles.headerAvatarText}>{senderInitial}</Text>
-        </View>
+        <PreferenceCharacterAvatar character={character} />
         <View style={styles.headerCopy}>
           <Text style={styles.senderName}>{senderName}</Text>
           <Text style={styles.senderStatus}>{senderStatus} · {current}/{total}</Text>
@@ -62,20 +62,7 @@ export function PreferenceMessageQuestion<OptionId extends string | number>({
           <View style={styles.dividerLine} />
         </View>
 
-        <View style={styles.incomingRow}>
-          <View accessibilityElementsHidden style={styles.messageAvatar}>
-            <Text style={styles.messageAvatarText}>{senderInitial}</Text>
-          </View>
-          <View style={styles.incomingCopy}>
-            <Text style={styles.messageSender}>{senderName}</Text>
-            <View style={styles.incomingMessageLine}>
-              <View style={styles.incomingBubble}>
-                <Text selectable style={styles.incomingText}>{message}</Text>
-              </View>
-              <Text style={styles.time}>오후 8:08</Text>
-            </View>
-          </View>
-        </View>
+        <PreferenceCharacterQuestion character={character} message={message} />
 
         {selectedOption ? (
           <View accessibilityLiveRegion="polite" style={styles.outgoingRow}>
@@ -165,15 +152,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
-  headerAvatar: {
-    width: 44,
-    height: 44,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: radius.pill,
-    backgroundColor: colors.primarySoft,
-  },
-  headerAvatarText: { ...typography.subtitle, color: colors.primary },
   headerCopy: { flex: 1, gap: 1 },
   senderName: { ...typography.bodyStrong, color: colors.text },
   senderStatus: { ...typography.caption, color: colors.textMuted },
@@ -197,30 +175,6 @@ const styles = StyleSheet.create({
   dateDivider: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
   dividerLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: colors.borderStrong },
   dateLabel: { ...typography.caption, color: colors.textMuted },
-  incomingRow: { flexDirection: "row", alignItems: "flex-end", gap: spacing.xs },
-  messageAvatar: {
-    width: 34,
-    height: 34,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: radius.pill,
-    backgroundColor: colors.primarySoft,
-  },
-  messageAvatarText: { ...typography.caption, color: colors.primary },
-  incomingCopy: { flex: 1, gap: spacing.xxs },
-  messageSender: { ...typography.caption, color: colors.textSecondary },
-  incomingMessageLine: { flexDirection: "row", alignItems: "flex-end", gap: spacing.xs },
-  incomingBubble: {
-    maxWidth: "78%",
-    borderTopLeftRadius: radius.sm,
-    borderTopRightRadius: radius.lg,
-    borderBottomRightRadius: radius.lg,
-    borderBottomLeftRadius: radius.lg,
-    backgroundColor: colors.surface,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  incomingText: { ...typography.body, color: colors.text },
   time: { fontSize: 10, lineHeight: 14, color: colors.textMuted, fontVariant: ["tabular-nums"] },
   outgoingRow: { flexDirection: "row", alignItems: "flex-end", justifyContent: "flex-end", gap: spacing.xs },
   outgoingMeta: { alignItems: "flex-end" },

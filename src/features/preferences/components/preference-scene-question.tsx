@@ -1,14 +1,17 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
+import type { PreferenceCharacterPresentation } from "../assets/preference-character-assets";
 import type {
   PreferenceMessageOption,
   PreferenceQuestionPresentation,
 } from "../config/itinerary-message-questions";
+import { PreferenceCharacterAvatar, PreferenceCharacterQuestion } from "./preference-character-question";
 
 type ScenePresentation = Exclude<PreferenceQuestionPresentation, { kind: "chat" }>;
 
 type Props<OptionId extends string | number> = {
   presentation: ScenePresentation;
+  character: PreferenceCharacterPresentation;
   message: string;
   options: readonly PreferenceMessageOption<OptionId>[];
   current: number;
@@ -22,6 +25,7 @@ type Props<OptionId extends string | number> = {
 
 export function PreferenceSceneQuestion<OptionId extends string | number>({
   presentation,
+  character,
   message,
   options,
   current,
@@ -48,28 +52,21 @@ export function PreferenceSceneQuestion<OptionId extends string | number>({
         ))}
       </View>
 
+      <View style={styles.characterHeader}>
+        <PreferenceCharacterAvatar character={character} />
+        <View style={styles.characterHeaderCopy}>
+          <Text style={styles.characterName}>{character.name}</Text>
+          <Text style={styles.characterStatus}>여행 메이트 · {current}/{total}</Text>
+        </View>
+      </View>
+
       <View style={styles.sceneHeader}>
         <Text selectable style={styles.location}>{presentation.location}</Text>
         <Text accessibilityRole="header" selectable style={styles.title}>{presentation.title}</Text>
         <Text selectable style={styles.description}>{presentation.description}</Text>
-        {groupChoice ? (
-          <View accessibilityLabel="친구들과 함께 선택하는 상황" style={styles.groupPresence}>
-            <View accessibilityElementsHidden style={styles.avatarRow}>
-              <View style={[styles.avatar, styles.avatarFirst]}><Text style={styles.avatarText}>친</Text></View>
-              <View style={[styles.avatar, styles.avatarSecond]}><Text style={styles.avatarText}>구</Text></View>
-              <View style={[styles.avatar, styles.avatarThird]}><Text style={styles.avatarText}>나</Text></View>
-            </View>
-            <Text style={styles.groupLabel}>친구들과 함께 고르는 중</Text>
-          </View>
-        ) : null}
       </View>
 
-      <View style={styles.promptCard}>
-        {presentation.showPromptLabel !== false ? (
-          <Text style={styles.promptLabel}>{groupChoice ? "친구들이 당신에게 물어요" : "지금 이 장면에서"}</Text>
-        ) : null}
-        <Text selectable style={styles.prompt}>{message}</Text>
-      </View>
+      <PreferenceCharacterQuestion character={character} message={message} />
 
       <View style={styles.choicePanel}>
         <Text style={styles.choiceLabel}>{groupChoice ? "나는 이렇게 말할래" : "나는 이렇게 선택할래"}</Text>
@@ -141,37 +138,14 @@ const styles = StyleSheet.create({
   progress: { flexDirection: "row", gap: spacing.xxs },
   progressSegment: { flex: 1, height: 4, borderRadius: radius.pill, backgroundColor: colors.borderStrong },
   progressSegmentActive: { backgroundColor: colors.primary },
+  characterHeader: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  characterHeaderCopy: { flex: 1, gap: 1 },
+  characterName: { ...typography.bodyStrong, color: colors.text },
+  characterStatus: { ...typography.caption, color: colors.textMuted },
   sceneHeader: { gap: spacing.xs, paddingHorizontal: spacing.xs },
   location: { ...typography.caption, color: colors.primary },
   title: { ...typography.title, color: colors.text },
   description: { ...typography.body, color: colors.textSecondary },
-  groupPresence: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingTop: spacing.xs },
-  avatarRow: { width: 78, height: 32, flexDirection: "row", alignItems: "center" },
-  avatar: {
-    position: "absolute",
-    width: 32,
-    height: 32,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 2,
-    borderColor: colors.surface,
-    borderRadius: radius.pill,
-  },
-  avatarFirst: { left: 0, backgroundColor: colors.primarySoft },
-  avatarSecond: { left: 22, backgroundColor: colors.warningSoft },
-  avatarThird: { left: 44, backgroundColor: colors.successSoft },
-  avatarText: { ...typography.caption, color: colors.text },
-  groupLabel: { ...typography.caption, color: colors.textSecondary },
-  promptCard: {
-    gap: spacing.xs,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.lg,
-    backgroundColor: colors.background,
-    padding: spacing.md,
-  },
-  promptLabel: { ...typography.caption, color: colors.textMuted },
-  prompt: { ...typography.bodyStrong, color: colors.text },
   choicePanel: { gap: spacing.sm },
   choiceLabel: { ...typography.caption, color: colors.textSecondary },
   optionList: { gap: spacing.xs },
