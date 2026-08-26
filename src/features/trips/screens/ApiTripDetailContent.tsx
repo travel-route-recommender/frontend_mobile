@@ -27,6 +27,7 @@ import type { TripPreparationStepId } from "../types";
 export function ApiTripDetailContent({ tripId, created }: { tripId: string; created: boolean }) {
   const router = useRouter();
   const currentUserId = useAuthSessionStore((state) => state.currentSessionUserId);
+  const sessionKind = useAuthSessionStore((state) => state.sessionKind);
   const [inviteOpen, setInviteOpen] = useState(false);
   const startTripExplore = useExploreSearchStore((state) => state.startTripExplore);
   const syncActiveTripRegion = useExploreSearchStore((state) => state.syncActiveTripRegion);
@@ -59,7 +60,7 @@ export function ApiTripDetailContent({ tripId, created }: { tripId: string; crea
   return <Screen testID="api-trip-home-screen">
     <TripHomeHero trip={data.room} region={data.region} usersById={data.usersById} currentUserId={currentUserId} onBack={() => router.back()} />
     {created ? <Pressable accessibilityRole="button" accessibilityLabel="여행방 생성 완료 안내 닫기" onPress={() => router.setParams({ created: undefined })} style={styles.successBanner}><Text style={styles.successTitle}>여행방을 만들었어요</Text><Text style={styles.successText}>서버 여행방을 불러왔어요. · 닫기</Text></Pressable> : null}
-    <TripQuickActions completed={completed} onWorkspace={openWorkspace} onExplore={explore} onInvite={() => setInviteOpen(true)} />
+    <TripQuickActions completed={completed} canInvite={sessionKind === "member"} onWorkspace={openWorkspace} onExplore={explore} onInvite={() => setInviteOpen(true)} />
     <TripPreparationCard preparation={data.preparation} onAction={handlePreparationAction} readOnly={completed} />
 
     <SectionBlock><PreferenceSectionIntro summary={data.preferenceSummary} /></SectionBlock>
@@ -91,7 +92,7 @@ export function ApiTripDetailContent({ tripId, created }: { tripId: string; crea
     <SectionBlock><ItinerarySummaryCard trip={data.room} itinerary={data.itinerary} placesById={data.placesById} onWorkspace={openWorkspace} /></SectionBlock>
     <SectionBlock><DuriAnalysisCard itineraryCount={data.itinerary.length} onWorkspace={openWorkspace} /></SectionBlock>
 
-    <TripInviteManagerModal visible={inviteOpen} trip={data.room} onClose={() => setInviteOpen(false)} />
+    {sessionKind === "member" ? <TripInviteManagerModal visible={inviteOpen} trip={data.room} onClose={() => setInviteOpen(false)} /> : null}
   </Screen>;
 }
 

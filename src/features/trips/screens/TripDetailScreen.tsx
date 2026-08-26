@@ -25,6 +25,7 @@ import { buildTripExploreHref } from "../../explore/logic/exploreNavigation";
 import { TripInviteManagerModal } from "../../invitations/components/TripInviteManagerModal";
 import { TripDocumentSection } from "../../trip-documents";
 import { TripTodoSection } from "../../trip-todos";
+import { useAuthSessionStore } from "../../auth/store/useAuthSessionStore";
 import { ApiTripDetailContent } from "./ApiTripDetailContent";
 
 export function TripHomeScreen() {
@@ -42,6 +43,7 @@ function ApiTripDetailRoute() {
 
 function MockTripHomeScreen() {
   const router = useRouter();
+  const sessionKind = useAuthSessionStore((state) => state.sessionKind);
   const params = useLocalSearchParams<{ tripId?: string | string[]; created?: string | string[] }>();
   const tripId = Array.isArray(params.tripId) ? params.tripId[0] : params.tripId;
   const created = (Array.isArray(params.created) ? params.created[0] : params.created) === "1";
@@ -102,7 +104,7 @@ function MockTripHomeScreen() {
   return <Screen testID="trip-home-screen">
     <TripHomeHero trip={trip} region={source.regionsById[trip.regionId]} usersById={source.usersById} currentUserId={source.currentUserId} onBack={() => router.back()} />
     {created ? <Pressable accessibilityRole="button" accessibilityLabel="여행방 생성 완료 안내 닫기" onPress={() => router.setParams({ created: undefined })} style={styles.successBanner}><Text style={styles.successTitle}>여행방을 만들었어요</Text><Text style={styles.successText}>동행자와 후보 장소를 모아 여행을 완성해 보세요. · 닫기</Text></Pressable> : null}
-    <TripQuickActions completed={completed} onWorkspace={openWorkspace} onExplore={explore} onInvite={() => setInviteOpen(true)} />
+    <TripQuickActions completed={completed} canInvite={sessionKind === "member"} onWorkspace={openWorkspace} onExplore={explore} onInvite={() => setInviteOpen(true)} />
     <TripPreparationCard preparation={viewModel.preparation} onAction={handlePreparationAction} readOnly={completed} />
 
     <SectionBlock><PreferenceSectionIntro summary={summary} /></SectionBlock>
@@ -143,7 +145,7 @@ function MockTripHomeScreen() {
     <SectionBlock><DuriAnalysisCard itineraryCount={itinerary.length} onWorkspace={openWorkspace} /></SectionBlock>
 
     {completed ? <SectionBlock><Card style={styles.readOnly}><Text style={styles.readOnlyTitle}>완료된 여행이에요</Text><Text style={styles.readOnlyText}>후보와 일정은 기록 중심으로 볼 수 있으며, 상태를 자동으로 진행 중으로 바꾸지 않아요.</Text></Card></SectionBlock> : null}
-    <TripInviteManagerModal visible={inviteOpen} trip={trip} onClose={() => setInviteOpen(false)} />
+    {sessionKind === "member" ? <TripInviteManagerModal visible={inviteOpen} trip={trip} onClose={() => setInviteOpen(false)} /> : null}
   </Screen>;
 }
 

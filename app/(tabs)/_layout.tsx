@@ -26,7 +26,7 @@ export default function TabLayout() {
     <Tabs.Screen name="home" options={{ title: "홈", tabBarAccessibilityLabel: "홈 탭", tabBarIcon: (props) => <TabIcon name="home" {...props} /> }} />
     <Tabs.Screen name="explore" options={{ title: "탐색", tabBarAccessibilityLabel: "탐색 탭", tabBarIcon: (props) => <TabIcon name="explore" {...props} /> }} />
     <Tabs.Screen name="trips" options={{ title: "여행", tabBarAccessibilityLabel: "여행 탭", tabBarIcon: (props) => <TabIcon name="trips" {...props} /> }} />
-    <Tabs.Screen name="saved" options={{ title: "저장", tabBarAccessibilityLabel: "저장 탭", tabBarIcon: (props) => <TabIcon name="saved" {...props} /> }} />
+    <Tabs.Screen name="saved" options={{ title: "저장", href: sessionKind === "guest" ? null : undefined, tabBarAccessibilityLabel: "저장 탭", tabBarIcon: (props) => <TabIcon name="saved" {...props} /> }} />
     <Tabs.Screen name="mypage" options={{ title: "마이", tabBarAccessibilityLabel: "마이 탭", tabBarIcon: (props) => <TabIcon name="mypage" {...props} /> }} />
   </Tabs>;
 }

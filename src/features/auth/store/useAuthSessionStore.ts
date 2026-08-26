@@ -96,8 +96,8 @@ export const useAuthSessionStore = create<AuthSessionState>()(
       version: AUTH_SESSION_STORAGE_VERSION,
       migrate: (persistedState) => normalizePersistedAuthSession(persistedState),
       merge: (persistedState, currentState) => ({ ...currentState, ...normalizePersistedAuthSession(persistedState) }),
+      // This runs before storage is read. A persisted setter here can overwrite the saved session with initial state.
       onRehydrateStorage: (state) => {
-        state.setHydrated(false);
         return (hydratedState, error) => {
           if (error) {
             state.setAuthError("저장된 로그인 상태를 불러오지 못했어요.");

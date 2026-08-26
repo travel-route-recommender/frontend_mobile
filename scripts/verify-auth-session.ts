@@ -17,7 +17,10 @@ import {
   type StoredAuthState,
 } from "../src/features/auth/services/authTokenState";
 import { ApiError, NativeApiClient, configureApiAuth } from "../src/services/apiClient";
-import { apiPermissionMessage, restrictedFeatureMessage } from "../src/features/auth/services/guestAccessPolicy";
+import { apiPermissionMessage, guestPagePolicy, restrictedFeatureMessage } from "../src/features/auth/services/guestAccessPolicy";
+import { requestGoogleNativeIdToken } from "../src/features/auth/services/googleNativeAuth";
+import { requestKakaoNativeIdToken } from "../src/features/auth/services/kakaoNativeAuth";
+import { buildInviteReturnPath, inviteErrorMessage, resolveAuthReturnTo } from "../src/features/auth/services/inviteFlowPolicy";
 import {
   activateLocalPrivateDataScope,
   deactivateLocalPrivateDataScope,
@@ -220,6 +223,65 @@ async function verifyMultipartRequestBody() {
   }
 }
 
+async function verifyKakaoNativeOidc() {
+  let initializedWith: string | undefined;
+  let requestedNonce: string | undefined;
+  const idToken = await requestKakaoNativeIdToken(" native-app-key ", "server-nonce", {
+    initialize: (appKey) => { initializedWith = appKey; },
+    login: async ({ nonce }) => {
+      requestedNonce = nonce;
+      return { idToken: "kakao-id-token" };
+    },
+  });
+  assert(initializedWith === "native-app-key", "Kakao SDK must initialize with the trimmed native app key");
+  assert(requestedNonce === "server-nonce", "Kakao SDK login must receive the backend challenge nonce");
+  assert(idToken === "kakao-id-token", "Kakao native login must return its OIDC ID token");
+
+  await requestKakaoNativeIdToken("native-app-key", "server-nonce", {
+    initialize: () => undefined,
+    login: async () => ({}),
+  }).then(
+    () => { throw new Error("Kakao login without an ID token unexpectedly succeeded"); },
+    (error: unknown) => assert(error instanceof Error && error.message.includes("ID Token"), "missing Kakao ID token must fail closed"),
+  );
+}
+
+async function verifyGoogleNativeOidc() {
+  let configuredWith: { webClientId: string; iosClientId?: string; nonce: string; autoSelectOnSignIn: boolean } | undefined;
+  let createAccountCalls = 0;
+  let explicitCalls = 0;
+  const idToken = await requestGoogleNativeIdToken(" web-client-id ", " ios-client-id ", "server-nonce", {
+    configure: (options) => { configuredWith = options; },
+    checkPlayServices: async () => undefined,
+    signIn: async () => ({ type: "noSavedCredentialFound", data: null }),
+    createAccount: async () => {
+      createAccountCalls += 1;
+      return { type: "success", data: { idToken: "google-id-token" } };
+    },
+    presentExplicitSignIn: async () => {
+      explicitCalls += 1;
+      return { type: "cancelled", data: null };
+    },
+  });
+  assert(configuredWith?.webClientId === "web-client-id", "Google native sign-in must use the trimmed web client ID as the ID token audience");
+  assert(configuredWith?.iosClientId === "ios-client-id", "Google native sign-in must pass the iOS client ID when configured");
+  assert(configuredWith?.nonce === "server-nonce", "Google native sign-in must receive the backend challenge nonce");
+  assert(configuredWith?.autoSelectOnSignIn === false, "Google account selection must not silently choose an account");
+  assert(createAccountCalls === 1 && explicitCalls === 0, "a new Google user must enter the account creation flow exactly once");
+  assert(idToken === "google-id-token", "Google native sign-in must return its OIDC ID token");
+
+  await requestGoogleNativeIdToken("web-client-id", undefined, "server-nonce", {
+    configure: () => undefined,
+    checkPlayServices: async () => undefined,
+    signIn: async () => ({ type: "cancelled", data: null }),
+    createAccount: async () => ({ type: "cancelled", data: null }),
+    presentExplicitSignIn: async () => ({ type: "cancelled", data: null }),
+  }).then(
+    () => { throw new Error("cancelled Google sign-in unexpectedly succeeded"); },
+    (error: unknown) => assert(error instanceof Error && error.message.includes("취소"), "Google cancellation must fail without calling the backend"),
+  );
+}
+
 function verifyLocalPrivateDataAccountScope() {
   const empty = () => ({} as Record<string, readonly string[]>);
   const accountA = {
@@ -254,13 +316,33 @@ function verifyLocalPrivateDataAccountScope() {
   assert(inferLegacyLocalPrivateDataOwner(["user-a", "user-b"]).status === "ambiguous", "mixed-owner legacy data must be quarantined instead of exposed");
 }
 
+function verifyInviteLoginReturnFlow() {
+  const returnTo = buildInviteReturnPath({
+    code: " ab12cd34 ",
+    tripId: "trip/id",
+    revision: "rev 1",
+  });
+  assert(returnTo === "/invite/AB12CD34?tripId=trip%2Fid&revision=rev%201", "invite return path must preserve normalized code and mock link metadata");
+  assert(resolveAuthReturnTo(returnTo, false) === returnTo, "a member login must return to the pending invite route");
+  assert(resolveAuthReturnTo("/signup-email?returnTo=/trips/1", false) === undefined, "auth entry screens must not form a return loop");
+  assert(resolveAuthReturnTo("//outside.example", false) === undefined, "external protocol-relative return targets must be rejected");
+  assert(resolveAuthReturnTo("/trips/room-a", true) === "/trips/room-a", "a guest may return to an invited room");
+  assert(resolveAuthReturnTo(returnTo, true) === undefined, "an existing guest may not use login return handling to switch invite rooms");
+  assert(inviteErrorMessage(new ApiError("expired", { status: 410, code: "INVITE_EXPIRED" }), "anonymous").includes("만료"), "expired invite errors must be actionable");
+  assert(inviteErrorMessage(new ApiError("closed", { status: 409, code: "ROOM_NOT_ONGOING" }), "member").includes("종료"), "closed room errors must explain why joining is blocked");
+  assert(inviteErrorMessage(new ApiError("full", { status: 409, code: "ROOM_FULL" }), "anonymous").includes("가득"), "room capacity errors must be distinct from invalid codes");
+}
+
 async function main() {
   await verifyTokenState();
   await verifySingleFlight();
   await verifyTenConcurrentExpiredRequests();
   await verifyApi401Policy();
   await verifyMultipartRequestBody();
+  await verifyGoogleNativeOidc();
+  await verifyKakaoNativeOidc();
   verifyLocalPrivateDataAccountScope();
+  verifyInviteLoginReturnFlow();
   assert(isAccessTokenExpiredError({ status: 401, code: "TOKEN_EXPIRED" }), "TOKEN_EXPIRED policy must stay explicit");
   assert(isTerminalAccessAuthError({ status: 401, code: "SESSION_REVOKED" }), "revoked sessions must be terminal");
   for (const code of [
@@ -278,6 +360,8 @@ async function main() {
   assert(refreshRetryDelayMs(0, 0.5) === 300 && refreshRetryDelayMs(1, 0.5) === 600, "refresh retry must use bounded exponential backoff");
   assert(restrictedFeatureMessage("guest", "schedule-edit").includes("후보 장소 추가"), "guest schedule denial must explain the still-allowed candidate action");
   assert(apiPermissionMessage(new ApiError("Forbidden", { status: 403 }), "guest", "duri", "fallback").includes("회원 전용"), "403 messaging must combine the requested feature with guest session kind");
+  assert(guestPagePolicy.allowed.includes("장소 탐색 및 장소 상세"), "guests must retain read-only explore access");
+  assert(guestPagePolicy.memberOnly.includes("저장 장소"), "saved places must remain member-only");
   console.log("Mobile auth verification passed: token recovery, terminal-code policy, and account-scoped local document/OCR/TODO isolation");
 }
 

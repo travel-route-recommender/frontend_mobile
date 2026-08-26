@@ -101,7 +101,7 @@
 
 ## 백엔드 계약 대기
 
-- 로그인, 회원가입, OAuth, JWT refresh
+- 운영 Auth 서버 smoke/E2E, Google/Kakao 계정 병합 정책, JWT refresh
 - 여행방·장소·저장·후보·일정 API
 - 초대 코드 조회와 수락
 - Duri server engine 요청·응답

@@ -1,9 +1,8 @@
 import { useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
-import { PrimaryButton } from "../../../components/common";
+import { PrimaryButton, SecondaryButton } from "../../../components/common";
 import { environment } from "../../../config/environment";
-import { ApiError } from "../../../services/apiClient";
 import { useDuriStore } from "../../../store/useDuriStore";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import { formatTripDateRange } from "../../../utils/formatters";
@@ -15,7 +14,7 @@ import { DuriLogo } from "../components/DuriLogo";
 import { DEMO_INVITE_CODE, DEMO_MEMBER_EMAIL, DEMO_MEMBER_PASSWORD } from "../config";
 import { useAuthFlow } from "../hooks/useAuthFlow";
 import { authService } from "../services/authService";
-import { apiPermissionMessage } from "../services/guestAccessPolicy";
+import { buildInviteReturnPath, inviteErrorMessage, resolveAuthReturnTo } from "../services/inviteFlowPolicy";
 import { useAuthSessionStore } from "../store/useAuthSessionStore";
 import type { InvitePreview, SocialProvider } from "../types";
 import { normalizeEmail, normalizeInviteCode, validateEmail, validateInviteCode, validateNickname, validatePassword, validatePasswordConfirmation, validateRequiredAgreement } from "../validation";
@@ -33,13 +32,6 @@ function destinationAfterLogin(profileCompleted: boolean, onboardingIntroSeen: b
   if (!profileCompleted) return "/(onboarding)/profile" as const;
   if (!onboardingIntroSeen) return "/(onboarding)/intro" as const;
   return "/(tabs)/home" as const;
-}
-
-function safeReturnTo(value: string | undefined, guest: boolean) {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) return undefined;
-  if (["/login", "/signup-choice", "/signup-email", "/terms", "/invite"].some((path) => value === path || value.startsWith(`${path}?`))) return undefined;
-  if (guest && !(value === "/home" || value === "/trips" || value.startsWith("/trips/") || value === "/mypage" || value.startsWith("/tests/"))) return undefined;
-  return value;
 }
 
 export function LoginScreen() {
@@ -66,7 +58,7 @@ export function LoginScreen() {
       const result = await authService.login({ email: normalizeEmail(email), password });
       if (result.status === "error") { setServiceError(result.message); return; }
       await applyAuthSuccess(result);
-      router.replace((safeReturnTo(returnTo, false) ?? destinationAfterLogin(result.profileCompleted, result.onboardingIntroSeen)) as never);
+      router.replace((resolveAuthReturnTo(returnTo, false) ?? destinationAfterLogin(result.profileCompleted, result.onboardingIntroSeen)) as never);
     } finally { setLoading(false); }
   };
 
@@ -76,7 +68,7 @@ export function LoginScreen() {
       const result = await authService.loginWithSocial(provider);
       if (result.status === "error") { setServiceError(result.message); return; }
       await applyAuthSuccess(result);
-      router.replace((safeReturnTo(returnTo, false) ?? destinationAfterLogin(result.profileCompleted, result.onboardingIntroSeen)) as never);
+      router.replace((resolveAuthReturnTo(returnTo, false) ?? destinationAfterLogin(result.profileCompleted, result.onboardingIntroSeen)) as never);
     } finally { setLoading(false); }
   };
 
@@ -93,12 +85,15 @@ export function LoginScreen() {
     <AuthErrorBanner message={serviceError} />
     {__DEV__ ? <Pressable accessibilityRole="button" onPress={useDemoAccount} style={styles.demoBox}><Text style={styles.demoTitle}>Mock 데모 계정 채우기</Text><Text style={styles.demoText}>{DEMO_MEMBER_EMAIL} · {DEMO_MEMBER_PASSWORD}</Text></Pressable> : null}
     <PrimaryButton label="이메일로 로그인" loading={loading} onPress={finishEmail} />
-    <View style={styles.inlineLinks}><TextLink label="회원가입" onPress={() => router.push("/(auth)/signup-choice")} /><Text style={styles.dot}>·</Text><TextLink label="초대 코드로 참여" onPress={() => router.push("/(auth)/invite")} /></View>
+    <SecondaryButton label="게스트로 입장하기" disabled={loading} onPress={() => router.push((resolveAuthReturnTo(returnTo, false)?.startsWith("/invite/") ? returnTo : "/(auth)/invite") as never)} />
+    <View style={styles.inlineLinks}><TextLink label="회원가입" onPress={() => router.push({ pathname: "/(auth)/signup-choice", params: { ...(returnTo ? { returnTo } : {}) } })} /></View>
     <View style={styles.inlineLinks}><TextLink label="서비스 이용약관" onPress={() => router.push({ pathname: "/(auth)/terms", params: { type: "service" } })} /><Text style={styles.dot}>·</Text><TextLink label="개인정보 처리방침" onPress={() => router.push({ pathname: "/(auth)/terms", params: { type: "privacy" } })} /></View>
   </AuthLayout>;
 }
 
 export function SignupChoiceScreen() {
+  const params = useLocalSearchParams<{ returnTo?: string | string[] }>();
+  const returnTo = Array.isArray(params.returnTo) ? params.returnTo[0] : params.returnTo;
   const [loading, setLoading] = useState(false);
   const [serviceError, setServiceError] = useState<string | null>(null);
   const { applyAuthSuccess } = useAuthFlow();
@@ -108,7 +103,7 @@ export function SignupChoiceScreen() {
       const result = await authService.loginWithSocial(provider);
       if (result.status === "error") { setServiceError(result.message); return; }
       await applyAuthSuccess(result);
-      router.replace(destinationAfterLogin(result.profileCompleted, result.onboardingIntroSeen));
+      router.replace((resolveAuthReturnTo(returnTo, false) ?? destinationAfterLogin(result.profileCompleted, result.onboardingIntroSeen)) as never);
     } finally { setLoading(false); }
   };
   return <AuthLayout title="두리 시작하기" subtitle="나에게 편한 방법으로 가입하세요." onBack={() => router.back()}>
@@ -116,14 +111,16 @@ export function SignupChoiceScreen() {
     <GoogleButton disabled={loading} onPress={() => social("google")} />
     <KakaoButton disabled={loading} onPress={() => social("kakao")} />
     <AuthDivider />
-    <PrimaryButton label="이메일로 가입하기" onPress={() => router.push("/(auth)/signup-email")} />
+    <PrimaryButton label="이메일로 가입하기" onPress={() => router.push({ pathname: "/(auth)/signup-email", params: { ...(returnTo ? { returnTo } : {}) } })} />
     <AuthErrorBanner message={serviceError} />
-    <View style={styles.inlineLinks}><Text style={styles.muted}>이미 계정이 있나요?</Text><TextLink label="로그인" onPress={() => router.replace("/(auth)/login")} /></View>
+    <View style={styles.inlineLinks}><Text style={styles.muted}>이미 계정이 있나요?</Text><TextLink label="로그인" onPress={() => router.replace({ pathname: "/(auth)/login", params: { ...(returnTo ? { returnTo } : {}) } })} /></View>
     <Benefits />
   </AuthLayout>;
 }
 
 export function SignupEmailScreen() {
+  const params = useLocalSearchParams<{ returnTo?: string | string[] }>();
+  const returnTo = Array.isArray(params.returnTo) ? params.returnTo[0] : params.returnTo;
   const [nickname, setNickname] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -150,7 +147,7 @@ export function SignupEmailScreen() {
       const result = await authService.signup({ nickname: nickname.trim(), email: normalizeEmail(email), password });
       if (result.status === "error") { setServiceError(result.message); return; }
       await applyAuthSuccess(result);
-      router.replace(destinationAfterLogin(result.profileCompleted, result.onboardingIntroSeen));
+      router.replace((resolveAuthReturnTo(returnTo, false) ?? destinationAfterLogin(result.profileCompleted, result.onboardingIntroSeen)) as never);
     } finally { setLoading(false); }
   };
 
@@ -169,14 +166,6 @@ export function SignupEmailScreen() {
     </View>
     <AuthErrorBanner message={serviceError} />
   </AuthLayout>;
-}
-
-function inviteError(error: unknown, sessionKind: "anonymous" | "guest" | "member" | null) {
-  if (error instanceof ApiError) {
-    if (error.code === "INVALID_INVITE_CODE" || error.status === 401) return "유효하지 않거나 더 이상 사용할 수 없는 초대 코드예요.";
-    if (error.code === "INVITE_RATE_LIMITED" || error.status === 429) return "초대 코드 확인을 너무 많이 시도했어요. 잠시 후 다시 시도해 주세요.";
-  }
-  return apiPermissionMessage(error, sessionKind, "room-join", "초대 코드를 확인하지 못했어요.");
 }
 
 export function InviteJoinScreen() {
@@ -256,7 +245,7 @@ export function InviteJoinScreen() {
       }
       setPreview(await authService.previewInvite(code));
       requestAnimationFrame(() => nicknameRef.current?.focus());
-    } catch (reason) { setServiceError(inviteError(reason, sessionKind)); } finally { setLoading(false); }
+    } catch (reason) { setServiceError(inviteErrorMessage(reason, sessionKind)); } finally { setLoading(false); }
   };
 
   const join = async () => {
@@ -313,7 +302,7 @@ export function InviteJoinScreen() {
       try {
         const roomId = await authService.acceptInvite(code);
         router.replace({ pathname: "/trips/[tripId]", params: { tripId: roomId } });
-      } catch (reason) { setServiceError(inviteError(reason, sessionKind)); } finally { setLoading(false); }
+      } catch (reason) { setServiceError(inviteErrorMessage(reason, sessionKind)); } finally { setLoading(false); }
       return;
     }
     const nextError = validateNickname(nickname); setNicknameError(nextError);
@@ -330,7 +319,9 @@ export function InviteJoinScreen() {
         return;
       }
       await applyAuthSuccess(result);
-      router.replace(destinationAfterLogin(true, true, true));
+      router.replace(result.invitedTripId
+        ? { pathname: "/trips/[tripId]", params: { tripId: result.invitedTripId } }
+        : destinationAfterLogin(true, true, true));
     } finally { setLoading(false); }
   };
 
@@ -344,7 +335,7 @@ export function InviteJoinScreen() {
       {!existingParticipant ? <AuthTextField ref={nicknameRef} label="게스트 닉네임" value={nickname} onChangeText={(value) => { setNickname(value); setNicknameError(undefined); }} error={nicknameError} helperText="이 여행방에서 다른 구성원에게 표시되는 이름이에요." maxLength={12} autoCapitalize="none" returnKeyType="done" onSubmitEditing={join} /> : null}
     </>}
     <AuthErrorBanner message={serviceError} />
-    <View style={styles.inlineLinks}><Text style={styles.muted}>이미 두리 회원인가요?</Text><TextLink label="로그인" onPress={() => router.replace("/(auth)/login")} /></View>
+    <View style={styles.inlineLinks}><Text style={styles.muted}>이미 두리 회원인가요?</Text><TextLink label="로그인" onPress={() => router.replace({ pathname: "/(auth)/login", params: { returnTo: buildInviteReturnPath({ code, tripId: routeTripId, revision: routeRevision }) } })} /></View>
   </AuthLayout>;
 }
 

@@ -25,11 +25,11 @@ export function TripHomeHero({ trip, region, usersById, currentUserId, onBack }:
   </View>;
 }
 
-export function TripQuickActions({ completed, onWorkspace, onExplore, onInvite }: { completed: boolean; onWorkspace(): void; onExplore(): void; onInvite(): void }) {
+export function TripQuickActions({ completed, canInvite = true, onWorkspace, onExplore, onInvite }: { completed: boolean; canInvite?: boolean; onWorkspace(): void; onExplore(): void; onInvite(): void }) {
   return <View style={styles.quickGrid}>
     <QuickAction label={completed ? "여행 기록 보기" : "워크스페이스"} symbol="▦" onPress={onWorkspace} />
     {!completed ? <QuickAction label="장소 찾아보기" symbol="⌕" onPress={onExplore} /> : null}
-    {!completed ? <QuickAction label="동행자 초대" symbol="+" onPress={onInvite} /> : null}
+    {!completed && canInvite ? <QuickAction label="동행자 초대" symbol="+" onPress={onInvite} /> : null}
   </View>;
 }
 

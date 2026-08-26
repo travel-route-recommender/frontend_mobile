@@ -19,7 +19,10 @@
 ## 네이티브 연동
 
 - [ ] Kakao native app Android/iOS 설정
-- [ ] 지도·OAuth key를 secret 저장소에 등록
+- [ ] Google Cloud OAuth client Web/Android/iOS 설정
+- [ ] Android OAuth client에 package name과 debug/release/Play App Signing SHA-1 등록
+- [ ] iOS OAuth client에 bundle ID와 URL scheme 등록
+- [ ] 지도·OAuth client id/key를 환경 변수 또는 secret 저장소에 등록
 - [ ] `tripmatch://invite/:code` 딥링크 실기기 검증
 - [ ] universal link / app link 도메인 결정
 - [ ] 위치·사진·알림 권한 설명 문구 검수
