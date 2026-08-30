@@ -445,7 +445,7 @@ export function KakaoPlaceMap({
     () => apiKey?.trim() ? buildKakaoMapHtml(markers, apiKey.trim(), initialFocusTopInset, initialFocusBottomInset, initialFocusYRatio, initialSelectedPlaceId, showBuiltInZoomControl, zoomControlPosition, initialZoomControlBottomOffset) : "",
     [apiKey, initialFocusBottomInset, initialFocusTopInset, initialFocusYRatio, initialSelectedPlaceId, initialZoomControlBottomOffset, markers, showBuiltInZoomControl, zoomControlPosition],
   );
-  const sourceBaseUrl = baseUrl?.trim() || "http://localhost:3000";
+  const sourceBaseUrl = baseUrl?.trim() || "https://localhost:3000";
   const webViewSource = useMemo(
     () => ({ html, baseUrl: sourceBaseUrl }),
     [html, sourceBaseUrl],

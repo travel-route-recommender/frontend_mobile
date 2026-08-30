@@ -28,5 +28,5 @@ export const environment = {
   googleIosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
   kakaoNativeAppKey: process.env.EXPO_PUBLIC_KAKAO_NATIVE_APP_KEY,
   kakaoMapJavascriptKey: process.env.EXPO_PUBLIC_KAKAO_MAP_JAVASCRIPT_KEY,
-  kakaoMapBaseUrl: process.env.EXPO_PUBLIC_KAKAO_MAP_BASE_URL ?? "http://localhost:3000",
+  kakaoMapBaseUrl: process.env.EXPO_PUBLIC_KAKAO_MAP_BASE_URL ?? "https://localhost:3000",
 } as const;

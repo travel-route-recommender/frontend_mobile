@@ -107,6 +107,10 @@ const CATEGORY_TO_CONTENT_TYPE_ID = new Map(
   Object.entries(TOUR_CONTENT_TYPE_LABELS).map(([id, label]) => [label, Number(id)]),
 );
 
+function normalizeTourImageUrl(value: string) {
+  return value.replace(/^http:\/\/tong\.visitkorea\.or\.kr(?=\/)/i, "https://tong.visitkorea.or.kr");
+}
+
 const REGION_TO_AREA_CODE: Record<EntityId, string> = {
   seoul: "1",
   incheon: "2",
@@ -395,11 +399,12 @@ export function mapTourPlaceToPlace(place: TourPlace): Place | null {
   const infoItems = buildTourPlaceInfoItems(place);
   const classificationTags = classification ? buildPlaceClassificationTags({ classification }) : [];
   const practicalTags = buildPracticalInfoTags(infoItems);
-  const image = firstString([
+  const rawImage = firstString([
     place.thumbnailUrl,
     place.images?.[0]?.thumbnailUrl,
     place.images?.[0]?.url,
   ]);
+  const image = rawImage ? normalizeTourImageUrl(rawImage) : "";
 
   return {
     id,

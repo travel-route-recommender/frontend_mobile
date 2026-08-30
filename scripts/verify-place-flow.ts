@@ -149,6 +149,12 @@ const commonPlaceCoordinates = mapTourPlaceToPlace({
   lng: 126.977,
 });
 assert(commonPlaceCoordinates?.latitude === 37.5796 && commonPlaceCoordinates.longitude === 126.977, "34. Backend CommonPlace lat/lng를 프론트 좌표로 보존해야 한다");
+const secureTourImage = mapTourPlaceToPlace({
+  id: "tour:image",
+  name: "관광공사 이미지",
+  thumbnailUrl: "http://tong.visitkorea.or.kr/cms/resource/example.JPG",
+});
+assert(secureTourImage?.imageUrl === "https://tong.visitkorea.or.kr/cms/resource/example.JPG", "관광공사 HTTP 이미지는 iOS ATS에 차단되지 않도록 HTTPS로 변환해야 한다");
 assert(buildTourSearchPath({ areaCode: "1", page: 1, limit: 50 }) === "/tour/places?areaCode=1&page=1&size=50", "35. 지역 목록은 존재하는 Tour places 계약을 호출해야 한다");
 assert(buildTourSearchPath({ keyword: "서울", areaCode: "1", page: 1, limit: 50 }) === "/tour/places/search?keyword=%EC%84%9C%EC%9A%B8&areaCode=1&page=1&size=50", "36. 검색어가 있으면 Tour places/search 계약을 호출해야 한다");
 

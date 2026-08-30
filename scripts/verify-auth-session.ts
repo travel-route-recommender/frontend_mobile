@@ -16,11 +16,12 @@ import {
   SingleFlight,
   type StoredAuthState,
 } from "../src/features/auth/services/authTokenState";
-import { ApiError, NativeApiClient, configureApiAuth } from "../src/services/apiClient";
+import { ApiError, NativeApiClient, configureApiAuth, type ApiClient, type ApiRequest } from "../src/services/apiClient";
 import { apiPermissionMessage, guestPagePolicy, restrictedFeatureMessage } from "../src/features/auth/services/guestAccessPolicy";
 import { requestGoogleNativeIdToken } from "../src/features/auth/services/googleNativeAuth";
-import { requestKakaoNativeIdToken } from "../src/features/auth/services/kakaoNativeAuth";
+import { requestKakaoNativeAccessToken, requestKakaoNativeIdToken } from "../src/features/auth/services/kakaoNativeAuth";
 import { buildInviteReturnPath, inviteErrorMessage, resolveAuthReturnTo } from "../src/features/auth/services/inviteFlowPolicy";
+import { requestSocialLoginSession } from "../src/features/auth/services/socialLoginFlow";
 import {
   activateLocalPrivateDataScope,
   deactivateLocalPrivateDataScope,
@@ -223,13 +224,34 @@ async function verifyMultipartRequestBody() {
   }
 }
 
-async function verifyKakaoNativeOidc() {
+async function verifyKakaoNativeTokens() {
+  let accessInitializedWith: string | undefined;
+  let accessLoginNonce: string | undefined;
+  const accessToken = await requestKakaoNativeAccessToken(" native-app-key ", {
+    initialize: (appKey) => { accessInitializedWith = appKey; },
+    login: async (options) => {
+      accessLoginNonce = options?.nonce;
+      return { accessToken: " kakao-access-token " };
+    },
+  });
+  assert(accessInitializedWith === "native-app-key", "Kakao access-token login must initialize with the trimmed native app key");
+  assert(accessLoginNonce === undefined, "Kakao access-token login must not invent a backend challenge nonce");
+  assert(accessToken === "kakao-access-token", "Kakao native login must return its trimmed access token");
+
+  await requestKakaoNativeAccessToken("native-app-key", {
+    initialize: () => undefined,
+    login: async () => ({ idToken: "id-token-only" }),
+  }).then(
+    () => { throw new Error("Kakao login without an access token unexpectedly succeeded"); },
+    (error: unknown) => assert(error instanceof Error && error.message.includes("Access Token"), "missing Kakao access token must fail closed"),
+  );
+
   let initializedWith: string | undefined;
   let requestedNonce: string | undefined;
   const idToken = await requestKakaoNativeIdToken(" native-app-key ", "server-nonce", {
     initialize: (appKey) => { initializedWith = appKey; },
-    login: async ({ nonce }) => {
-      requestedNonce = nonce;
+    login: async (options) => {
+      requestedNonce = options?.nonce;
       return { idToken: "kakao-id-token" };
     },
   });
@@ -244,6 +266,103 @@ async function verifyKakaoNativeOidc() {
     () => { throw new Error("Kakao login without an ID token unexpectedly succeeded"); },
     (error: unknown) => assert(error instanceof Error && error.message.includes("ID Token"), "missing Kakao ID token must fail closed"),
   );
+}
+
+function createStubApi(handler: (request: ApiRequest) => unknown): ApiClient {
+  return {
+    async request<Response>(request: ApiRequest) {
+      return handler(request) as Response;
+    },
+  };
+}
+
+async function verifySocialLoginContracts() {
+  type TestSession = { session: string };
+  const metadata = {
+    installationId: "installation-1",
+    platform: "ios" as const,
+    deviceName: "iPhone",
+    appVersion: "1.0.0",
+  };
+
+  const kakaoCalls: ApiRequest[] = [];
+  let kakaoMetadataCalls = 0;
+  let kakaoIdTokenCalls = 0;
+  const kakaoSession = await requestSocialLoginSession<TestSession>("kakao", {
+    apiClient: createStubApi((request) => {
+      kakaoCalls.push(request);
+      return { session: "kakao" };
+    }),
+    getClientMetadata: async () => {
+      kakaoMetadataCalls += 1;
+      return metadata;
+    },
+    requestKakaoAccessToken: async () => "kakao-access-token",
+    requestProviderIdToken: async () => {
+      kakaoIdTokenCalls += 1;
+      return { kind: "id-token", idToken: "must-not-be-used" };
+    },
+  });
+  assert(kakaoSession.session === "kakao", "Kakao login must return the backend session");
+  assert(kakaoCalls.length === 1, "Kakao login must make exactly one backend request");
+  assert(
+    kakaoCalls[0]?.path === "/auth/oauth/kakao" && kakaoCalls[0]?.method === "POST" && kakaoCalls[0]?.auth === false,
+    "Kakao login must call the current backend OAuth exchange endpoint without app authentication",
+  );
+  const kakaoBody = kakaoCalls[0]?.body as Record<string, unknown>;
+  assert(
+    kakaoBody.accessToken === "kakao-access-token" && Object.keys(kakaoBody).length === 1,
+    "Kakao OAuth exchange must send only the SDK accessToken accepted by the backend DTO",
+  );
+  assert(kakaoMetadataCalls === 0 && kakaoIdTokenCalls === 0, "Kakao login must not call the unsupported challenge/ID-token flow");
+
+  const googleCalls: ApiRequest[] = [];
+  let googleNonce: string | undefined;
+  let googleKakaoTokenCalls = 0;
+  const googleSession = await requestSocialLoginSession<TestSession>("google", {
+    apiClient: createStubApi((request) => {
+      googleCalls.push(request);
+      if (request.path === "/auth/social/challenge") {
+        return { challengeId: "challenge-1", nonce: "google-nonce", state: "issued", expiresIn: 300 };
+      }
+      return { session: "google" };
+    }),
+    getClientMetadata: async () => metadata,
+    requestKakaoAccessToken: async () => {
+      googleKakaoTokenCalls += 1;
+      return "must-not-be-used";
+    },
+    requestProviderIdToken: async (provider, challenge) => {
+      assert(provider === "google", "Google login must request a Google provider token");
+      googleNonce = challenge.nonce;
+      return { kind: "id-token", idToken: "google-id-token" };
+    },
+  });
+  assert(googleSession.session === "google", "Google login must return the backend session");
+  assert(googleCalls.length === 2, "Google login must preserve its two-step challenge exchange");
+  assert(
+    googleCalls[0]?.path === "/auth/social/challenge" && googleCalls[0]?.method === "POST" && googleCalls[0]?.auth === false,
+    "Google login must request a challenge first",
+  );
+  const googleChallengeBody = googleCalls[0]?.body as Record<string, unknown>;
+  assert(
+    googleChallengeBody.provider === "google" && googleChallengeBody.installationId === metadata.installationId && Object.keys(googleChallengeBody).length === 2,
+    "Google challenge request must retain provider and installationId",
+  );
+  assert(
+    googleCalls[1]?.path === "/auth/social/google" && googleCalls[1]?.method === "POST" && googleCalls[1]?.auth === false,
+    "Google login must preserve the ID-token exchange endpoint",
+  );
+  const googleBody = googleCalls[1]?.body as Record<string, unknown>;
+  assert(
+    googleBody.idToken === "google-id-token" &&
+      googleBody.challengeId === "challenge-1" &&
+      googleBody.installationId === metadata.installationId &&
+      googleBody.platform === metadata.platform &&
+      !("accessToken" in googleBody),
+    "Google login must send its ID token, challenge, and client metadata without a Kakao access token",
+  );
+  assert(googleNonce === "google-nonce" && googleKakaoTokenCalls === 0, "Google login must use the issued nonce and never request a Kakao token");
 }
 
 async function verifyGoogleNativeOidc() {
@@ -340,7 +459,8 @@ async function main() {
   await verifyApi401Policy();
   await verifyMultipartRequestBody();
   await verifyGoogleNativeOidc();
-  await verifyKakaoNativeOidc();
+  await verifyKakaoNativeTokens();
+  await verifySocialLoginContracts();
   verifyLocalPrivateDataAccountScope();
   verifyInviteLoginReturnFlow();
   assert(isAccessTokenExpiredError({ status: 401, code: "TOKEN_EXPIRED" }), "TOKEN_EXPIRED policy must stay explicit");
@@ -362,7 +482,7 @@ async function main() {
   assert(apiPermissionMessage(new ApiError("Forbidden", { status: 403 }), "guest", "duri", "fallback").includes("회원 전용"), "403 messaging must combine the requested feature with guest session kind");
   assert(guestPagePolicy.allowed.includes("장소 탐색 및 장소 상세"), "guests must retain read-only explore access");
   assert(guestPagePolicy.memberOnly.includes("저장 장소"), "saved places must remain member-only");
-  console.log("Mobile auth verification passed: token recovery, terminal-code policy, and account-scoped local document/OCR/TODO isolation");
+  console.log("Mobile auth verification passed: provider login contracts, token recovery, terminal-code policy, and account-scoped local document/OCR/TODO isolation");
 }
 
 void main();

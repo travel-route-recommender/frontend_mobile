@@ -17,13 +17,14 @@ import {
   shouldRefreshAccessToken,
   SingleFlight,
 } from "./authTokenState";
-import { requestProviderIdToken } from "./socialAuth";
+import { requestKakaoAccessToken, requestProviderIdToken } from "./socialAuth";
+import { requestSocialLoginSession } from "./socialLoginFlow";
 
 type BackendUser = {
   id: string;
   email?: string;
   nickname: string;
-  profileImageUrl?: string;
+  profileImageUrl?: string | null;
   onboardingCompleted?: boolean;
   travelType?: unknown;
   isGuest: boolean;
@@ -224,7 +225,16 @@ class ApiAuthService implements AuthService {
   async signup(input: SignupInput): Promise<AuthResult> {
     try {
       this.cancelInFlightRefresh();
-      const session = await apiClient.request<BackendSession>({ path: "/auth/signup", method: "POST", auth: false, body: { nickname: input.nickname.trim(), email: normalizeEmail(input.email), password: input.password, ...(await getClientMetadata()) } });
+      const session = await apiClient.request<BackendSession>({
+        path: "/auth/signup",
+        method: "POST",
+        auth: false,
+        body: {
+          nickname: input.nickname.trim(),
+          email: normalizeEmail(input.email),
+          password: input.password,
+        },
+      });
       this.lastProvider = "email";
       await persistSession(session);
       return mapSession(session, "email");
@@ -256,10 +266,12 @@ class ApiAuthService implements AuthService {
   async loginWithSocial(provider: SocialProvider): Promise<AuthResult> {
     try {
       this.cancelInFlightRefresh();
-      const metadata = await getClientMetadata();
-      const challenge = await apiClient.request<SocialChallenge>({ path: "/auth/social/challenge", method: "POST", auth: false, body: { provider, installationId: metadata.installationId } });
-      const authorization = await requestProviderIdToken(provider, challenge);
-      const session = await apiClient.request<BackendSession>({ path: `/auth/social/${provider}`, method: "POST", auth: false, body: { idToken: authorization.idToken, challengeId: challenge.challengeId, ...metadata } });
+      const session = await requestSocialLoginSession<BackendSession>(provider, {
+        apiClient,
+        getClientMetadata,
+        requestKakaoAccessToken,
+        requestProviderIdToken,
+      });
       this.lastProvider = provider;
       await persistSession(session);
       return mapSession(session, provider);

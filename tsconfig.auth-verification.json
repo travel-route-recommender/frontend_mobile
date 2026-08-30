@@ -21,6 +21,7 @@
     "src/features/auth/services/inviteFlowPolicy.ts",
     "src/features/auth/services/googleNativeAuth.ts",
     "src/features/auth/services/kakaoNativeAuth.ts",
+    "src/features/auth/services/socialLoginFlow.ts",
     "src/services/apiClient.ts"
   ]
 }
