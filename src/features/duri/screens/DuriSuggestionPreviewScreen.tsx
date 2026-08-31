@@ -2,19 +2,19 @@ import { useMemo, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { StyleSheet, Text, View } from "react-native";
 import { useShallow } from "zustand/react/shallow";
-import { AppHeader, Card, PrimaryButton, Screen, SecondaryButton } from "../../../components/common";
+import { AppHeader, PrimaryButton, SecondaryButton } from "../../../components/common";
 import { ErrorState } from "../../../components/feedback";
 import { useDuriStore } from "../../../store/useDuriStore";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import { getTripDates } from "../../../utils/schedule";
-import { ScheduleDiffView } from "../components/ScheduleDiffView";
-import { ScheduleSnapshot } from "../components/ScheduleSnapshot";
+import { DuriScrollPage, DuriStickyPage } from "../components/DuriPageShell";
 import { StaleSuggestionNotice } from "../components/StaleSuggestionNotice";
 import { SuggestionApplyConfirmModal } from "../components/SuggestionApplyConfirmModal";
-import { SuggestionChangeCard } from "../components/SuggestionChangeCard";
+import { DuriSuggestionPreviewContent } from "../components/DuriSuggestionPreviewContent";
 import { buildDuriAnalysisInputWithDocuments } from "../logic/analysisInput";
 import { createDuriAnalysisSnapshot, createDuriInputFingerprint } from "../logic/analysisSnapshot";
 import { createDuriSuggestionPreview } from "../logic/suggestionPreview";
+import { getSuggestionIssueTitles } from "../presentation/duriPresentation";
 import { useDuriAnalysisStore } from "../store/useDuriAnalysisStore";
 import { useTripDocumentStore, type TravelDocument } from "../../trip-documents";
 import { buildConfirmedScheduleConstraintsFromDocuments, buildDuriDocumentReferencesFromDocuments } from "../../trip-documents";
@@ -88,62 +88,50 @@ export function DuriSuggestionPreviewScreen() {
     }
   };
 
-  if (!trip || !envelope || !feature.session || !preview) return <Screen><AppHeader title="두리 제안" onBack={() => router.back()} /><ErrorState message="이 제안은 현재 분석 세션에서 찾을 수 없어요. 분석 리포트에서 다시 생성해 주세요." onRetry={reanalyze} /></Screen>;
-  if (!trip.members.some((member) => member.userId === source.currentUserId)) return <Screen><AppHeader title="두리 제안" onBack={() => router.back()} /><ErrorState message="이 여행방의 제안을 볼 권한이 없어요." /></Screen>;
+  if (!trip || !envelope || !feature.session || !preview) return <DuriScrollPage><AppHeader title="개선 제안 미리보기" onBack={() => router.back()} /><ErrorState message="이 제안은 현재 점검 결과에서 찾을 수 없어요. DURI 일정 점검에서 다시 만들어 주세요." onRetry={reanalyze} /></DuriScrollPage>;
+  if (!trip.members.some((member) => member.userId === source.currentUserId)) return <DuriScrollPage><AppHeader title="개선 제안 미리보기" onBack={() => router.back()} /><ErrorState message="이 여행방의 제안을 볼 권한이 없어요." /></DuriScrollPage>;
 
   const canEdit = trip.status !== "completed" && trip.members.some((member) => member.userId === source.currentUserId);
   const disabledReason = feature.receipt
     ? "이미 적용한 제안이에요."
     : stale
-      ? "현재 일정과 제안 fingerprint가 달라요."
+      ? "일정이 변경되어 제안을 다시 확인해야 해요."
       : !preview.validation.valid
         ? preview.validation.message
         : !canEdit
-          ? "이 여행방을 편집할 권한이 없어요."
+          ? "완료된 여행에서는 제안을 볼 수 있지만 적용할 수 없어요."
           : "";
+  const suggestionIndex = Math.max((feature.suggestions?.findIndex((entry) => entry.suggestion.id === suggestionId) ?? 0) + 1, 1);
+  const suggestionCount = feature.suggestions?.length ?? 1;
+  const sourceIssueTitles = getSuggestionIssueTitles(feature.session, envelope.suggestion.sourceIssueIds);
+  const footer = <>
+    {disabledReason ? <Text accessibilityRole="alert" style={styles.disabledReason}>적용 불가 · {disabledReason}</Text> : <Text style={styles.footerScope}>{envelope.suggestion.changes.length > 1 ? `${envelope.suggestion.changes.length}개 변경을 모두 한 번에 적용해요.` : "확인한 변경 1개를 일정에 적용해요."}</Text>}
+    <View style={styles.footerActions}><View style={styles.footerButton}><SecondaryButton label="적용하지 않기" disabled={applying} onPress={() => router.back()} /></View><View style={styles.footerButton}><PrimaryButton label="일정에 적용" loading={applying} disabled={Boolean(disabledReason)} onPress={() => setConfirmOpen(true)} /></View></View>
+  </>;
 
-  return <Screen testID="duri-suggestion-preview-screen">
-    <AppHeader title="제안 미리보기" subtitle="적용 전 변경 내용을 확인하세요" onBack={() => router.back()} />
-    <Card style={styles.hero}><Text style={styles.eyebrow}>DURI SUGGESTION</Text><Text style={styles.title}>{envelope.suggestion.title}</Text><Text style={styles.summary}>{envelope.suggestion.summary}</Text><Text style={styles.reason}>{envelope.suggestion.reason}</Text></Card>
+  return <DuriStickyPage testID="duri-suggestion-preview-screen" footer={footer}>
+    <AppHeader title="개선 제안 미리보기" subtitle={`제안 ${suggestionIndex}/${suggestionCount}`} onBack={() => router.back()} />
 
-    {stale || feature.receipt ? <StaleSuggestionNotice onReanalyze={reanalyze} /> : null}
+    {stale ? <StaleSuggestionNotice onReanalyze={reanalyze} /> : null}
+    {feature.receipt ? <View accessibilityRole="alert" style={styles.applied}><Text style={styles.appliedTitle}>이미 일정에 적용한 제안이에요</Text><Text style={styles.appliedText}>현재 일정에서 최신 결과를 다시 점검해 주세요.</Text></View> : null}
     {applyError ? <View accessibilityRole="alert" style={styles.error}><Text style={styles.errorTitle}>제안을 적용하지 않았어요</Text><Text style={styles.errorText}>{applyError}</Text></View> : null}
-    {!preview.validation.valid ? <View accessibilityRole="alert" style={styles.error}><Text style={styles.errorTitle}>미리보기를 만들 수 없어요</Text><Text style={styles.errorText}>{preview.validation.message}</Text></View> : null}
+    {!preview.validation.valid ? <View accessibilityRole="alert" style={styles.error}><Text style={styles.errorTitle}>현재 일정에는 적용할 수 없어요</Text><Text style={styles.errorText}>{preview.validation.message}</Text></View> : null}
 
-    <View style={styles.section}><Text style={styles.sectionTitle}>변경 요약</Text>{envelope.suggestion.changes.map((change, index) => <SuggestionChangeCard key={`${change.itemId ?? "change"}-${index}`} change={change} placesById={feature.session?.snapshot.placesById ?? source.placesById} />)}</View>
+    <DuriSuggestionPreviewContent suggestion={envelope.suggestion} preview={preview} session={feature.session} trip={trip} placesById={feature.session.snapshot.placesById ?? source.placesById} sourceIssueTitles={sourceIssueTitles} />
 
-    <ScheduleSnapshot label="변경 전 일정" items={preview.before} placesById={feature.session.snapshot.placesById} startDate={trip.startDate} endDate={trip.endDate} />
-    <ScheduleSnapshot label="변경 후 예상 일정" items={preview.after} placesById={feature.session.snapshot.placesById} startDate={trip.startDate} endDate={trip.endDate} />
-    <ScheduleDiffView diff={preview.diff} />
-
-    <View style={styles.section}><Text style={styles.sectionTitle}>계산 가능한 기대 효과</Text>{preview.impact.metrics.length ? preview.impact.metrics.map((metric) => <View key={metric.id} style={styles.impact}><Text style={styles.impactLabel}>{metric.label}</Text><Text style={styles.impactValue}>{metric.before}{metric.unit} → {metric.after}{metric.unit}</Text></View>) : <Text style={styles.noImpact}>시간 충돌·날짜별 개수·공동 후보 배치에서 달라지는 수치가 없어요. 계산하지 않은 만족도나 이동시간 효과는 표시하지 않아요.</Text>}</View>
-
-    <View style={styles.notice}><Text style={styles.noticeTitle}>적용 전 확인</Text><Text style={styles.noticeText}>분석 세션에서 확인한 경로·운영정보와 사용자 사실을 다시 대조하고, 전체 validation이 성공한 경우에만 일정 Store를 한 번 갱신해요. 사용자 잠금·확정 예약·연결 문서는 자동으로 해제하지 않아요.</Text></View>
-    {disabledReason ? <Text accessibilityRole="alert" style={styles.disabledReason}>적용 불가 · {disabledReason}</Text> : null}
-    <PrimaryButton label="제안 적용 확인" disabled={Boolean(disabledReason)} onPress={() => setConfirmOpen(true)} />
-    <SecondaryButton label="취소하고 리포트로" onPress={() => router.back()} />
-
-    <SuggestionApplyConfirmModal visible={confirmOpen} title={envelope.suggestion.title} affectedDates={preview.affectedDates} loading={applying} onCancel={() => { if (!applying) setConfirmOpen(false); }} onConfirm={apply} />
-  </Screen>;
+    <SuggestionApplyConfirmModal visible={confirmOpen} title={envelope.suggestion.title} affectedDates={preview.affectedDates} changeCount={envelope.suggestion.changes.length} loading={applying} onCancel={() => { if (!applying) setConfirmOpen(false); }} onConfirm={apply} />
+  </DuriStickyPage>;
 }
 
 const styles = StyleSheet.create({
-  hero: { gap: spacing.xs, backgroundColor: "#F8FBFF" },
-  eyebrow: { ...typography.caption, color: colors.primary },
-  title: { ...typography.title, color: colors.text },
-  summary: { ...typography.body, color: colors.textSecondary },
-  reason: { ...typography.caption, color: colors.textMuted },
-  section: { gap: spacing.sm },
-  sectionTitle: { ...typography.subtitle, color: colors.text },
-  impact: { flexDirection: "row", justifyContent: "space-between", gap: spacing.md, borderRadius: radius.md, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, padding: spacing.md },
-  impactLabel: { flex: 1, ...typography.bodyStrong, color: colors.text },
-  impactValue: { ...typography.bodyStrong, color: colors.primary },
-  noImpact: { ...typography.caption, color: colors.textSecondary, borderRadius: radius.md, backgroundColor: colors.surfaceMuted, padding: spacing.md },
-  notice: { gap: spacing.xs, borderRadius: radius.lg, backgroundColor: colors.primarySoft, padding: spacing.md },
-  noticeTitle: { ...typography.bodyStrong, color: colors.primary },
-  noticeText: { ...typography.caption, color: colors.textSecondary },
   error: { gap: spacing.xs, borderRadius: radius.lg, backgroundColor: colors.dangerSoft, padding: spacing.md },
   errorTitle: { ...typography.bodyStrong, color: colors.danger },
   errorText: { ...typography.caption, color: colors.textSecondary },
+  applied: { gap: spacing.xs, borderRadius: radius.lg, backgroundColor: colors.successSoft, padding: spacing.md },
+  appliedTitle: { ...typography.bodyStrong, color: colors.success },
+  appliedText: { ...typography.caption, color: colors.textSecondary },
+  footerScope: { fontSize: 10, lineHeight: 15, fontWeight: "700", color: colors.textMuted, textAlign: "center" },
   disabledReason: { ...typography.caption, color: colors.warning, textAlign: "center" },
+  footerActions: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  footerButton: { flex: 1, minWidth: 0 },
 });

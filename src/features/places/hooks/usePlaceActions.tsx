@@ -40,7 +40,7 @@ export function usePlaceActions() {
   const eligibleTrips = useMemo(() => selectEligibleTripsForPlaceCandidate(source), [source]);
   const selectedPlace = selectedPlaceId ? source.placesById[selectedPlaceId] : undefined;
 
-  const toggleSaved = (placeId: EntityId) => {
+  const toggleSaved = (placeId: EntityId, options?: { silent?: boolean }) => {
     const place = source.placesById[placeId];
     const decision = canSavePlace(sessionKind, source.usersById[source.currentUserId], place);
     if (!decision.allowed) {
@@ -49,7 +49,7 @@ export function usePlaceActions() {
     }
     const wasSaved = (source.savedPlaceIdsByUserId[source.currentUserId] ?? []).includes(placeId);
     toggleSavedPlace(placeId);
-    setFeedback({ message: wasSaved ? "저장을 해제했어요." : "저장한 장소에 추가했어요." });
+    if (!options?.silent) setFeedback({ message: wasSaved ? "저장을 해제했어요." : "저장한 장소에 추가했어요." });
   };
 
   const addPlaceToTrip = (placeId: EntityId, tripId: EntityId) => {
@@ -143,6 +143,22 @@ export function usePlaceActions() {
     setSelectedPlaceId(placeId);
   };
 
+  const requestCandidatePicker = (placeId: EntityId) => {
+    if (sessionKind !== "member" && sessionKind !== "guest") {
+      requireMember(() => undefined, "여행 후보 추가");
+      return;
+    }
+    if (!source.placesById[placeId]) {
+      setFeedback({ message: "장소 정보를 찾을 수 없어요." });
+      return;
+    }
+    if (environment.dataSource === "api") {
+      requestCandidate(placeId);
+      return;
+    }
+    setSelectedPlaceId(placeId);
+  };
+
   const addToTrip = (tripId: EntityId) => {
     if (!selectedPlace) { setFeedback({ message: "장소 정보를 찾을 수 없어요." }); return; }
     addPlaceToTrip(selectedPlace.id, tripId);
@@ -157,6 +173,7 @@ export function usePlaceActions() {
     memberGatePrompt,
     toggleSaved,
     requestCandidate,
+    requestCandidatePicker,
     requestMember: (actionLabel: string) => requireMember(() => undefined, actionLabel),
     addToTrip,
     closeCandidatePicker: () => setSelectedPlaceId(undefined),

@@ -2,6 +2,7 @@ export { ItineraryAttachmentPicker } from "./components/ItineraryAttachmentPicke
 export { TravelDocumentAddModal } from "./components/TravelDocumentAddModal";
 export { TravelDocumentFactReviewModal } from "./components/TravelDocumentFactReviewModal";
 export { TripDocumentSection } from "./components/TripDocumentSection";
+export type { TripDocumentSectionHandle } from "./components/TripDocumentSection";
 export { ensureTripDocumentStoreHydrated, useTripDocumentHydration } from "./hooks/useTripDocumentHydration";
 export { normalizeExternalTravelDocumentUrl } from "./logic/externalDocumentUrl";
 export { useTripDocumentHydrationState, useTripDocumentStore } from "./store/useTripDocumentStore";

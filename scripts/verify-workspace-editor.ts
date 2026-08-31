@@ -6,14 +6,17 @@ import {
   SLOT_MINUTES,
   WORKSPACE_HOUR_LABEL_COUNT,
 } from "../src/data/workspaceSchedule";
-import { canEditTripWorkspace } from "../src/features/workspace/logic/workspaceCapabilities";
+import { buildWorkspaceMutationPermissions, canEditTripWorkspace } from "../src/features/workspace/logic/workspaceCapabilities";
+import { resolveDuriWorkspaceAction } from "../src/features/duri/logic/duriWorkspaceAction";
 import {
   WORKSPACE_BOARD_COLLAPSED_HEIGHT_PX,
   clampWorkspaceBoardHeight,
   getInitialWorkspaceBoardHeight,
   getWorkspaceBoardHeightBounds,
+  getWorkspaceBoardSnapState,
   isWorkspaceBoardCollapsed,
   resizeWorkspaceBoardHeight,
+  snapWorkspaceBoardHeight,
   stepWorkspaceBoardHeight,
 } from "../src/features/workspace/logic/workspaceBoardLayout";
 import {
@@ -49,11 +52,9 @@ import {
 } from "../src/features/workspace/logic/workspaceDateTime";
 import {
   buildCandidatePlaceViewModels,
-  buildCandidateScheduleLookup,
   buildItineraryItemViewModels,
   buildWorkspaceViewModel,
   filterCandidatePlaceViewModels,
-  selectCandidateScheduleState,
   selectItineraryItemsForDate,
 } from "../src/features/workspace/selectors/workspaceSelectors";
 import { resolveScheduleDocumentLinkMutation, validateCreateItineraryItem } from "../src/features/workspace/validation/workspaceValidation";
@@ -133,11 +134,11 @@ const emptyView = buildWorkspaceViewModel(emptyState, "trip", "", "member", "202
 assert(emptyView?.candidateCount === 0, "6. 후보 0개");
 assert(emptyView?.itineraryCount === 0, "7. 일정 0개");
 
-const lookupNone = buildCandidateScheduleLookup([]);
-assert(selectCandidateScheduleState(lookupNone, "cafe", "2026-07-18") === "unscheduled", "8. 후보 미배치");
-const lookupSelected = buildCandidateScheduleLookup([item("one", "cafe", "2026-07-18", "10:00")]);
-assert(selectCandidateScheduleState(lookupSelected, "cafe", "2026-07-18") === "scheduled-on-selected-date", "9. 선택 날짜에 배치");
-assert(selectCandidateScheduleState(lookupSelected, "cafe", "2026-07-19") === "scheduled-on-other-date", "10. 다른 날짜에 배치");
+const unscheduledCandidateState = { ...emptyState, candidatesByTripId: { trip: [candidate("cafe")] } };
+assert(buildCandidatePlaceViewModels(unscheduledCandidateState, "trip", "2026-07-18")[0]?.scheduleState === "unscheduled", "8. 후보 미배치");
+const scheduledCandidateState = { ...unscheduledCandidateState, itineraryByTripId: { trip: [item("one", "cafe", "2026-07-18", "10:00")] } };
+assert(buildCandidatePlaceViewModels(scheduledCandidateState, "trip", "2026-07-18")[0]?.scheduleState === "scheduled-on-selected-date", "9. 선택 날짜에 배치");
+assert(buildCandidatePlaceViewModels(scheduledCandidateState, "trip", "2026-07-19")[0]?.scheduleState === "scheduled-on-other-date", "10. 다른 날짜에 배치");
 const legacyCandidate = { ...candidate("cafe"), scheduled: true } as TripCandidate & { scheduled: boolean };
 const mismatchState = { ...emptyState, candidatesByTripId: { trip: [legacyCandidate] } };
 assert(buildCandidatePlaceViewModels(mismatchState, "trip", "2026-07-18")[0]?.scheduleState === "unscheduled", "11. candidate.scheduled 불일치에서 itinerary 우선");
@@ -166,6 +167,24 @@ assert(buildWorkspaceViewModel(emptyState, "missing", "", "member", "2026-01-01"
 assert(!canEditTripWorkspace({ sessionKind: "member", currentUserId: "owner", trip: trip("completed") }).allowed, "26. 완료 여행방 편집 시도");
 assert(!canEditTripWorkspace({ sessionKind: "anonymous", currentUserId: "", trip: trip() }).allowed, "27. anonymous 편집 시도");
 assert(canEditTripWorkspace({ sessionKind: "guest", currentUserId: "guest", trip: trip() }).allowed, "28. guest 편집 권한");
+const readOnlyPermissions = buildWorkspaceMutationPermissions({ sessionKind: "member", currentUserId: "owner", trip: trip("completed") });
+assert(!readOnlyPermissions.permissions.canAddSchedule
+  && !readOnlyPermissions.permissions.canEditSchedule
+  && !readOnlyPermissions.permissions.canDeleteSchedule
+  && !readOnlyPermissions.permissions.canEditTripStructure,
+"28a. 완료 여행은 Add·Duplicate Add·Drag·Resize·Edit Save·Delete·DAY·여행 조건 mutation을 하나의 권한 원본에서 모두 차단");
+const editablePermissions = buildWorkspaceMutationPermissions({ sessionKind: "member", currentUserId: "owner", trip: trip() });
+assert(Object.values(editablePermissions.permissions).every(Boolean), "28b. 편집 가능 여행은 기존 일정 mutation 권한을 유지");
+
+const createScheduleAction = resolveDuriWorkspaceAction({ itineraryCount: 0, hasAnalysis: true, stale: true, canCreateSchedule: true, canUseAnalysis: true });
+const runAnalysisAction = resolveDuriWorkspaceAction({ itineraryCount: 3, hasAnalysis: false, stale: false, canCreateSchedule: true, canUseAnalysis: true });
+const viewAnalysisAction = resolveDuriWorkspaceAction({ itineraryCount: 3, hasAnalysis: true, stale: false, canCreateSchedule: true, canUseAnalysis: false });
+const reanalyzeAction = resolveDuriWorkspaceAction({ itineraryCount: 3, hasAnalysis: true, stale: true, canCreateSchedule: true, canUseAnalysis: true });
+assert(createScheduleAction.kind === "create_schedule" && createScheduleAction.label === "일정 먼저 만들기" && createScheduleAction.destination === "schedule-add-flow", "28c. DURI 일정 0개 상태는 stale보다 먼저 기존 일정 추가 흐름을 선택");
+assert(runAnalysisAction.kind === "run_analysis" && runAnalysisAction.label === "DURI 분석하기", "28d. DURI 일정 있음·분석 없음 상태");
+assert(viewAnalysisAction.kind === "view_analysis" && viewAnalysisAction.label === "분석 결과 보기" && viewAnalysisAction.enabled, "28e. DURI 유효 분석 결과는 엔진 실행 가능 여부와 무관하게 열람 가능");
+assert(reanalyzeAction.kind === "reanalyze" && reanalyzeAction.label === "다시 분석하기", "28f. DURI stale 분석 상태");
+assert(!resolveDuriWorkspaceAction({ itineraryCount: 0, hasAnalysis: false, stale: false, canCreateSchedule: false, canUseAnalysis: true }).enabled, "28g. 읽기 전용 일정 0개에서는 DURI 일정 추가 CTA도 비활성화");
 
 const demo = createDemoData();
 const restored = normalizePersistedState(demo);
@@ -238,6 +257,21 @@ assert(filterCandidatePlaceViewModels(relationshipCandidates, "", "all", "owner"
 assert(filterCandidatePlaceViewModels(relationshipCandidates, "", "common", "owner")[0]?.placeId === "market", "40. 공통 관심 필터");
 assert(filterCandidatePlaceViewModels(relationshipCandidates, "", "mine", "owner").length === 2, "41. 내가 담은 장소 필터");
 assert(filterCandidatePlaceViewModels(relationshipCandidates, "", "companion", "owner")[0]?.placeId === "market", "42. 동행자가 담은 장소 필터");
+
+const duplicateScheduleState = {
+  ...unscheduledCandidateState,
+  itineraryByTripId: {
+    trip: [
+      item("first-visit", "cafe", "2026-07-18", "10:00"),
+      item("second-visit", "cafe", "2026-07-19", "12:00", 30),
+    ],
+  },
+};
+const duplicateCandidateView = buildCandidatePlaceViewModels(duplicateScheduleState, "trip", "2026-07-18")[0];
+assert(duplicateCandidateView?.scheduledCount === 2 && duplicateCandidateView.scheduledDates.join() === "2026-07-18,2026-07-19", "42a. 같은 후보의 독립 일정 두 개를 canonical scheduledCount로 집계");
+assert(duplicateScheduleState.itineraryByTripId.trip.map((entry) => entry.id).join() === "first-visit,second-visit", "42b. 중복 배치가 첫 일정을 덮어쓰지 않고 별도 item을 유지");
+const repeatValidation = validateCreateItineraryItem({ sessionKind: "member", currentUserId: "owner", trip: trip(), candidate: candidate("cafe"), place: places.cafe, itinerary: [item("first-visit", "cafe", "2026-07-18", "10:00")], date: "2026-07-18", startTime: "12:00", endTime: "13:00" });
+assert(repeatValidation.valid, "42c. 이미 배치된 후보도 겹치지 않는 다른 시간에 새 일정으로 추가 가능");
 
 const conflictValidation = validateCreateItineraryItem({ sessionKind: "member", currentUserId: "owner", trip: trip(), candidate: candidate("market"), place: places.market, itinerary: [item("existing", "cafe", "2026-07-18", "10:00", 90)], date: "2026-07-18", startTime: "11:00", endTime: "12:00" });
 assert(!conflictValidation.valid && conflictValidation.conflictItemIds[0] === "existing", "추가 validation은 겹치는 item ID를 반환해야 한다");
@@ -319,19 +353,19 @@ assert(WORKSPACE_HOUR_LABEL_COUNT === 25, "75b. 00:00부터 24:00까지 모든 �
 
 const boardBounds = getWorkspaceBoardHeightBounds(900, 20, 30);
 const boardInitialHeight = getInitialWorkspaceBoardHeight(900, boardBounds);
-assert(boardBounds.minHeight === WORKSPACE_BOARD_COLLAPSED_HEIGHT_PX && boardBounds.maxHeight === 730, "76. 손잡이만 남기는 최소 높이와 safe area 기반 후보 보드 경계");
-assert(resizeWorkspaceBoardHeight(boardInitialHeight, -37, boardBounds) === boardInitialHeight + 37, "77. 하단 보드의 위 손잡이를 올리면 snap 없이 연속 높이 확장");
-assert(resizeWorkspaceBoardHeight(boardInitialHeight, 37, boardBounds) === boardInitialHeight - 37, "77b. 하단 보드의 위 손잡이를 내리면 snap 없이 연속 높이 축소");
+assert(boardBounds.minHeight === WORKSPACE_BOARD_COLLAPSED_HEIGHT_PX && boardBounds.halfHeight === 459 && boardBounds.maxHeight === 746, "76. Peek/Half/Full 후보 보드 경계");
+assert(boardInitialHeight === boardBounds.minHeight && getWorkspaceBoardSnapState(boardInitialHeight, boardBounds) === "peek", "76b. 초기 후보 보드는 Timeline을 가리지 않는 Peek");
+assert(resizeWorkspaceBoardHeight(boardInitialHeight, -37, boardBounds) === boardInitialHeight + 37, "77. 드래그 중에는 연속 높이 확장");
+assert(resizeWorkspaceBoardHeight(boardBounds.halfHeight, 37, boardBounds) === boardBounds.halfHeight - 37, "77b. Half에서도 드래그 중 연속 높이 축소");
 assert(resizeWorkspaceBoardHeight(boardInitialHeight, -10_000, boardBounds) === boardBounds.maxHeight, "78. 후보 보드 최대 높이 clamp");
 const collapsedBoardHeight = resizeWorkspaceBoardHeight(boardInitialHeight, 10_000, boardBounds);
-assert(collapsedBoardHeight === boardBounds.minHeight && isWorkspaceBoardCollapsed(collapsedBoardHeight, boardBounds), "79. 후보 보드를 끝까지 내리면 손잡이 전용 높이로 clamp");
-assert(resizeWorkspaceBoardHeight(collapsedBoardHeight, -37, boardBounds) === collapsedBoardHeight + 37 && !isWorkspaceBoardCollapsed(collapsedBoardHeight + 37, boardBounds), "79b. 숨긴 손잡이를 위로 끌면 snap 없이 다시 열림");
-assert(resizeWorkspaceBoardHeight(100, 55, boardBounds) === 45 && !isWorkspaceBoardCollapsed(45, boardBounds), "79c. 손잡이 높이 직전까지 연속 축소");
-assert(resizeWorkspaceBoardHeight(100, 56, boardBounds) === WORKSPACE_BOARD_COLLAPSED_HEIGHT_PX && isWorkspaceBoardCollapsed(WORKSPACE_BOARD_COLLAPSED_HEIGHT_PX, boardBounds), "79d. 손잡이 높이에 도달하는 즉시 숨김 상태 판정");
-assert(stepWorkspaceBoardHeight(boardInitialHeight, 1, boardBounds) === boardInitialHeight + 20, "80. 접근성 높이 20픽셀 증가");
-assert(stepWorkspaceBoardHeight(boardBounds.minHeight, -1, boardBounds) === boardBounds.minHeight && stepWorkspaceBoardHeight(boardBounds.minHeight, 1, boardBounds) === boardBounds.minHeight + 20, "80b. 숨김 경계 접근성 증감 clamp 및 재열기");
+assert(collapsedBoardHeight === boardBounds.minHeight && isWorkspaceBoardCollapsed(collapsedBoardHeight, boardBounds), "79. 후보 보드를 끝까지 내리면 Peek로 clamp");
+assert(snapWorkspaceBoardHeight(430, 0, boardBounds) === boardBounds.halfHeight && getWorkspaceBoardSnapState(430, boardBounds) === "half", "79b. 드래그 해제 시 가장 가까운 Half로 snap");
+assert(snapWorkspaceBoardHeight(700, 0, boardBounds) === boardBounds.maxHeight && getWorkspaceBoardSnapState(700, boardBounds) === "full", "79c. 확장 해제 시 가장 가까운 Full로 snap");
+assert(stepWorkspaceBoardHeight(boardInitialHeight, 1, boardBounds) === boardBounds.halfHeight, "80. 접근성 높이 증가는 다음 의미 상태로 이동");
+assert(stepWorkspaceBoardHeight(boardBounds.minHeight, -1, boardBounds) === boardBounds.minHeight && stepWorkspaceBoardHeight(boardBounds.halfHeight, 1, boardBounds) === boardBounds.maxHeight, "80b. 접근성 Peek/Half/Full 단계 clamp");
 const compactBoardBounds = getWorkspaceBoardHeightBounds(360, 30, 30);
-assert(compactBoardBounds.minHeight === WORKSPACE_BOARD_COLLAPSED_HEIGHT_PX && clampWorkspaceBoardHeight(boardInitialHeight, compactBoardBounds) === compactBoardBounds.maxHeight, "81. 창 축소 시 손잡이 최소 높이를 유지하며 후보 보드 높이 재조정");
+assert(compactBoardBounds.minHeight === WORKSPACE_BOARD_COLLAPSED_HEIGHT_PX && compactBoardBounds.halfHeight === 162 && clampWorkspaceBoardHeight(boardBounds.maxHeight, compactBoardBounds) === compactBoardBounds.maxHeight, "81. 창 축소 시 Peek를 유지하며 후보 보드 높이 재조정");
 const tinyBoardBounds = getWorkspaceBoardHeightBounds(120, 40, 40);
 assert(tinyBoardBounds.minHeight === 40 && tinyBoardBounds.maxHeight === 40, "81b. 손잡이보다 작은 safe viewport에서는 후보 보드도 실제 화면 높이로 제한");
 const zeroBoardBounds = getWorkspaceBoardHeightBounds(0, 40, 40);

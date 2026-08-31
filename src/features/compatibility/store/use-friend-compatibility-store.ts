@@ -2,14 +2,13 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { MOCK_FRIEND_IDS, NEW_MOCK_FRIEND_IDS } from "../config/mock-friends";
+import { resolveSavedFriendIds } from "../logic/resolve-saved-friend-ids";
 import type { FriendCompatibilityResult } from "../types";
 
 const FRIEND_STORE_KEY = "duri-friend-compatibility";
 const FRIEND_STORE_VERSION = 2;
 type UnknownRecord = Record<string, unknown>;
 const isRecord = (value: unknown): value is UnknownRecord => Boolean(value) && typeof value === "object" && !Array.isArray(value);
-const DEFAULT_FRIEND_IDS: string[] = [...MOCK_FRIEND_IDS];
-const EMPTY_FRIEND_IDS: string[] = [];
 
 function normalizeSavedFriends(value: unknown, appendNewFriends = false) {
   if (!isRecord(value)) return {};
@@ -41,7 +40,7 @@ export const useFriendCompatibilityStore = create<FriendCompatibilityState>()(
       errorMessage: null,
       toggleSavedFriend: (userId, friendId) => set((state) => {
         if (!userId || !MOCK_FRIEND_IDS.includes(friendId as (typeof MOCK_FRIEND_IDS)[number])) return state;
-        const current = state.savedFriendIdsByUserId[userId] ?? DEFAULT_FRIEND_IDS;
+        const current = resolveSavedFriendIds(state.savedFriendIdsByUserId, userId);
         const next = current.includes(friendId) ? current.filter((id) => id !== friendId) : [...current, friendId];
         return { savedFriendIdsByUserId: { ...state.savedFriendIdsByUserId, [userId]: next } };
       }),
@@ -76,6 +75,5 @@ export const useFriendCompatibilityStore = create<FriendCompatibilityState>()(
 );
 
 export function selectSavedFriendIds(state: FriendCompatibilityState, userId: string | null | undefined) {
-  if (!userId) return EMPTY_FRIEND_IDS;
-  return state.savedFriendIdsByUserId[userId] ?? DEFAULT_FRIEND_IDS;
+  return resolveSavedFriendIds(state.savedFriendIdsByUserId, userId);
 }

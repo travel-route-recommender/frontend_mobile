@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import type { DuriReportIssue, DuriReportIssueCategory } from "../types";
+import { DuriKoreanText } from "./DuriKoreanText";
 
 const categoryLabel: Record<DuriReportIssueCategory, string> = {
   route: "동선",
@@ -52,8 +53,8 @@ export function AnalysisIssueCard({
       issue.confidence === "low" && styles.confidenceLow,
       issue.confidence === "unknown" && styles.confidenceUnknown,
     ]}>{confidenceLabel[issue.confidence]}</Text></View>
-    <Text style={styles.title}>{issue.title}</Text>
-    <Text style={styles.summary}>{issue.summary}</Text>
+    <DuriKoreanText style={styles.title}>{issue.title}</DuriKoreanText>
+    <DuriKoreanText style={styles.summary}>{issue.summary}</DuriKoreanText>
     {issue.date ? <Text style={styles.date}>관련 날짜 · {issue.date}</Text> : null}
     {visibleEvidence.length ? <View style={styles.evidenceList}>{visibleEvidence.map((entry, index) => <View key={`${entry.label}-${index}`} style={styles.evidenceRow}>
       <Text style={styles.evidence}>· {entry.label}: {entry.value}</Text>

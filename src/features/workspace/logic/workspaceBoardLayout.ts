@@ -1,9 +1,12 @@
-export const WORKSPACE_BOARD_COLLAPSED_HEIGHT_PX = 44;
-export const WORKSPACE_BOARD_RESERVED_VIEWPORT_PX = 120;
-export const WORKSPACE_BOARD_ACCESSIBILITY_STEP_PX = 20;
+export const WORKSPACE_BOARD_PEEK_HEIGHT_PX = 116;
+export const WORKSPACE_BOARD_COLLAPSED_HEIGHT_PX = WORKSPACE_BOARD_PEEK_HEIGHT_PX;
+export const WORKSPACE_BOARD_RESERVED_VIEWPORT_PX = 104;
+
+export type WorkspaceBoardSnapState = "peek" | "half" | "full";
 
 export type WorkspaceBoardHeightBounds = {
   minHeight: number;
+  halfHeight: number;
   maxHeight: number;
 };
 
@@ -28,26 +31,54 @@ export function getWorkspaceBoardHeightBounds(
       - finiteNonNegative(bottomInset),
     0,
   );
-  const availableHeight = Math.max(
+  const minHeight = Math.min(WORKSPACE_BOARD_PEEK_HEIGHT_PX, safeViewportHeight);
+  const maxHeight = Math.max(
+    minHeight,
     safeViewportHeight - WORKSPACE_BOARD_RESERVED_VIEWPORT_PX,
-    0,
   );
-  const minHeight = Math.min(WORKSPACE_BOARD_COLLAPSED_HEIGHT_PX, safeViewportHeight);
-  return { minHeight, maxHeight: Math.max(minHeight, availableHeight) };
+  const halfHeight = Math.min(
+    Math.max(Math.round(safeViewportHeight * 0.54), minHeight),
+    maxHeight,
+  );
+  return { minHeight, halfHeight, maxHeight };
+}
+
+export function getWorkspaceBoardSnapState(
+  height: number,
+  bounds: WorkspaceBoardHeightBounds,
+): WorkspaceBoardSnapState {
+  const value = clampWorkspaceBoardHeight(height, bounds);
+  const points: [WorkspaceBoardSnapState, number][] = [
+    ["peek", bounds.minHeight],
+    ["half", bounds.halfHeight],
+    ["full", bounds.maxHeight],
+  ];
+  return points.reduce((nearest, point) => (
+    Math.abs(point[1] - value) < Math.abs(nearest[1] - value) ? point : nearest
+  ))[0];
+}
+
+export function getWorkspaceBoardSnapHeight(
+  state: WorkspaceBoardSnapState,
+  bounds: WorkspaceBoardHeightBounds,
+) {
+  if (state === "peek") return bounds.minHeight;
+  if (state === "half") return bounds.halfHeight;
+  return bounds.maxHeight;
 }
 
 export function isWorkspaceBoardCollapsed(
   height: number,
   bounds: WorkspaceBoardHeightBounds,
 ) {
-  return clampWorkspaceBoardHeight(height, bounds) <= bounds.minHeight + 0.5;
+  return getWorkspaceBoardSnapState(height, bounds) === "peek";
 }
 
 export function getInitialWorkspaceBoardHeight(
   viewportHeight: number,
   bounds: WorkspaceBoardHeightBounds,
 ) {
-  return clampWorkspaceBoardHeight(viewportHeight * 0.52, bounds);
+  return clampWorkspaceBoardHeight(Math.min(viewportHeight, bounds.minHeight), bounds);
 }
 
 export function resizeWorkspaceBoardHeight(
@@ -64,8 +95,19 @@ export function stepWorkspaceBoardHeight(
   direction: -1 | 1,
   bounds: WorkspaceBoardHeightBounds,
 ) {
-  return clampWorkspaceBoardHeight(
-    currentHeight + direction * WORKSPACE_BOARD_ACCESSIBILITY_STEP_PX,
-    bounds,
+  const states: WorkspaceBoardSnapState[] = ["peek", "half", "full"];
+  const currentState = getWorkspaceBoardSnapState(currentHeight, bounds);
+  const nextIndex = Math.min(
+    Math.max(states.indexOf(currentState) + direction, 0),
+    states.length - 1,
   );
+  return getWorkspaceBoardSnapHeight(states[nextIndex], bounds);
+}
+
+export function snapWorkspaceBoardHeight(
+  currentHeight: number,
+  _velocityY: number,
+  bounds: WorkspaceBoardHeightBounds,
+) {
+  return getWorkspaceBoardSnapHeight(getWorkspaceBoardSnapState(currentHeight, bounds), bounds);
 }

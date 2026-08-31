@@ -17,6 +17,7 @@ import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import { formatTripDateRange } from "../../../utils/formatters";
 import { useAuthSessionStore } from "../../auth/store/useAuthSessionStore";
 import { DuriAnalysisEntryCard } from "../../duri/components/DuriAnalysisEntryCard";
+import { resolveDuriWorkspaceAction } from "../../duri/logic/duriWorkspaceAction";
 import { buildTripExploreHref } from "../../explore/logic/exploreNavigation";
 import { useExploreSearchStore } from "../../explore/store/useExploreSearchStore";
 import { saveApiTripLocalFacts } from "../../trip-creation/services/apiTripFactsStorage";
@@ -167,9 +168,9 @@ export function ApiWorkspaceScreen() {
   const savingRef = useRef(false);
   const [feedback, setFeedback] = useState<WorkspaceFeedback>({ message: "" });
 
-  if (!currentUserId) return <Screen><AppHeader title="여행 워크스페이스" onBack={returnFromWorkspace} /><ErrorState message="로그인 사용자 정보를 확인하지 못했어요." /></Screen>;
-  if (query.isLoading) return <Screen><AppHeader title="여행 워크스페이스" onBack={returnFromWorkspace} /><LoadingState label="서버 후보와 일정을 불러오고 있어요." /></Screen>;
-  if (query.error || !query.data) return <Screen><AppHeader title="여행 워크스페이스" onBack={returnFromWorkspace} /><ErrorState message={query.error instanceof Error ? query.error.message : "서버 워크스페이스를 불러오지 못했어요."} onRetry={() => void query.refetch()} /></Screen>;
+  if (!currentUserId) return <Screen><AppHeader title="여행 일정" onBack={returnFromWorkspace} /><ErrorState message="로그인 사용자 정보를 확인하지 못했어요." /></Screen>;
+  if (query.isLoading) return <Screen><AppHeader title="여행 일정" onBack={returnFromWorkspace} /><LoadingState label="서버 후보와 일정을 불러오고 있어요." /></Screen>;
+  if (query.error || !query.data) return <Screen><AppHeader title="여행 일정" onBack={returnFromWorkspace} /><ErrorState message={query.error instanceof Error ? query.error.message : "서버 워크스페이스를 불러오지 못했어요."} onRetry={() => void query.refetch()} /></Screen>;
   const data = query.data;
   const activeSnapshot = snapshot?.scope.roomId === tripId
     && snapshot.scope.tripId === tripId
@@ -204,7 +205,13 @@ export function ApiWorkspaceScreen() {
   const filteredCandidates = filterCandidatePlaceViewModels(candidateViews, candidateKeyword, candidateFilter, currentUserId);
   const itineraryViews = buildItineraryItemViewModels(source, tripId, selectedDate, workspace.dates.map((date) => date.date));
   const endConditionTimeline = buildTripEndConditionTimelineEntry(trip);
-  const editable = workspace.canEdit && !saving;
+  const duriAction = resolveDuriWorkspaceAction({
+    itineraryCount: workspace.itineraryCount,
+    hasAnalysis: false,
+    stale: false,
+    canCreateSchedule: workspace.permissions.canAddSchedule && !saving,
+    canUseAnalysis: false,
+  });
   const tripFactsDraft: WorkspaceTripFactsDraft = {
     transport: localFacts?.transport ?? "public",
     accommodationLocation: localFacts?.accommodationLocation?.name ?? "",
@@ -219,6 +226,16 @@ export function ApiWorkspaceScreen() {
   };
 
   const showFeedback = (message: string, targetDate?: string) => setFeedback({ message, ...(targetDate ? { targetDate } : {}) });
+  const blockMutation = (allowed: boolean, fallback: string) => {
+    if (allowed) return false;
+    showFeedback(workspace.readOnlyReason ?? fallback);
+    return true;
+  };
+  const openScheduleAddFlow = () => {
+    if (savingRef.current) { showFeedback("이전 변경을 저장하고 있어요."); return; }
+    if (blockMutation(workspace.permissions.canAddSchedule, "새 일정을 추가할 수 없어요.")) return;
+    setSelectCandidateOpen(true);
+  };
   const updateCachedSchedule = (saved: WorkspaceScheduleSnapshot) => {
     queryClient.setQueryData<ApiTripDetailData>(queryKeys.trips.detail(tripId), (current) => current ? {
       ...current,
@@ -238,6 +255,7 @@ export function ApiWorkspaceScreen() {
     successMessage: string,
     confirmedTicketRemovalItemIds: readonly string[] = [],
   ) => {
+    if (blockMutation(workspace.permissions.canEditSchedule, "서버 일정을 수정할 수 없어요.")) return false;
     const base = activeSnapshot;
     if (savingRef.current) {
       showFeedback("이전 변경을 저장하고 있어요. 잠시 후 다시 시도해 주세요.");
@@ -299,21 +317,26 @@ export function ApiWorkspaceScreen() {
     }
   };
 
-  const openAddEditor = (candidate: CandidatePlaceViewModel, allowRepeat = false) => {
-    if (!editable) { showFeedback(workspace.readOnlyReason ?? "저장 중에는 새 일정을 추가할 수 없어요."); return; }
+  const openAddEditor = (candidate: CandidatePlaceViewModel) => {
+    if (savingRef.current) { showFeedback("저장 중에는 새 일정을 추가할 수 없어요."); return; }
+    if (blockMutation(workspace.permissions.canAddSchedule, "새 일정을 추가할 수 없어요.")) return;
     if (candidate.placeMissing) { showFeedback("장소 정보가 누락되어 일정에 추가할 수 없어요."); return; }
-    if (!allowRepeat && candidate.scheduleState !== "unscheduled") {
-      const targetDate = candidate.scheduleState === "scheduled-on-selected-date" ? selectedDate : candidate.scheduledDates[0];
-      if (targetDate) setRequestedDate(targetDate);
-      showFeedback("이미 일정에 배치된 장소예요.", targetDate);
-      return;
-    }
     const range = getDefaultScheduleRange(activeSnapshot.itinerary, selectedDate);
     setEditor({ mode: "add", placeId: candidate.placeId, initialValue: { date: selectedDate, ...range, note: "", lockedForDuri: false, attachmentDocumentIds: [] } });
   };
 
+  const openCandidateSchedule = (candidate: CandidatePlaceViewModel) => {
+    if (candidate.scheduleState === "unscheduled") {
+      openAddEditor(candidate);
+      return;
+    }
+    const targetDate = candidate.scheduleState === "scheduled-on-selected-date" ? selectedDate : candidate.scheduledDates[0];
+    if (targetDate) setRequestedDate(targetDate);
+    showFeedback(`${candidate.scheduledCount}개 일정이 배치된 날짜를 열었어요.`, targetDate);
+  };
+
   const openEditEditor = (itemId: string) => {
-    if (!editable) { showFeedback(workspace.readOnlyReason ?? "저장 중에는 일정을 편집할 수 없어요."); return; }
+    if (savingRef.current) { showFeedback("저장 중에는 일정 상세를 열 수 없어요."); return; }
     const item = activeSnapshot.itinerary.find((entry) => entry.id === itemId);
     if (!item) { showFeedback("일정 항목을 찾을 수 없어요."); return; }
     setEditor({
@@ -331,6 +354,7 @@ export function ApiWorkspaceScreen() {
   };
 
   const submitEditor = (value: ScheduleEditorValue, durationMinutes: number): ItineraryMutationResult => {
+    if (!workspace.permissions.canEditSchedule) return "trip-not-editable";
     if (!editor || savingRef.current) return "boundary";
     const result = editor.mode === "add"
       ? prepareApiWorkspaceScheduleAddition({
@@ -358,6 +382,7 @@ export function ApiWorkspaceScreen() {
   };
 
   const updateGridItem = (itemId: string, patch: Partial<Pick<ItineraryItem, "startTime" | "durationMinutes">>) => {
+    if (blockMutation(workspace.permissions.canEditSchedule, "일정 시간을 수정할 수 없어요.")) return;
     if (savingRef.current) { showFeedback("이전 변경을 저장하고 있어요."); return; }
     const item = activeSnapshot.itinerary.find((entry) => entry.id === itemId);
     if (!item) { showFeedback("일정 항목을 찾을 수 없어요."); return; }
@@ -380,6 +405,7 @@ export function ApiWorkspaceScreen() {
 
   const confirmItemRemoval = () => {
     if (!removeItemId) return;
+    if (blockMutation(workspace.permissions.canDeleteSchedule, "일정을 삭제할 수 없어요.")) { setRemoveItemId(undefined); return; }
     const itemId = removeItemId;
     setRemoveItemId(undefined);
     const result = prepareApiWorkspaceScheduleRemoval({ trip, currentUserId, snapshot: activeSnapshot, itemId });
@@ -420,6 +446,7 @@ export function ApiWorkspaceScreen() {
   };
 
   const submitTripFacts = (value: UpdateTripPlanningFactsInput): TripPlanningFactsMutationResult => {
+    if (!workspace.permissions.canEditTripStructure) return "trip-not-editable";
     if (trip.status === "completed") return "trip-not-editable";
     if (!trip.members.some((member) => member.userId === currentUserId)) return "not-member";
     const nextTrip = { ...trip, ...value };
@@ -446,6 +473,7 @@ export function ApiWorkspaceScreen() {
   };
 
   const uploadServerTicket = async (itemId: string, note: string) => {
+    if (blockMutation(workspace.permissions.canEditSchedule, "읽기 전용 일정에는 티켓을 추가할 수 없어요.")) return false;
     if (savingRef.current) { showFeedback("다른 서버 변경을 저장하고 있어요."); return false; }
     savingRef.current = true;
     setSaving(true);
@@ -469,6 +497,7 @@ export function ApiWorkspaceScreen() {
   };
 
   const deleteServerTicket = async (itemId: string, ticket: BackendScheduleTicket) => {
+    if (blockMutation(workspace.permissions.canEditSchedule, "읽기 전용 일정의 티켓을 삭제할 수 없어요.")) return false;
     if (savingRef.current) { showFeedback("다른 서버 변경을 저장하고 있어요."); return false; }
     savingRef.current = true;
     setSaving(true);
@@ -499,6 +528,14 @@ export function ApiWorkspaceScreen() {
     syncActiveTripRegion(tripId, data.region.id);
     router.push(buildTripExploreHref({ tripId, origin: "workspace" }));
   };
+  const editorPlaceId = editor?.mode === "add"
+    ? editor.placeId
+    : editor
+      ? activeSnapshot.itinerary.find((item) => item.id === editor.itemId)?.placeId
+      : undefined;
+  const editorPlace = editorPlaceId ? data.placesById[editorPlaceId] : undefined;
+  const editorCandidate = editorPlaceId ? candidateViews.find((candidate) => candidate.placeId === editorPlaceId) : undefined;
+  const editorItemView = editor?.mode === "edit" ? itineraryViews.find((item) => item.id === editor.itemId) : undefined;
   const editorTitle = editor?.mode === "add"
     ? data.placesById[editor.placeId]?.name ?? "후보 장소"
     : editor
@@ -510,14 +547,15 @@ export function ApiWorkspaceScreen() {
     unscheduledCount={workspace.unscheduledCandidateCount}
     keyword={candidateKeyword}
     filter={candidateFilter}
-    canEdit={editable}
+    canEdit={workspace.permissions.canAddSchedule && !saving}
     onKeywordChange={setCandidateKeyword}
     onFilterChange={setCandidateFilter}
     onExplore={explore}
     onOpenCandidate={(placeId) => data.placesById[placeId]
       ? router.push({ pathname: "/places/[placeId]", params: { placeId } })
       : showFeedback("장소 정보를 불러오지 못했어요.")}
-    onCandidateAction={openAddEditor}
+    onCandidateAction={openCandidateSchedule}
+    onAddAnotherSchedule={openAddEditor}
     onRemoveCandidate={requestCandidateRemoval}
   />;
 
@@ -531,14 +569,11 @@ export function ApiWorkspaceScreen() {
         scrollEnabled={!draggingItemId}
         showsVerticalScrollIndicator={false}
       >
-        <AppHeader title={workspace.title} subtitle={`${workspace.regionName} · ${formatTripDateRange(workspace.startDate, workspace.endDate)}`} onBack={returnFromWorkspace} />
-        <View style={styles.metrics}><Metric value={workspace.candidateCount} label="후보" /><Metric value={workspace.unscheduledCandidateCount} label="미배치" /><Metric value={workspace.itineraryCount} label="일정" /><Metric value={workspace.memberCount} label="동행자" /></View>
-        <View style={styles.serverNotice}><Text style={styles.serverNoticeTitle}>{saving ? "서버에 일정을 저장하고 있어요" : `서버 일정 v${activeSnapshot.scheduleVersion}`}</Text><Text style={styles.serverNoticeText}>변경은 성공 응답 후 확정되며, 다른 동행자의 변경과 충돌하면 최신 일정을 다시 불러옵니다.</Text></View>
+        <AppHeader title="여행 일정" subtitle={`${workspace.regionName} ${Math.max(workspace.dates.length - 1, 0)}박 ${workspace.dates.length}일 · ${formatTripDateRange(workspace.startDate, workspace.endDate)}`} onBack={returnFromWorkspace} />
         {!workspace.canEdit ? <View style={styles.readOnly}><Text style={styles.readOnlyTitle}>읽기 전용 워크스페이스</Text><Text style={styles.readOnlyText}>{workspace.readOnlyReason}</Text></View> : null}
         <WorkspaceFeedbackBanner message={feedback.message} onClose={() => setFeedback({ message: "" })} />
         <View style={styles.section}>
-          <Text style={styles.eyebrow}>TRIP DATES</Text>
-          <View style={styles.sectionHeadingRow}><View style={styles.sectionHeadingCopy}><Text style={styles.sectionTitle}>여행 날짜</Text><Text numberOfLines={2} style={styles.factSummary}>{localFacts ? `${trip.transport === "car" ? "자차" : "대중교통 & 도보"} · 숙소 ${trip.accommodationLocation?.name ?? "미입력"} · ${trip.endCondition ? `${trip.endCondition.location.name} ${trip.endCondition.deadline}까지` : "종료 조건 없음"}` : "이동·숙소·종료 조건은 서버 필드가 없어 아직 이 기기에 설정되지 않았어요."}</Text></View>{workspace.canEdit ? <Pressable accessibilityRole="button" accessibilityLabel="이동 방식 숙소 종료 조건 수정" onPress={() => setTripFactsEditorOpen(true)} style={({ pressed }) => [styles.factEditButton, pressed && styles.pressed]}><Text style={styles.factEditText}>기기 사실 수정</Text></Pressable> : null}</View>
+          <Text style={styles.eyebrow}>여행 날짜</Text>
           <WorkspaceDateTabs
             dates={workspace.dates}
             selectedDate={selectedDate}
@@ -563,32 +598,40 @@ export function ApiWorkspaceScreen() {
           date={selectedDateView}
           items={itineraryViews}
           endCondition={endConditionTimeline?.date === selectedDateView.date ? endConditionTimeline : undefined}
-          canEdit={editable}
+          canEdit={workspace.permissions.canEditSchedule && !saving}
           interactionItemId={draggingItemId}
-          onAdd={() => setSelectCandidateOpen(true)}
+          onAdd={openScheduleAddFlow}
           onEdit={openEditEditor}
           onMove={(itemId, startTime) => updateGridItem(itemId, { startTime })}
           onResize={(itemId, durationMinutes) => updateGridItem(itemId, { durationMinutes })}
           onInteractionStateChange={setDraggingItemId}
         /></WorkspaceDayPager> : null}
-        <DuriAnalysisEntryCard
-          itineraryCount={workspace.itineraryCount}
-          stale={false}
-          loading={false}
-          engineAvailable={false}
-          engineMessage="서버 일정은 편집할 수 있지만 두리 분석 Store와 서버 일정의 단일 원본 연결은 아직 분리되어 있어요."
-          onOpen={() => undefined}
-        />
+        <View style={styles.factRow}><View style={styles.factRowCopy}><Text style={styles.factRowTitle}>여행 설정</Text><Text numberOfLines={2} style={styles.factSummary}>{localFacts ? `${trip.transport === "car" ? "자차" : "대중교통 & 도보"} · 숙소 ${trip.accommodationLocation?.name ?? "미입력"} · ${trip.endCondition ? `${trip.endCondition.location.name} ${trip.endCondition.deadline}까지` : "종료 조건 없음"}` : "이동·숙소·종료 조건은 아직 이 기기에 설정되지 않았어요."}</Text></View>{workspace.canEdit ? <Pressable accessibilityRole="button" accessibilityLabel="이동 방식 숙소 종료 조건 수정" onPress={() => setTripFactsEditorOpen(true)} style={({ pressed }) => [styles.factEditButton, pressed && styles.pressed]}><Text style={styles.factEditText}>설정</Text></Pressable> : null}</View>
+        <View style={styles.serverNotice}><Text style={styles.serverNoticeTitle}>{saving ? "서버에 일정을 저장하고 있어요" : `서버 일정 v${activeSnapshot.scheduleVersion}`}</Text><Text style={styles.serverNoticeText}>변경은 성공 응답 후 확정되며, 다른 동행자의 변경과 충돌하면 최신 일정을 다시 불러옵니다.</Text></View>
       </ScrollView>
+      <View style={styles.duriDock}><DuriAnalysisEntryCard
+        itineraryCount={workspace.itineraryCount}
+        stale={false}
+        loading={false}
+        engineAvailable={false}
+        engineMessage="서버 일정은 편집할 수 있지만 두리 분석 Store와 서버 일정의 단일 원본 연결은 아직 분리되어 있어요."
+        action={duriAction}
+        onAction={() => {
+          if (duriAction.destination === "schedule-add-flow") openScheduleAddFlow();
+        }}
+      /></View>
       {selectedDateView ? <WorkspaceBoardSheet candidateBoard={candidateBoard} unscheduledCandidateCount={workspace.unscheduledCandidateCount} contentScrollEnabled={!draggingItemId} /> : null}
     </View>
 
-    <SelectCandidateModal visible={selectCandidateOpen} candidates={candidateViews} onClose={() => setSelectCandidateOpen(false)} onSelect={(candidate) => { setSelectCandidateOpen(false); openAddEditor(candidate, true); }} onExplore={() => { setSelectCandidateOpen(false); explore(); }} />
+    <SelectCandidateModal visible={selectCandidateOpen} candidates={candidateViews} onClose={() => setSelectCandidateOpen(false)} onSelect={(candidate) => { setSelectCandidateOpen(false); openAddEditor(candidate); }} onExplore={() => { setSelectCandidateOpen(false); explore(); }} />
     <ScheduleEditorModal
       visible={Boolean(editor)}
       editorKey={editor ? `${editor.mode}-${editor.mode === "add" ? editor.placeId : editor.itemId}` : "closed"}
       mode={editor?.mode ?? "add"}
       title={editorTitle}
+      placeImageUrl={editorCandidate?.imageUrl ?? editorItemView?.imageUrl}
+      placeAddress={editorCandidate?.address ?? editorPlace?.address}
+      placeCategoryLabel={editorCandidate?.categoryLabel ?? editorItemView?.categoryLabel}
       tripId={tripId}
       currentUserId={currentUserId}
       dates={workspace.dates}
@@ -598,7 +641,7 @@ export function ApiWorkspaceScreen() {
       initialValue={editor?.initialValue ?? { date: selectedDate, startTime: "08:00", endTime: "09:00", note: "", lockedForDuri: false, attachmentDocumentIds: [] }}
       attachmentsAvailable={false}
       attachmentsUnavailableMessage="서버 티켓 이미지는 위에서 관리할 수 있지만, 문서함·OCR 사실·로컬 문서 ID를 동행자와 동기화하는 계약은 아직 제공되지 않습니다."
-      serverAttachmentContent={editor?.mode === "edit" ? <ApiScheduleTicketManager
+      serverAttachmentContent={editor?.mode === "edit" && workspace.permissions.canEditSchedule ? <ApiScheduleTicketManager
         tickets={activeSnapshot.metadataByItemId[editor.itemId]?.tickets ?? []}
         disabled={saving}
         onUpload={(note) => uploadServerTicket(editor.itemId, note)}
@@ -607,7 +650,8 @@ export function ApiWorkspaceScreen() {
       /> : undefined}
       onClose={() => setEditor(undefined)}
       onSubmit={submitEditor}
-      onRequestDelete={editor?.mode === "edit" ? () => { setRemoveItemId(editor.itemId); setEditor(undefined); } : undefined}
+      readOnly={!workspace.permissions.canEditSchedule}
+      onRequestDelete={editor?.mode === "edit" && workspace.permissions.canDeleteSchedule ? () => { setRemoveItemId(editor.itemId); setEditor(undefined); } : undefined}
     />
     <WorkspaceTripFactsModal visible={tripFactsEditorOpen} editorKey={`${trip.id}-${trip.transport}-${trip.endCondition?.deadline ?? "none"}`} initialValue={tripFactsDraft} onClose={() => setTripFactsEditorOpen(false)} onSubmit={submitTripFacts} />
     <ConfirmationModal visible={Boolean(removeItemId)} title="일정에서 제거할까요?" message="서버 일정 항목만 제거합니다. 후보 장소는 그대로 유지됩니다." confirmLabel="일정에서 제거" onClose={() => setRemoveItemId(undefined)} onConfirm={confirmItemRemoval} />
@@ -627,28 +671,24 @@ export function ApiWorkspaceScreen() {
   </Screen>;
 }
 
-function Metric({ value, label }: { value: number; label: string }) {
-  return <View style={styles.metric}><Text style={styles.metricValue}>{value}</Text><Text style={styles.metricLabel}>{label}</Text></View>;
-}
-
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.background },
+  root: { flex: 1, backgroundColor: colors.surface },
   canvasScroll: { flex: 1 },
-  canvasContent: { width: "100%", paddingHorizontal: spacing.lg, paddingBottom: WORKSPACE_BOARD_COLLAPSED_HEIGHT_PX + spacing.xxl },
-  metrics: { flexDirection: "row", backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.lg },
-  metric: { flex: 1, alignItems: "center", paddingVertical: spacing.md },
-  metricValue: { ...typography.subtitle, color: colors.primary },
-  metricLabel: { ...typography.caption, color: colors.textSecondary },
+  canvasContent: { width: "100%", paddingHorizontal: spacing.lg, paddingBottom: WORKSPACE_BOARD_COLLAPSED_HEIGHT_PX + 94 },
+  duriDock: { position: "absolute", left: spacing.lg, right: spacing.lg, bottom: WORKSPACE_BOARD_COLLAPSED_HEIGHT_PX + spacing.xs, zIndex: 30 },
   serverNotice: { gap: spacing.xxs, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.primarySoft, padding: spacing.md, marginBottom: spacing.md },
   serverNoticeTitle: { ...typography.bodyStrong, color: colors.primary },
   serverNoticeText: { ...typography.caption, color: colors.textSecondary },
   readOnly: { gap: spacing.xs, borderRadius: radius.md, backgroundColor: colors.warningSoft, padding: spacing.md, marginBottom: spacing.md },
   readOnlyTitle: { ...typography.bodyStrong, color: colors.warning },
   readOnlyText: { ...typography.caption, color: colors.textSecondary },
-  section: { gap: spacing.sm, marginVertical: spacing.lg },
+  section: { gap: spacing.xs, marginTop: spacing.xs, marginBottom: spacing.md },
   sectionHeadingRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
   sectionHeadingCopy: { flex: 1, minWidth: 0, gap: spacing.xxs },
   factSummary: { ...typography.caption, color: colors.textSecondary },
+  factRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, borderRadius: radius.lg, backgroundColor: colors.surfaceMuted, padding: spacing.md, marginTop: spacing.sm },
+  factRowCopy: { flex: 1, minWidth: 0 },
+  factRowTitle: { ...typography.bodyStrong, color: colors.text },
   factEditButton: { minHeight: 44, justifyContent: "center", borderRadius: radius.md, backgroundColor: colors.primarySoft, paddingHorizontal: spacing.md },
   factEditText: { ...typography.caption, color: colors.primary },
   eyebrow: { ...typography.caption, color: colors.primary },

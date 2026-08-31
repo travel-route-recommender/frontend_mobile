@@ -7,7 +7,7 @@ import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { GestureDetector } from "react-native-gesture-handler";
 import Animated from "react-native-reanimated";
 import { EmptyState, ErrorState, LoadingState } from "../../../components/feedback";
-import { AppHeader, Screen } from "../../../components/common";
+import { Screen } from "../../../components/common";
 import { environment } from "../../../config/environment";
 import { colors, radius, shadows, spacing, typography } from "../../../theme/tokens";
 import { queryKeys } from "../../../query/keys";
@@ -34,10 +34,9 @@ import {
   type PlaceClassificationSelection,
 } from "../../places/logic/placeClassification";
 import { buildPlaceLocationOptions, getPlaceLocationDisplayLabel, getPlaceLocationValue, type PlaceLocationFilterOption } from "../../places/logic/placeFilterOptions";
-import { PlaceCard } from "../../places/components/PlaceCard";
+import { ExplorePlaceCard } from "../components/ExplorePlaceCard";
 import { KakaoPlaceMap } from "../../places/components/KakaoPlaceMap";
 import {
-  ActiveTripBanner,
   AddCandidateTripPickerModal,
   ExploreFilterSheet,
   EXPLORE_SORT_OPTIONS,
@@ -61,8 +60,16 @@ const EXPLORE_RESULTS_PER_PAGE = 10;
 const EXPLORE_PAGE_BLOCK_SIZE = 5;
 const BACKEND_PLACE_PAGE_SIZE = 50;
 const NO_CATEGORY_FILTERS: string[] = [];
-// Keep the Catchtable-inspired map/list composition easy to roll back while we test the direction.
-const EXPLORE_MAP_LAYOUT_EXPERIMENT = true;
+const EXPLORE_FOUNDATION = {
+  text: "#17265F",
+  textSecondary: "#60719B",
+  textMuted: "#8290AE",
+  border: "#DCE7F7",
+  hero: "#F2F8FF",
+  lavender: "#F0EDFF",
+  lavenderBorder: "#D9D5FF",
+  lavenderText: "#735BC4",
+} as const;
 type SearchSuggestion = {
   key: string;
   label: string;
@@ -144,6 +151,7 @@ export function ExploreScreen() {
   const [regionSearchAttempted, setRegionSearchAttempted] = useState(false);
   const [pageState, setPageState] = useState({ key: "", page: 1 });
   const [selectedMapPlaceId, setSelectedMapPlaceId] = useState<string>();
+  const [isMapMode, setIsMapMode] = useState(false);
   const blurTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const listRef = useRef<FlatList<Place>>(null);
   const { height: windowHeight } = useWindowDimensions();
@@ -424,6 +432,11 @@ export function ExploreScreen() {
   const activeTrip = selectActiveCandidateTrip(source);
   const activeTripId = activeTrip?.id;
   const activeTripRegionId = activeTrip?.regionId;
+  const tripContextTrip = tripExploreContext ? source.tripsById[tripExploreContext.tripId] : undefined;
+  const tripContextCandidateCount = tripContextTrip ? (source.candidatesByTripId[tripContextTrip.id] ?? []).length : 0;
+  const tripContextScheduledCount = tripContextTrip
+    ? new Set((source.itineraryByTripId[tripContextTrip.id] ?? []).flatMap((item) => item.placeId ? [item.placeId] : [])).size
+    : 0;
   useEffect(() => {
     if (!tripExploreContext || activeTripId === tripExploreContext.tripId) return;
     const trip = source.tripsById[tripExploreContext.tripId];
@@ -656,15 +669,6 @@ export function ExploreScreen() {
     setPageState({ key: "", page: 1 });
     listRef.current?.scrollToOffset({ offset: 0, animated: true });
   };
-  const clearActiveTripSelection = () => {
-    actions.clearActiveTrip();
-    searchState.clearActiveTripContext();
-    setRegionSearchAttempted(false);
-    setSearchFocused(false);
-    setSortMenuOpen(false);
-    setPageState({ key: "", page: 1 });
-    listRef.current?.scrollToOffset({ offset: 0, animated: true });
-  };
   const openDistanceBaseSheet = () => {
     setSearchFocused(false);
     setSortMenuOpen(false);
@@ -760,8 +764,10 @@ export function ExploreScreen() {
     : activeLocations.length > 1
       ? `${getPlaceLocationDisplayLabel(activeLocations[0]) || activeLocations[0]?.label || "선택 지역"} 외 ${activeLocations.length - 1}곳`
       : "";
+  const compactRegionLabel = activeRegionLabel.replace(/특별자치도|특별자치시|광역시|특별시|도$/g, "") || activeRegionLabel;
+  const listResultSummaryText = `${compactRegionLabel || "선택 지역"}에서 둘러볼 장소 ${hasNextBackendPage ? `${filteredPlaces.length}곳 이상` : `${filteredPlaces.length}곳`}`;
   const searchPlaceholder = hasRegionContext
-    ? `${activeRegionLabel || "선택 지역"} 내의 여행지를 검색해보세요`
+    ? `${compactRegionLabel || "선택 지역"}에서 장소를 검색해보세요`
     : "여행할 지역을 검색해주세요";
   const initialPromptTitle = regionSearchAttempted ? "일치하는 지역이 없어요" : "어디로 떠나볼까요?";
   const initialPromptDescription = regionSearchAttempted
@@ -778,7 +784,7 @@ export function ExploreScreen() {
       ? <ErrorState message={backendPlacesQuery.error instanceof Error ? backendPlacesQuery.error.message : "백엔드 장소 데이터를 불러오지 못했어요."} onRetry={() => { void backendPlacesQuery.refetch(); }} />
       : <EmptyState title="검색 결과가 없어요" description="검색어나 지역, 카테고리 조건을 바꿔 다시 찾아보세요." ctaLabel="조건 초기화" onPress={resetFilters} />;
 
-  const searchHeader = <View style={[styles.fixedSearchHeader, hasRegionContext && EXPLORE_MAP_LAYOUT_EXPERIMENT && styles.fixedSearchHeaderMapOverlay]}>
+  const searchHeader = <View style={[styles.fixedSearchHeader, hasRegionContext && isMapMode && styles.fixedSearchHeaderMapOverlay]}>
     <View style={[styles.searchRow, showSearchDropdown && styles.searchRowDropdownOpen]}>
       <View style={styles.searchGroup}>
         <PlaceSearchInput value={searchState.keyword} onFocus={handleSearchFocus} onBlur={handleSearchBlur} onChangeText={changeKeyword} onClear={() => changeKeyword("")} onSearch={() => submitSearch()} expanded={showSearchDropdown} placeholder={searchPlaceholder} />
@@ -794,45 +800,44 @@ export function ExploreScreen() {
         </View> : null}
       </View>
     </View>
-    {hasRegionContext && !EXPLORE_MAP_LAYOUT_EXPERIMENT ? <View style={[styles.appliedFilterToolbarRow, showSearchDropdown && styles.filterToolbarRowDropdownOpen]}>
-      <Pressable accessibilityRole="button" accessibilityLabel="검색 필터 열기" accessibilityState={{ selected: filterActive }} onPress={openFilterSheet} style={[styles.filterToolbarButton, filterActive && styles.filterToolbarButtonActive]}><FilterButtonIcon /></Pressable>
-      {activeFilterBadges.length ? <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterToolbarChips} contentContainerStyle={styles.filterBadgeRow}>
-        {activeFilterBadges.map((badge) => <Pressable key={badge} accessibilityRole="button" accessibilityLabel={`${badge} 필터 수정`} onPress={openFilterSheet} style={styles.filterBadge}><Text numberOfLines={1} style={styles.filterBadgeText}>{badge}</Text></Pressable>)}
-      </ScrollView> : <View style={styles.filterToolbarSpacer} />}
-      {hasFilters ? <Pressable accessibilityRole="button" accessibilityLabel="검색 조건 초기화" onPress={resetFilters} style={styles.inlineReset}><Text style={styles.inlineResetText}>초기화</Text></Pressable> : null}
-    </View> : null}
   </View>;
 
-  const resultSummaryRow = <View style={styles.resultRow}><View style={styles.resultCopy}><Pressable accessibilityRole="button" accessibilityLabel={`${activeRegionLabel || "선택 지역"} 지역 변경`} onPress={() => openRegionSheet()} style={styles.resultRegionButton}><Text numberOfLines={1} style={styles.resultTitle}>{activeRegionLabel || "선택 지역"} 여행지</Text><SymbolView name={{ ios: "chevron.down", android: "keyboard_arrow_down", web: "keyboard_arrow_down" }} tintColor={colors.primary} size={18} weight={{ ios: "semibold", android: mediumSymbolWeight }} style={styles.resultRegionChevron} /></Pressable><Text style={styles.resultCount}>{resultCountText}</Text></View><View style={styles.resultActions}><ExploreSortDropdown value={searchState.sortOption} open={sortMenuOpen} onToggle={() => { setSearchFocused(false); setSortMenuOpen((open) => !open); }} onChange={changeSort} /></View></View>;
   const mapSheetSummaryRow = <View style={styles.mapSheetSummaryRow}><View style={styles.resultCopy}><Pressable accessibilityRole="button" accessibilityLabel={`${activeRegionLabel || "선택 지역"} 지역 변경`} onPress={() => openRegionSheet()} style={({ pressed }) => [styles.mapSheetRegionButton, pressed && styles.mapSheetRegionButtonPressed]}><View style={styles.mapSheetRegionIcon}><SymbolView name={{ ios: "mappin.circle.fill", android: "location_on", web: "location_on" }} tintColor={colors.primary} size={14} weight={{ ios: "semibold", android: mediumSymbolWeight }} style={styles.mapSheetRegionIconSymbol} /></View><Text numberOfLines={1} style={styles.mapSheetResultTitle}>{activeRegionLabel || "선택 지역"} 여행지</Text></Pressable><Text style={styles.mapSheetResultCount}>{resultCountText}</Text></View><View style={styles.mapSheetResultActions}><ExploreSortDropdown value={searchState.sortOption} open={sortMenuOpen} onToggle={() => { setSearchFocused(false); setSortMenuOpen((open) => !open); }} onChange={changeSort} variant="plain" /></View></View>;
   const activeMapFilterLabels = activeFilterBadges.length ? activeFilterBadges : ["전체"];
   const renderPlaceListItem = ({ item }: { item: Place }) => {
     const viewModel = cardsById[item.id];
-    return viewModel ? <PlaceCard viewModel={viewModel} distanceProximityLabel={distanceProximityById[item.id]} onPress={() => openPlaceDetail(item.id)} onToggleSaved={() => { setSearchFocused(false); actions.toggleSaved(item.id); }} onAddCandidate={() => { setSearchFocused(false); actions.requestCandidate(item.id); }} /> : null;
+    return viewModel ? <ExplorePlaceCard viewModel={viewModel} distanceProximityLabel={distanceProximityById[item.id]} onPress={() => openPlaceDetail(item.id)} onToggleSaved={() => { setSearchFocused(false); actions.toggleSaved(item.id); }} onAddCandidate={() => { setSearchFocused(false); actions.requestCandidate(item.id); }} /> : null;
   };
-  const classicMapPanel = <>
-    {resultSummaryRow}
-    <View style={styles.mapPanel}>
-      <View style={styles.mapHeading}>
-        <View style={styles.mapIcon}><SymbolView name={{ ios: "map.fill", android: "map", web: "map" }} tintColor={colors.primary} size={19} weight={{ ios: "semibold", android: mediumSymbolWeight }} style={styles.mapIconSymbol} /></View>
-        <View style={styles.flex}>
-          <Text style={styles.mapTitle}>지도</Text>
-          <Text style={styles.mapDescription}>현재 페이지의 검색 결과를 위치로 확인해요.</Text>
-        </View>
-      </View>
-      <KakaoPlaceMap places={pagedPlaces} apiKey={environment.kakaoMapJavascriptKey} baseUrl={environment.kakaoMapBaseUrl} highlightedPlace={searchState.sortOption === "distance" ? distanceBasePlace : undefined} selectedPlaceId={selectedMapPlaceId} onSelectPlace={setSelectedMapPlaceId} />
-      {selectedMapPlace ? <Pressable accessibilityRole="button" accessibilityLabel={`${selectedMapPlace.name} 상세 보기`} onPress={() => openPlaceDetail(selectedMapPlace.id)} style={({ pressed }) => [styles.mapSelectedPlace, pressed && styles.pressed]}>
-        <View style={styles.flex}>
-          <Text numberOfLines={1} style={styles.mapSelectedTitle}>{selectedMapPlace.name}</Text>
-          <Text numberOfLines={1} style={styles.mapSelectedMeta}>{selectedMapPlace.category} · {selectedMapPlace.address}</Text>
-        </View>
-        <Text style={styles.mapSelectedAction}>상세</Text>
-      </Pressable> : null}
+  const resultsHeader = <View style={styles.listResultsHeader}>
+    {tripExploreContext && tripContextTrip ? <TripContextBar
+      title={tripContextTrip.title}
+      regionName={source.regionsById[tripContextTrip.regionId]?.name}
+      candidateCount={tripContextCandidateCount}
+      scheduledCount={tripContextScheduledCount}
+    /> : null}
+    <View style={styles.listControlsRow}>
+      <Pressable accessibilityRole="button" accessibilityLabel={`${activeRegionLabel || "선택 지역"} 지역 변경`} onPress={() => openRegionSheet()} style={({ pressed }) => [styles.listControlButton, styles.regionControlButton, pressed && styles.pressed]}>
+        <SymbolView name={{ ios: "mappin.circle.fill", android: "location_on", web: "location_on" }} tintColor={colors.primary} size={16} weight={{ ios: "semibold", android: mediumSymbolWeight }} style={styles.listControlIcon} />
+        <Text numberOfLines={1} style={styles.listControlText}>{compactRegionLabel || "지역"}</Text>
+        <SymbolView name={{ ios: "chevron.down", android: "keyboard_arrow_down", web: "keyboard_arrow_down" }} tintColor={EXPLORE_FOUNDATION.textSecondary} size={16} weight={{ ios: "semibold", android: mediumSymbolWeight }} style={styles.listControlIcon} />
+      </Pressable>
+      <Pressable accessibilityRole="button" accessibilityLabel="검색 필터 열기" accessibilityState={{ selected: filterActive }} onPress={openFilterSheet} style={({ pressed }) => [styles.listControlButton, filterActive && styles.listControlButtonActive, pressed && styles.pressed]}>
+        <SymbolView name={{ ios: "slider.horizontal.3", android: "tune", web: "tune" }} tintColor={filterActive ? colors.white : colors.primary} size={17} weight={{ ios: "semibold", android: mediumSymbolWeight }} style={styles.listControlIcon} />
+        <Text style={[styles.listControlText, filterActive && styles.listControlTextActive]}>필터{activeFilterBadges.length ? ` ${activeFilterBadges.length}` : ""}</Text>
+      </Pressable>
+      <Pressable accessibilityRole="button" accessibilityLabel="지도 보기" onPress={() => { setSearchFocused(false); setSortMenuOpen(false); setIsMapMode(true); }} style={({ pressed }) => [styles.listControlButton, pressed && styles.pressed]}>
+        <SymbolView name={{ ios: "map.fill", android: "map", web: "map" }} tintColor={colors.primary} size={17} weight={{ ios: "semibold", android: mediumSymbolWeight }} style={styles.listControlIcon} />
+        <Text style={styles.listControlText}>지도</Text>
+      </Pressable>
     </View>
-  </>;
-  const resultsHeader = <View style={styles.header}>
-    {activeTrip ? <ActiveTripBanner trip={activeTrip} region={source.regionsById[activeTrip.regionId]} onClear={clearActiveTripSelection} /> : null}
-    {classicMapPanel}
+    {activeFilterBadges.length ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.listActiveFilters}>
+      {activeFilterBadges.map((badge) => <Pressable key={`list-filter:${badge}`} accessibilityRole="button" accessibilityLabel={`${badge} 필터 수정`} onPress={openFilterSheet} style={styles.listActiveFilter}><Text numberOfLines={1} style={styles.listActiveFilterText}>{badge}</Text></Pressable>)}
+      <Pressable accessibilityRole="button" accessibilityLabel="검색 조건 초기화" onPress={resetFilters} style={styles.listFilterReset}><Text style={styles.listFilterResetText}>초기화</Text></Pressable>
+    </ScrollView> : null}
+    <View style={styles.listResultSummaryRow}>
+      <Text numberOfLines={1} style={styles.listResultSummary}>{listResultSummaryText}</Text>
+      <View style={styles.listSortControl}><ExploreSortDropdown value={searchState.sortOption} open={sortMenuOpen} onToggle={() => { setSearchFocused(false); setSortMenuOpen((open) => !open); }} onChange={changeSort} /></View>
+    </View>
   </View>;
 
   const paginationPageCount = Math.max(loadedPageCount, currentPage);
@@ -848,31 +853,37 @@ export function ExploreScreen() {
   </View> : null;
 
   if (!hasRegionContext) {
-    return <Screen scroll={false}>
-      {tripExploreContext ? <AppHeader title="장소 더 찾기" onBack={returnToTrip} /> : null}
-      {searchHeader}
-      <View style={styles.initialPrompt}>
-        <Text style={styles.initialPromptTitle}>{initialPromptTitle}</Text>
-        <Text style={styles.initialPromptDescription}>{initialPromptDescription}</Text>
-        <Pressable accessibilityRole="button" accessibilityLabel="탐색 지역 선택" onPress={() => openRegionSheet()} style={styles.initialPromptButton}>
-          <SymbolView name={{ ios: "mappin.circle.fill", android: "location_on", web: "location_on" }} tintColor={colors.white} size={20} weight={{ ios: "semibold", android: mediumSymbolWeight }} style={styles.initialPromptButtonIcon} />
-          <Text style={styles.initialPromptButtonText}>{initialPromptCtaLabel}</Text>
-        </Pressable>
+    return <Screen scroll={false} padded={false}>
+      <View style={styles.listModeRoot}>
+        <View style={styles.listTop}>
+          <ExploreHeader onBack={tripExploreContext ? returnToTrip : undefined} />
+          {searchHeader}
+        </View>
+        <View style={styles.initialPrompt}>
+          <Text style={styles.initialPromptTitle}>{initialPromptTitle}</Text>
+          <Text style={styles.initialPromptDescription}>{initialPromptDescription}</Text>
+          <Pressable accessibilityRole="button" accessibilityLabel="탐색 지역 선택" onPress={() => openRegionSheet()} style={styles.initialPromptButton}>
+            <SymbolView name={{ ios: "mappin.circle.fill", android: "location_on", web: "location_on" }} tintColor={colors.white} size={20} weight={{ ios: "semibold", android: mediumSymbolWeight }} style={styles.initialPromptButtonIcon} />
+            <Text style={styles.initialPromptButtonText}>{initialPromptCtaLabel}</Text>
+          </Pressable>
+        </View>
       </View>
       <RegionSelectionSheet visible={regionSheetOpen} locationOptions={locationOptions} selectedLocations={activeLocations} initialQuery={regionSheetInitialQuery} onApply={applyRegionSelection} onClose={() => setRegionSheetOpen(false)} />
       {actions.memberGatePrompt}
     </Screen>;
   }
 
-  if (EXPLORE_MAP_LAYOUT_EXPERIMENT) {
+  if (isMapMode) {
     return <Screen scroll={false} padded={false} includeBottomSafeArea={false}>
       <View onLayout={handleMapViewportLayout} style={styles.mapFullscreenRoot}>
         <View style={styles.mapFullscreenMap}>
           <KakaoPlaceMap places={pagedPlaces} apiKey={environment.kakaoMapJavascriptKey} baseUrl={environment.kakaoMapBaseUrl} highlightedPlace={searchState.sortOption === "distance" ? distanceBasePlace : undefined} fill focusTopInset={mapFocusTopInset} focusBottomInset={mapFocusBottomInset} focusYRatio={mapFocusYRatio} framed={false} selectedPlaceId={selectedMapPlaceId} showBuiltInZoomControl={false} zoomControlBottomOffset={mapZoomControlBottomOffset} onSelectPlace={setSelectedMapPlaceId} />
         </View>
         <View onLayout={handleMapFloatingControlsLayout} style={[styles.mapFloatingControls, mapSheetTargetPosition === "expanded" && styles.mapFloatingControlsExpanded, showSearchDropdown && styles.mapFloatingControlsDropdownOpen]}>
-          {tripExploreContext ? <AppHeader title="장소 더 찾기" onBack={returnToTrip} /> : null}
+          <ExploreHeader onBack={tripExploreContext ? returnToTrip : undefined} compact />
           {searchHeader}
+          {tripExploreContext && tripContextTrip ? <TripContextBar title={tripContextTrip.title} regionName={source.regionsById[tripContextTrip.regionId]?.name} candidateCount={tripContextCandidateCount} scheduledCount={tripContextScheduledCount} compact /> : null}
+          <View style={styles.mapModeSwitchRow}><Text style={styles.mapModeTitle}>지도에서 장소 보기</Text><Pressable accessibilityRole="button" accessibilityLabel="장소 목록으로 돌아가기" onPress={() => setIsMapMode(false)} style={({ pressed }) => [styles.mapModeListButton, pressed && styles.pressed]}><Text style={styles.mapModeListText}>목록 보기</Text></Pressable></View>
         </View>
         <Animated.View style={[styles.mapResultsSheet, mapSheetTargetPosition === "expanded" && styles.mapResultsSheetExpanded, { height: mapSheetSnapPoints.expanded }, mapSheetAnimatedStyle]}>
           <GestureDetector gesture={mapSheetDragGesture}>
@@ -927,36 +938,61 @@ export function ExploreScreen() {
       </View>
       <PlaceFeedbackBanner feedback={actions.feedback} onClose={actions.clearFeedback} onAction={(tripId) => router.push({ pathname: "/trips/[tripId]/workspace", params: { tripId } })} />
       <RegionSelectionSheet visible={regionSheetOpen} locationOptions={locationOptions} selectedLocations={activeLocations} initialQuery={regionSheetInitialQuery} onApply={applyRegionSelection} onClose={() => setRegionSheetOpen(false)} />
-      <ExploreFilterSheet visible={filterOpen} categoryTree={categoryCodeTreeQuery.data ?? []} selectedClassifications={selectedClassifications} availableClassificationValues={availableClassificationValues} categoryTreeLoading={categoryCodeTreeQuery.isFetching && !categoryCodeTreeQuery.data} selectedEventStartDate={searchState.eventStartDate} selectedEventEndDate={searchState.eventEndDate} sortOption={searchState.sortOption} trips={actions.eligibleTrips} regionsById={source.regionsById} activeTripId={source.activeTripId} onApply={applyExploreFilters} onReset={resetFilters} onClose={() => setFilterOpen(false)} />
+      <ExploreFilterSheet visible={filterOpen} categoryTree={categoryCodeTreeQuery.data ?? []} selectedClassifications={selectedClassifications} availableClassificationValues={availableClassificationValues} categoryTreeLoading={categoryCodeTreeQuery.isFetching && !categoryCodeTreeQuery.data} selectedEventStartDate={searchState.eventStartDate} selectedEventEndDate={searchState.eventEndDate} sortOption={searchState.sortOption} trips={actions.eligibleTrips} regionsById={source.regionsById} activeTripId={source.activeTripId} showTripTarget={false} onApply={applyExploreFilters} onReset={resetFilters} onClose={() => setFilterOpen(false)} />
       <DistanceBasePlaceSheet visible={distanceBaseSheetOpen} query={distanceBaseQuery} selectedPlace={distanceBasePlace} candidatePlaces={activeTripCandidatePlaces} searchResults={distanceBaseMatches} searchLoading={backendDistanceBaseSearchQuery.isFetching && Boolean(normalizedDistanceBaseQuery)} activeTripTitle={activeTrip?.title} onQueryChange={changeDistanceBaseQuery} onSelect={selectDistanceBasePlace} onClear={clearDistanceBase} onClose={() => setDistanceBaseSheetOpen(false)} />
       <AddCandidateTripPickerModal visible={Boolean(actions.selectedPlace)} place={actions.selectedPlace} trips={actions.eligibleTrips} regionsById={source.regionsById} getState={(tripId) => actions.selectedPlace ? actions.getCandidateState(tripId, actions.selectedPlace.id) : "not-added"} onSelect={actions.addToTrip} onCreateTrip={() => { actions.closeCandidatePicker(); router.push("/trips/new"); }} onClose={actions.closeCandidatePicker} />
       {actions.memberGatePrompt}</Screen>;
   }
 
-  return <Screen scroll={false}>
-    {tripExploreContext ? <AppHeader title="장소 더 찾기" onBack={returnToTrip} /> : null}
-    {searchHeader}<FlatList
-    ref={listRef}
-    style={styles.listFrame}
-    data={pagedPlaces}
-    keyExtractor={(place) => place.id}
-    keyboardShouldPersistTaps="handled"
-    onScrollBeginDrag={() => { setSearchFocused(false); setSortMenuOpen(false); }}
-    showsVerticalScrollIndicator={false}
-    contentContainerStyle={styles.list}
-    extraData={`${sortMenuOpen}-${searchState.sortOption}-${selectedClassificationValues}-${activeFilterBadges.join("|")}-${distanceBaseLabel ?? ""}-${selectedMapPlaceId ?? ""}`}
-    ItemSeparatorComponent={() => <View style={styles.gap} />}
-    ListHeaderComponent={resultsHeader}
-    ListFooterComponent={pagination}
-    ListEmptyComponent={listEmptyComponent}
-    renderItem={renderPlaceListItem}
-  />
-  <PlaceFeedbackBanner feedback={actions.feedback} onClose={actions.clearFeedback} onAction={(tripId) => router.push({ pathname: "/trips/[tripId]/workspace", params: { tripId } })} />
-  <RegionSelectionSheet visible={regionSheetOpen} locationOptions={locationOptions} selectedLocations={activeLocations} initialQuery={regionSheetInitialQuery} onApply={applyRegionSelection} onClose={() => setRegionSheetOpen(false)} />
-  <ExploreFilterSheet visible={filterOpen} categoryTree={categoryCodeTreeQuery.data ?? []} selectedClassifications={selectedClassifications} availableClassificationValues={availableClassificationValues} categoryTreeLoading={categoryCodeTreeQuery.isFetching && !categoryCodeTreeQuery.data} selectedEventStartDate={searchState.eventStartDate} selectedEventEndDate={searchState.eventEndDate} sortOption={searchState.sortOption} trips={actions.eligibleTrips} regionsById={source.regionsById} activeTripId={source.activeTripId} onApply={applyExploreFilters} onReset={resetFilters} onClose={() => setFilterOpen(false)} />
-  <DistanceBasePlaceSheet visible={distanceBaseSheetOpen} query={distanceBaseQuery} selectedPlace={distanceBasePlace} candidatePlaces={activeTripCandidatePlaces} searchResults={distanceBaseMatches} searchLoading={backendDistanceBaseSearchQuery.isFetching && Boolean(normalizedDistanceBaseQuery)} activeTripTitle={activeTrip?.title} onQueryChange={changeDistanceBaseQuery} onSelect={selectDistanceBasePlace} onClear={clearDistanceBase} onClose={() => setDistanceBaseSheetOpen(false)} />
-  <AddCandidateTripPickerModal visible={Boolean(actions.selectedPlace)} place={actions.selectedPlace} trips={actions.eligibleTrips} regionsById={source.regionsById} getState={(tripId) => actions.selectedPlace ? actions.getCandidateState(tripId, actions.selectedPlace.id) : "not-added"} onSelect={actions.addToTrip} onCreateTrip={() => { actions.closeCandidatePicker(); router.push("/trips/new"); }} onClose={actions.closeCandidatePicker} />
-  {actions.memberGatePrompt}</Screen>;
+  return <Screen scroll={false} padded={false}>
+    <View style={styles.listModeRoot}>
+      <View style={styles.listTop}>
+        <ExploreHeader onBack={tripExploreContext ? returnToTrip : undefined} />
+        {searchHeader}
+      </View>
+      <FlatList
+        ref={listRef}
+        style={styles.listFrame}
+        data={pagedPlaces}
+        keyExtractor={(place) => place.id}
+        keyboardShouldPersistTaps="handled"
+        onScrollBeginDrag={() => { setSearchFocused(false); setSortMenuOpen(false); }}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.list}
+        extraData={`${sortMenuOpen}-${searchState.sortOption}-${selectedClassificationValues}-${activeFilterBadges.join("|")}-${distanceBaseLabel ?? ""}-${selectedMapPlaceId ?? ""}`}
+        ItemSeparatorComponent={() => <View style={styles.gap} />}
+        ListHeaderComponent={resultsHeader}
+        ListFooterComponent={pagination}
+        ListEmptyComponent={listEmptyComponent}
+        renderItem={renderPlaceListItem}
+      />
+    </View>
+    <PlaceFeedbackBanner feedback={actions.feedback} onClose={actions.clearFeedback} onAction={(tripId) => router.push({ pathname: "/trips/[tripId]/workspace", params: { tripId } })} />
+    <RegionSelectionSheet visible={regionSheetOpen} locationOptions={locationOptions} selectedLocations={activeLocations} initialQuery={regionSheetInitialQuery} onApply={applyRegionSelection} onClose={() => setRegionSheetOpen(false)} />
+    <ExploreFilterSheet visible={filterOpen} categoryTree={categoryCodeTreeQuery.data ?? []} selectedClassifications={selectedClassifications} availableClassificationValues={availableClassificationValues} categoryTreeLoading={categoryCodeTreeQuery.isFetching && !categoryCodeTreeQuery.data} selectedEventStartDate={searchState.eventStartDate} selectedEventEndDate={searchState.eventEndDate} sortOption={searchState.sortOption} trips={actions.eligibleTrips} regionsById={source.regionsById} activeTripId={source.activeTripId} showTripTarget={false} onApply={applyExploreFilters} onReset={resetFilters} onClose={() => setFilterOpen(false)} />
+    <DistanceBasePlaceSheet visible={distanceBaseSheetOpen} query={distanceBaseQuery} selectedPlace={distanceBasePlace} candidatePlaces={activeTripCandidatePlaces} searchResults={distanceBaseMatches} searchLoading={backendDistanceBaseSearchQuery.isFetching && Boolean(normalizedDistanceBaseQuery)} activeTripTitle={activeTrip?.title} onQueryChange={changeDistanceBaseQuery} onSelect={selectDistanceBasePlace} onClear={clearDistanceBase} onClose={() => setDistanceBaseSheetOpen(false)} />
+    <AddCandidateTripPickerModal visible={Boolean(actions.selectedPlace)} place={actions.selectedPlace} trips={actions.eligibleTrips} regionsById={source.regionsById} getState={(tripId) => actions.selectedPlace ? actions.getCandidateState(tripId, actions.selectedPlace.id) : "not-added"} onSelect={actions.addToTrip} onCreateTrip={() => { actions.closeCandidatePicker(); router.push("/trips/new"); }} onClose={actions.closeCandidatePicker} />
+    {actions.memberGatePrompt}
+  </Screen>;
+}
+
+function ExploreHeader({ onBack, compact = false }: { onBack?: () => void; compact?: boolean }) {
+  return <View style={[styles.exploreHeader, compact && styles.exploreHeaderCompact]}>
+    {onBack ? <Pressable accessibilityRole="button" accessibilityLabel="뒤로 가기" hitSlop={10} onPress={onBack} style={styles.exploreHeaderBack}><Text style={styles.exploreHeaderBackText}>‹</Text></Pressable> : null}
+    <Text style={styles.exploreHeaderTitle}>탐색</Text>
+    {onBack ? <View style={styles.exploreHeaderBack} /> : null}
+  </View>;
+}
+
+function TripContextBar({ title, regionName, candidateCount, scheduledCount, compact = false }: { title: string; regionName?: string; candidateCount: number; scheduledCount: number; compact?: boolean }) {
+  return <View accessibilityRole="text" accessibilityLabel={`${title}, 이 여행에 담을 장소를 찾는 중, 후보 ${candidateCount}곳, 일정 ${scheduledCount}곳`} style={[styles.tripContextBar, compact && styles.tripContextBarCompact]}>
+    <View style={styles.tripContextSpark}><Text style={styles.tripContextSparkText}>✦</Text></View>
+    <View style={styles.flex}>
+      <Text style={styles.tripContextEyebrow}>이 여행에 담을 장소를 찾는 중</Text>
+      <Text numberOfLines={1} style={styles.tripContextTitle}>{title}</Text>
+      <Text numberOfLines={1} style={styles.tripContextMeta}>{regionName ?? "지역 미정"} · 후보 {candidateCount} · 일정 {scheduledCount}</Text>
+    </View>
+  </View>;
 }
 
 function ExploreSortDropdown({ value, open, onToggle, onChange, variant = "button" }: { value: PlaceSortOption; open: boolean; onToggle(): void; onChange(value: PlaceSortOption): void; variant?: "button" | "plain" }) {
@@ -1085,12 +1121,42 @@ function PaginationChevron({ direction, disabled }: { direction: "left" | "right
 }
 
 const styles = StyleSheet.create({
-  fixedSearchHeader: { position: "relative", zIndex: 200, gap: spacing.sm, paddingTop: spacing.sm, paddingBottom: spacing.sm, backgroundColor: colors.background },
+  listModeRoot: { flex: 1, backgroundColor: colors.white },
+  listTop: { zIndex: 200, paddingHorizontal: spacing.lg, backgroundColor: colors.white },
+  exploreHeader: { minHeight: 62, flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  exploreHeaderCompact: { minHeight: 52 },
+  exploreHeaderBack: { width: 38, height: 38, alignItems: "center", justifyContent: "center" },
+  exploreHeaderBackText: { fontSize: 36, lineHeight: 38, fontWeight: "400", color: EXPLORE_FOUNDATION.text },
+  exploreHeaderTitle: { flex: 1, fontSize: 22, lineHeight: 29, fontWeight: "900", color: EXPLORE_FOUNDATION.text },
+  fixedSearchHeader: { position: "relative", zIndex: 200, gap: spacing.sm, paddingBottom: spacing.sm, backgroundColor: colors.white },
   fixedSearchHeaderMapOverlay: { backgroundColor: "transparent" },
-  listFrame: { flex: 1, zIndex: 1 },
+  listFrame: { flex: 1, zIndex: 1, backgroundColor: colors.white },
   flex: { flex: 1 },
   pressed: { opacity: 0.82 },
-  list: { paddingTop: spacing.xs, paddingBottom: spacing.xxxl },
+  list: { paddingHorizontal: spacing.lg, paddingTop: spacing.xxs, paddingBottom: 112, backgroundColor: colors.white },
+  listResultsHeader: { zIndex: 90, elevation: 30, gap: spacing.sm, paddingTop: spacing.xs, paddingBottom: spacing.sm },
+  tripContextBar: { minHeight: 76, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: 18, borderWidth: 1, borderColor: EXPLORE_FOUNDATION.lavenderBorder, backgroundColor: EXPLORE_FOUNDATION.lavender },
+  tripContextBarCompact: { minHeight: 68, borderRadius: radius.md },
+  tripContextSpark: { width: 34, height: 34, alignItems: "center", justifyContent: "center", borderRadius: radius.pill, backgroundColor: colors.white },
+  tripContextSparkText: { fontSize: 18, lineHeight: 22, color: EXPLORE_FOUNDATION.lavenderText },
+  tripContextEyebrow: { fontSize: 10, lineHeight: 15, fontWeight: "800", color: EXPLORE_FOUNDATION.lavenderText },
+  tripContextTitle: { fontSize: 15, lineHeight: 20, fontWeight: "900", color: EXPLORE_FOUNDATION.text },
+  tripContextMeta: { fontSize: 10, lineHeight: 15, fontWeight: "700", color: EXPLORE_FOUNDATION.textSecondary },
+  listControlsRow: { flexDirection: "row", alignItems: "center", gap: spacing.xs },
+  listControlButton: { minHeight: 40, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingHorizontal: spacing.sm, borderRadius: radius.pill, borderWidth: 1, borderColor: EXPLORE_FOUNDATION.border, backgroundColor: colors.white },
+  regionControlButton: { flex: 1, minWidth: 100, justifyContent: "flex-start" },
+  listControlButtonActive: { borderColor: colors.primary, backgroundColor: colors.primary },
+  listControlIcon: { width: 17, height: 17 },
+  listControlText: { flexShrink: 1, fontSize: 11, lineHeight: 16, fontWeight: "800", color: EXPLORE_FOUNDATION.textSecondary },
+  listControlTextActive: { color: colors.white },
+  listActiveFilters: { alignItems: "center", gap: spacing.xs, paddingRight: spacing.lg },
+  listActiveFilter: { minHeight: 30, justifyContent: "center", paddingHorizontal: spacing.sm, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.primary, backgroundColor: colors.primarySoft },
+  listActiveFilterText: { fontSize: 10, lineHeight: 15, fontWeight: "700", color: colors.primary },
+  listFilterReset: { minHeight: 30, justifyContent: "center", paddingHorizontal: spacing.xs },
+  listFilterResetText: { fontSize: 10, lineHeight: 15, fontWeight: "700", color: colors.primary, textDecorationLine: "underline" },
+  listResultSummaryRow: { minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm },
+  listResultSummary: { flex: 1, minWidth: 0, fontSize: 15, lineHeight: 21, fontWeight: "800", color: EXPLORE_FOUNDATION.text },
+  listSortControl: { width: 124 },
   header: { zIndex: 90, elevation: 30, gap: spacing.sm, marginBottom: spacing.lg },
   initialPrompt: { flex: 1, alignItems: "center", justifyContent: "center", gap: spacing.sm, paddingHorizontal: spacing.xl, paddingBottom: spacing.xxxl },
   initialPromptTitle: { ...typography.title, color: colors.text, textAlign: "center" },
@@ -1098,7 +1164,7 @@ const styles = StyleSheet.create({
   initialPromptButton: { minHeight: 46, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs, paddingHorizontal: spacing.lg, borderRadius: radius.pill, backgroundColor: colors.primary, ...shadows.card },
   initialPromptButtonIcon: { width: 20, height: 20 },
   initialPromptButtonText: { ...typography.bodyStrong, color: colors.white },
-  gap: { height: spacing.md },
+  gap: { height: spacing.sm },
   searchRow: { position: "relative", zIndex: 20, minHeight: 52 },
   searchRowDropdownOpen: { zIndex: 180 },
   searchGroup: { zIndex: 1, minHeight: 52, position: "relative" },
@@ -1201,9 +1267,13 @@ const styles = StyleSheet.create({
   mapFullscreenRoot: { flex: 1, position: "relative", overflow: "hidden", backgroundColor: colors.background },
   mapFullscreenMap: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, backgroundColor: colors.surfaceMuted },
   mapFloatingControls: { position: "absolute", top: 0, left: 0, right: 0, zIndex: 220, elevation: 60, gap: spacing.xs, paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.sm },
-  mapFloatingControlsExpanded: { backgroundColor: colors.background, borderBottomWidth: 0 },
+  mapFloatingControlsExpanded: { backgroundColor: colors.white, borderBottomWidth: 0 },
   mapFloatingControlsDropdownOpen: { zIndex: 320, elevation: 80 },
-  mapResultsSheet: { position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 180, elevation: 50, overflow: "hidden", gap: spacing.xxs, paddingHorizontal: spacing.lg, paddingBottom: spacing.sm, borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl, borderWidth: 1, borderBottomWidth: 0, borderColor: "#D6DEE8", backgroundColor: colors.background, ...shadows.floating },
+  mapModeSwitchRow: { minHeight: 38, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm, paddingLeft: spacing.xs },
+  mapModeTitle: { fontSize: 12, lineHeight: 18, fontWeight: "800", color: EXPLORE_FOUNDATION.text },
+  mapModeListButton: { minHeight: 36, justifyContent: "center", paddingHorizontal: spacing.md, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.primary, backgroundColor: colors.white },
+  mapModeListText: { fontSize: 11, lineHeight: 16, fontWeight: "800", color: colors.primary },
+  mapResultsSheet: { position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 180, elevation: 50, overflow: "hidden", gap: spacing.xxs, paddingHorizontal: spacing.lg, paddingBottom: spacing.sm, borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl, borderWidth: 1, borderBottomWidth: 0, borderColor: "#D6DEE8", backgroundColor: colors.white, ...shadows.floating },
   mapResultsSheetExpanded: { zIndex: 240, elevation: 70, borderTopWidth: 0, borderTopLeftRadius: 0, borderTopRightRadius: 0 },
   mapSheetDragHeader: { gap: spacing.xxs },
   mapSheetHandleArea: { minHeight: 22, alignItems: "center", justifyContent: "center" },
