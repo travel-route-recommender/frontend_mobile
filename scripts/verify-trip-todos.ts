@@ -26,6 +26,7 @@ import {
   resolveGeneratedTripTodo,
   shouldArchiveMissingGeneratedTodo,
   shouldRememberGeneratedTodoDismissal,
+  sortTripTodos,
   tripTodoToDraft,
   updateTripTodo,
   validateTripTodoDraft,
@@ -195,6 +196,36 @@ assert(dateChangeSeeds.length === 1 && dateChangeSeeds[0].description.includes("
 const deletionSeeds = createWorkspaceScheduleImpactTodoSeeds({ beforeItinerary: [before], afterItinerary: [], documents: [linkedDocument], createdByUserId: "owner" });
 assert(deletionSeeds.length === 1 && deletionSeeds[0].tags?.includes("일정 삭제"), "문서 연결 일정 삭제를 전후 snapshot으로 감지한다");
 assert(createWorkspaceScheduleImpactTodoSeeds({ beforeItinerary: [before], afterItinerary: [after], documents: [{ ...linkedDocument, itineraryItemIds: [] }], createdByUserId: "owner" }).length === 0, "연결 문서가 없는 일정 변경은 예약 영향 TODO를 만들지 않는다");
+const serverTicketChangeSeeds = createWorkspaceScheduleImpactTodoSeeds({
+  beforeItinerary: [before],
+  afterItinerary: [after],
+  documents: [],
+  externalReferencesByItemId: { [before.id]: [{ id: "server-ticket-1", label: "KTX 승차권.jpg", sourceLabel: "서버 티켓" }] },
+  placeNameByItemId: { [before.id]: "부산역" },
+  createdByUserId: "owner",
+});
+const repeatedServerTicketChangeSeeds = createWorkspaceScheduleImpactTodoSeeds({
+  beforeItinerary: [before],
+  afterItinerary: [after],
+  documents: [],
+  externalReferencesByItemId: { [before.id]: [{ id: "server-ticket-1", label: "KTX 승차권.jpg", sourceLabel: "서버 티켓" }] },
+  placeNameByItemId: { [before.id]: "부산역" },
+  createdByUserId: "owner",
+});
+assert(serverTicketChangeSeeds.length === 1
+  && serverTicketChangeSeeds[0].description.includes("서버 티켓 KTX 승차권.jpg")
+  && !serverTicketChangeSeeds[0].links?.documentIds?.length,
+"서버 티켓만 연결된 API 일정 변경도 로컬 문서 ID를 날조하지 않고 TODO로 만든다");
+assert(serverTicketChangeSeeds[0]?.dedupeKey === repeatedServerTicketChangeSeeds[0]?.dedupeKey,
+"같은 API 일정 version 결과를 다시 동기화해도 동일한 idempotent TODO 키를 만든다");
+const serverTicketDeletionSeeds = createWorkspaceScheduleImpactTodoSeeds({
+  beforeItinerary: [before],
+  afterItinerary: [],
+  documents: [],
+  externalReferencesByItemId: { [before.id]: [{ id: "server-ticket-1", label: "KTX 승차권.jpg", sourceLabel: "서버 티켓" }] },
+  createdByUserId: "owner",
+});
+assert(serverTicketDeletionSeeds.length === 1 && serverTicketDeletionSeeds[0].tags?.includes("일정 삭제"), "서버 티켓 연결 API 일정 삭제도 별도 TODO로 기록한다");
 assert(isSuccessfulWorkspaceMutation("success") && isSuccessfulWorkspaceMutation("success-adjusted"), "일정 저장과 종료 조건 자동 조정 성공만 TODO 후처리 대상으로 인정한다");
 assert(!isSuccessfulWorkspaceMutation("overlap") && !isSuccessfulWorkspaceMutation("end-condition") && !isSuccessfulWorkspaceMutation("invalid-attachment"), "실패·롤백 mutation은 TODO 후처리 대상에서 제외한다");
 const laterImpact = createScheduleImpactTodoSeed({ before: after, after: { ...after, startTime: "17:00" }, documents: [document], createdByUserId: "owner" });
@@ -214,6 +245,29 @@ assert(reopenedImpactTodo?.checklist.every((entry) => !entry.completed) && reope
 
 assert(getTripTodoDueState({ ...created, due: { date: "2026-08-18", time: "09:00" } }, new Date("2026-08-19T12:00:00")) === "overdue", "기기 현지 시각 기준 기한 지남을 감지한다");
 assert(getTripTodoDueState({ ...created, status: "completed" }, new Date("2026-08-19T12:00:00")) === "completed", "완료 TODO는 기한 경고에서 제외한다");
+assert(getTripTodoDueState(
+  { ...created, due: { date: "2026-08-20", time: "12:00", timezone: "Asia/Seoul" } },
+  new Date("2026-08-20T01:00:00.000Z"),
+) === "due-today", "기기 timezone과 달라도 TODO에 저장된 지역의 날짜·시각으로 오늘 기한을 계산한다");
+assert(getTripTodoDueState(
+  { ...created, due: { date: "2026-08-20", time: "09:00", timezone: "Asia/Seoul" } },
+  new Date("2026-08-20T00:01:00.000Z"),
+) === "overdue", "저장된 timezone의 wall-clock을 실제 instant로 변환해 기한 지남을 판정한다");
+assert(getTripTodoDueState(
+  { ...created, due: { date: "2026-03-08", time: "02:30", timezone: "America/New_York" } },
+  new Date("2026-03-08T00:00:00.000Z"),
+) === "none", "DST 전환으로 존재하지 않는 지역 시각을 임의의 다른 시각으로 보정하지 않는다");
+assert(getTripTodoDueState(
+  { ...created, due: { date: "2026-11-01", time: "01:30", timezone: "America/New_York" } },
+  new Date("2026-11-01T06:00:00.000Z"),
+) === "due-today", "DST 종료로 두 번 존재하는 지역 시각은 기한을 성급히 넘기지 않도록 뒤의 instant를 선택한다");
+const invalidTimezoneTodo = normalizeTripTodo({ ...created, due: { date: "2026-08-20", time: "12:00", timezone: "Not/A_Timezone" } }, created.tripId);
+assert(Boolean(invalidTimezoneTodo?.due && !invalidTimezoneTodo.due.timezone), "지원하지 않는 저장 timezone은 안전하게 제거한다");
+const timezoneSorted = sortTripTodos([
+  { ...created, id: "later", updatedAt: "2026-08-19T01:00:00.000Z", due: { date: "2026-08-20", time: "09:00", timezone: "America/New_York" } },
+  { ...created, id: "earlier", updatedAt: "2026-08-19T00:00:00.000Z", due: { date: "2026-08-20", time: "12:00", timezone: "Asia/Seoul" } },
+]);
+assert(timezoneSorted[0]?.id === "earlier", "서로 다른 timezone TODO를 문자열이 아니라 실제 기한 instant 순서로 정렬한다");
 
 async function verifyPostCommitBoundary() {
   let automationCalls = 0;

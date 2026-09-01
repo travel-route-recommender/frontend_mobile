@@ -5,11 +5,11 @@ export type DuriReportSection = "overview" | "checks" | "days" | "preferences" |
 
 const sections: readonly { id: DuriReportSection; label: string }[] = [
   { id: "overview", label: "요약" },
-  { id: "checks", label: "점검" },
+  { id: "checks", label: "확인할 점" },
   { id: "days", label: "날짜별" },
-  { id: "preferences", label: "성향" },
-  { id: "evidence", label: "근거·한계" },
-  { id: "suggestions", label: "제안" },
+  { id: "preferences", label: "함께 맞추기" },
+  { id: "evidence", label: "확인 범위" },
+  { id: "suggestions", label: "개선 제안" },
 ];
 
 export function DuriReportSectionTabs({

@@ -1,4 +1,3 @@
-import { environment } from "../../../config/environment";
 import type { DuriAnalysisInput } from "../../../duri/duri-analysis";
 import type { DuriAnalysisSession, DuriSuggestionEnvelope } from "../types";
 import { createDuriAnalysisSession } from "../logic/analysisSession";
@@ -40,6 +39,10 @@ export const unavailableServerDuriAnalysisService: DuriAnalysisService = {
   generateSuggestions: async () => { throw new DuriEngineUnavailableError(serverUnavailableMessage); },
 };
 
-export const duriAnalysisService = environment.duriEngine === "server"
-  ? unavailableServerDuriAnalysisService
-  : localDuriAnalysisService;
+/**
+ * API 데이터 모드와 분석 실행 위치는 서로 다른 선택이다. Backend Duri
+ * 엔드포인트는 아직 고정 휴리스틱 응답이므로, 서버 여행방도 검증된
+ * frontend 수학 엔진으로만 분석한다. 서버 엔진이 정밀 계약을 갖추기
+ * 전까지 환경변수 하나로 분석 의미가 바뀌지 않게 한다.
+ */
+export const duriAnalysisService = localDuriAnalysisService;

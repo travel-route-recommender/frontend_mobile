@@ -46,6 +46,15 @@ const isRecord = (value: unknown): value is UnknownRecord => Boolean(value) && t
 const isTimestamp = (value: unknown): value is string => typeof value === "string" && Number.isFinite(Date.parse(value));
 const isTime = (value: unknown): value is string => typeof value === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
 
+function isSupportedTimeZone(value: string) {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format(0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function isValidCalendarDate(value: unknown): value is string {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const parsed = new Date(`${value}T00:00:00Z`);
@@ -78,9 +87,8 @@ function normalizeDue(value: unknown): TripTodoDue | undefined {
     && reminderOptions.includes(value.reminderMinutesBefore)
     ? value.reminderMinutesBefore
     : undefined;
-  const timezone = typeof value.timezone === "string" && value.timezone.trim()
-    ? value.timezone.trim().slice(0, 80)
-    : undefined;
+  const timezoneCandidate = typeof value.timezone === "string" ? value.timezone.trim().slice(0, 80) : "";
+  const timezone = timezoneCandidate && isSupportedTimeZone(timezoneCandidate) ? timezoneCandidate : undefined;
   const snoozedUntil = isTimestamp(value.snoozedUntil) ? value.snoozedUntil : undefined;
   return {
     date: value.date,
@@ -361,22 +369,85 @@ export function sortTripTodos(todos: readonly TripTodo[]) {
   return [...todos].sort((left, right) => {
     const statusDifference = statusOrder[left.status] - statusOrder[right.status];
     if (statusDifference) return statusDifference;
-    const leftDue = left.due ? `${left.due.date}T${left.due.time ?? "23:59"}` : "9999-12-31T23:59";
-    const rightDue = right.due ? `${right.due.date}T${right.due.time ?? "23:59"}` : "9999-12-31T23:59";
-    return leftDue.localeCompare(rightDue) || priorityOrder[left.priority] - priorityOrder[right.priority] || right.updatedAt.localeCompare(left.updatedAt);
+    const leftDue = left.due ? dueInstantMilliseconds(left.due) ?? Number.POSITIVE_INFINITY : Number.POSITIVE_INFINITY;
+    const rightDue = right.due ? dueInstantMilliseconds(right.due) ?? Number.POSITIVE_INFINITY : Number.POSITIVE_INFINITY;
+    return leftDue - rightDue || priorityOrder[left.priority] - priorityOrder[right.priority] || right.updatedAt.localeCompare(left.updatedAt);
   });
+}
+
+type DateTimeParts = { year: number; month: number; day: number; hour: number; minute: number };
+
+function partsInTimeZone(epochMilliseconds: number, timeZone: string): DateTimeParts | undefined {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      hourCycle: "h23",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).formatToParts(new Date(epochMilliseconds));
+    const number = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((part) => part.type === type)?.value);
+    const result = { year: number("year"), month: number("month"), day: number("day"), hour: number("hour"), minute: number("minute") };
+    return Object.values(result).every(Number.isFinite) ? result : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function sameDateTime(left: DateTimeParts, right: DateTimeParts) {
+  return left.year === right.year && left.month === right.month && left.day === right.day
+    && left.hour === right.hour && left.minute === right.minute;
+}
+
+/** IANA timezone의 wall-clock을 UTC instant로 변환한다. DST 중복 시 더 늦은 instant를 택하고 존재하지 않는 시각은 거부한다. */
+function zonedDateTimeMilliseconds(parts: DateTimeParts, timeZone: string) {
+  if (!isSupportedTimeZone(timeZone)) return undefined;
+  const targetAsUtc = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute);
+  const candidates = new Set<number>();
+  [-24, -12, 0, 12, 24].forEach((seedHours) => {
+    let guess = targetAsUtc + seedHours * 60 * 60 * 1_000;
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const observed = partsInTimeZone(guess, timeZone);
+      if (!observed) return;
+      const observedAsUtc = Date.UTC(observed.year, observed.month - 1, observed.day, observed.hour, observed.minute);
+      const correction = targetAsUtc - observedAsUtc;
+      guess += correction;
+      if (correction === 0) break;
+    }
+    const resolved = partsInTimeZone(guess, timeZone);
+    if (resolved && sameDateTime(resolved, parts)) candidates.add(guess);
+  });
+  return candidates.size ? Math.max(...candidates) : undefined;
+}
+
+function dueInstantMilliseconds(due: TripTodoDue) {
+  const [year, month, day] = due.date.split("-").map(Number);
+  const [hour, minute] = (due.time ?? "23:59").split(":").map(Number);
+  if (!due.timezone) {
+    const local = new Date(year, month - 1, day, hour, minute, 0, 0);
+    return Number.isFinite(local.getTime()) ? local.getTime() : undefined;
+  }
+  return zonedDateTimeMilliseconds({ year, month, day, hour, minute }, due.timezone);
+}
+
+function dateStringInTimeZone(date: Date, timeZone: string) {
+  const parts = partsInTimeZone(date.getTime(), timeZone);
+  return parts ? `${String(parts.year).padStart(4, "0")}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}` : undefined;
 }
 
 export function getTripTodoDueState(todo: TripTodo, now = new Date()): TripTodoDueState {
   if (todo.status === "completed" || todo.status === "archived") return "completed";
   if (!todo.due) return "none";
-  const due = new Date(`${todo.due.date}T${todo.due.time ?? "23:59"}:00`);
-  if (!Number.isFinite(due.getTime())) return "none";
+  const dueMilliseconds = dueInstantMilliseconds(todo.due);
+  if (dueMilliseconds === undefined) return "none";
   if (todo.due.snoozedUntil && Number.isFinite(Date.parse(todo.due.snoozedUntil)) && Date.parse(todo.due.snoozedUntil) > now.getTime()) return "upcoming";
-  if (due.getTime() < now.getTime()) return "overdue";
-  if (todo.due.date === localDateString(now)) return "due-today";
+  if (dueMilliseconds < now.getTime()) return "overdue";
+  const today = todo.due.timezone ? dateStringInTimeZone(now, todo.due.timezone) : localDateString(now);
+  if (todo.due.date === today) return "due-today";
   const reminder = todo.due.reminderMinutesBefore;
-  if (reminder !== undefined && due.getTime() - now.getTime() <= reminder * 60_000) return "reminder";
+  if (reminder !== undefined && dueMilliseconds - now.getTime() <= reminder * 60_000) return "reminder";
   return "upcoming";
 }
 

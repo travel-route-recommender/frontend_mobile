@@ -3,6 +3,7 @@ import { MOCK_FRIEND_IDS, mockFriendProfiles } from "../src/features/compatibili
 import {
   calculateLegacyPreferenceProjection,
   calculateTravelPreferenceSurveyResult,
+  buildDuriPreferenceSignals,
 } from "../src/features/preferences/logic/calculate-travel-preference-result";
 import { challengeStyleQuestions } from "../src/features/preferences/config/challenge-style-questions";
 import { itineraryMessageQuestions } from "../src/features/preferences/config/itinerary-message-questions";
@@ -219,12 +220,18 @@ const messageSurveyAnswers = {
 };
 assert(isPreferenceStepComplete("itinerary", messageSurveyAnswers), "26. 9개 대화에 모두 답하면 첫 항목이 완료되어야 한다");
 const messageResult = calculateTravelPreferenceSurveyResult("message-user", messageSurveyAnswers, "2026-07-24T00:00:00.000Z");
+const messageSignals = buildDuriPreferenceSignals(messageResult);
 assert(
   messageResult.itineraryMessagePreference.categoryScores.restaurant === 100
     && messageResult.itineraryMessagePreference.densityScore === 50
     && messageResult.scheduleFeatures.scheduledMinutes === 0,
   "27. 대화 응답은 일정 블록을 만들지 않고 카테고리와 밀도 점수로 계산되어야 한다",
 );
+assert(messageSignals.preferredDailyScheduledMinutes === undefined && messageSignals.preferredAverageActivityBlockMinutes === undefined, "27a. 사용자가 시간표를 만들지 않았으면 희망 시간을 0분으로 조작하지 않는다");
+const scheduledSignals = buildDuriPreferenceSignals(soomin);
+assert(scheduledSignals.preferredDailyScheduledResolutionMinutes === 60 / soomin.scheduleFeatures.dayCount
+  && scheduledSignals.preferredAverageActivityBlockResolutionMinutes === 60 / soomin.placeFeatures.selectedPlaceCount,
+"27b. 일평균과 활동 블록 평균의 서로 다른 격자 해상도를 보존한다");
 
 assert(
   challengeStyleQuestions.length === 6
@@ -264,4 +271,4 @@ assert(
   "33. 예전 도전 문항이 없으면 6문항 모델의 탐색 점수로 호환 필드를 채워야 한다",
 );
 
-console.log("Preference and compatibility verification passed: 36 assertions");
+console.log("Preference and compatibility verification passed: 37 assertions");

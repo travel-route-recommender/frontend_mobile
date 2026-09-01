@@ -17,7 +17,7 @@ export type TripEndCondition = {
   location: TripLocation;
   /** 여행 마지막 날짜의 현지 시각(HH:mm) */
   deadline: string;
-  /** 사용자가 확인한 마지막 일정 장소에서 종료 지점까지의 예상 이동시간 */
+  /** 사용자가 마지막 일정 장소에서 종료 지점까지 확보하기로 한 이동시간 */
   travelMinutes: number;
   /** 승차 준비나 렌터카 반납 절차 등에 필요한 확보 시간 */
   serviceBufferMinutes: number;

@@ -8,6 +8,7 @@ import type {
   TripStatus,
   User,
 } from "../../domain";
+import type { SharedDuriPreferenceEvidence, SharedPreferenceEvidenceStatus } from "../../duri/duri-analysis";
 import { environment } from "../../config/environment";
 import { apiClient } from "../../services/apiClient";
 import { formatTripDateRange, formatTripStatus, isValidISODate } from "../../utils/formatters";
@@ -15,9 +16,19 @@ import { getTripTimingLabel } from "./utils/tripDateUtils";
 import type { RoomPreferenceResponseSummary } from "./selectors";
 import type { TripPreparationProgress, TripPreparationStep, TripRoomCardViewModel } from "./types";
 import { workspaceScheduleApiGateway } from "../workspace/services/workspaceScheduleApi";
-import type { WorkspaceScheduleSnapshot } from "../workspace/services/workspaceScheduleContract";
-import { loadApiWorkspaceOverlays } from "../workspace/services/apiWorkspaceOverlayStorage";
-import { loadApiTripLocalFacts, type ApiTripLocalFacts } from "../trip-creation/services/apiTripFactsStorage";
+import {
+  applyWorkspaceScheduleLocalOverlays,
+  type WorkspaceScheduleSnapshot,
+} from "../workspace/services/workspaceScheduleContract";
+import { loadApiWorkspaceOverlaysWithStatus } from "../workspace/services/apiWorkspaceOverlayStorage";
+import { loadApiTripLocalFactsWithStatus, type ApiTripLocalFacts } from "../trip-creation/services/apiTripFactsStorage";
+import { fetchApiTripDocuments, type ApiTripDocument } from "../trip-documents/services/tripDocumentApi";
+import { hasDuplicateMemberIds, parseTravelTypeSnapshotRecord, parseTravelTypeSnapshotTags } from "./logic/travelTypeSnapshot";
+import {
+  RoomPreferenceApiContractError,
+  assertRoomPreferenceEvidenceScope,
+  roomPreferenceApiGateway,
+} from "../duri/services/roomPreferenceApi";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -34,6 +45,7 @@ export class TripRoomApiContractError extends Error {
 export type ApiTripRoomMember = TripMember & {
   joinedAt?: string;
   travelTypeName?: string;
+  travelTypeTags: string[];
   hasTravelTypeSnapshot: boolean;
 };
 
@@ -53,7 +65,10 @@ export type ApiTripRoom = {
   candidateCount: number;
   scheduleItemCount: number;
   scheduleVersion: number;
+  factsVersion: number;
 };
+
+export type ApiLocalDataStatus = "loaded" | "missing" | "unavailable";
 
 export type ApiTripDetailData = {
   room: ApiTripRoom;
@@ -67,6 +82,12 @@ export type ApiTripDetailData = {
   preferenceSummary: RoomPreferenceResponseSummary;
   preparation: TripPreparationProgress;
   localFacts: ApiTripLocalFacts | null;
+  localFactsStatus: ApiLocalDataStatus;
+  workspaceOverlayStatus: ApiLocalDataStatus;
+  sharedPreferenceEvidence: SharedDuriPreferenceEvidence | null;
+  sharedPreferenceEvidenceStatus: SharedPreferenceEvidenceStatus;
+  sharedDocuments: ApiTripDocument[];
+  sharedDocumentsStatus: "loaded" | "unavailable";
 };
 
 const MONGO_OBJECT_ID_PATTERN = /^[a-f\d]{24}$/i;
@@ -128,16 +149,19 @@ function parseMember(value: unknown, path: string): ApiTripRoomMember {
   const role = record.role === "owner" || record.role === "member"
     ? record.role
     : fail(`${path}.role`, "owner 또는 member여야 합니다.");
-  const travelType = record.travelTypeSnapshot && typeof record.travelTypeSnapshot === "object" && !Array.isArray(record.travelTypeSnapshot)
-    ? record.travelTypeSnapshot as UnknownRecord
-    : undefined;
+  const parsedTravelType = parseTravelTypeSnapshotRecord(record.travelTypeSnapshot);
+  if (!parsedTravelType.ok) return fail(`${path}.travelTypeSnapshot`, parsedTravelType.message);
+  const travelType = parsedTravelType.snapshot;
   const joinedAt = optionalString(record.joinedAt, `${path}.joinedAt`);
   const travelTypeName = optionalString(travelType?.name, `${path}.travelTypeSnapshot.name`);
+  const parsedTravelTypeTags = parseTravelTypeSnapshotTags(travelType?.tags);
+  if (!parsedTravelTypeTags.ok) return fail(`${path}.travelTypeSnapshot.tags`, parsedTravelTypeTags.message);
   return {
     userId,
     role,
     ...(joinedAt ? { joinedAt } : {}),
     ...(travelTypeName ? { travelTypeName } : {}),
+    travelTypeTags: parsedTravelTypeTags.tags,
     hasTravelTypeSnapshot: Boolean(travelType && Object.keys(travelType).length),
   };
 }
@@ -151,6 +175,7 @@ export function parseApiTripRoom(value: unknown): ApiTripRoom {
     : asRecord(record.destination, "room.destination");
   const progressRecord = asRecord(record.progress, "room.progress");
   const members = asArray(record.members, "room.members").map((member, index) => parseMember(member, `room.members[${index}]`));
+  if (hasDuplicateMemberIds(members.map((member) => member.userId))) return fail("room.members", "같은 userId가 중복될 수 없습니다.");
   if (!members.some((member) => member.role === "owner")) return fail("room.members", "방장 멤버가 필요합니다.");
   const destinationRegionCode = optionalString(destination?.regionCode, "room.destination.regionCode");
   const inviteLink = optionalString(record.inviteLink, "room.inviteLink");
@@ -174,6 +199,7 @@ export function parseApiTripRoom(value: unknown): ApiTripRoom {
     candidateCount: integer(record.candidateCount, "room.candidateCount"),
     scheduleItemCount: integer(record.scheduleItemCount, "room.scheduleItemCount"),
     scheduleVersion: integer(record.scheduleVersion ?? 0, "room.scheduleVersion"),
+    factsVersion: integer(record.factsVersion, "room.factsVersion"),
   };
 }
 
@@ -415,30 +441,60 @@ export async function fetchApiTripDetail(roomId: string, currentUserId?: string 
     auth: true,
   }));
   const region = regionForRoom(room);
-  const [candidatePayload, directory, localFacts] = await Promise.all([
+  const hasValidLocalUserScope = Boolean(currentUserId && MONGO_OBJECT_ID_PATTERN.test(currentUserId));
+  const unavailableLocalUserScope = Boolean(currentUserId) && !hasValidLocalUserScope;
+  const [candidatePayload, directory, localFactsResult, preferenceResult, sharedDocumentsResult] = await Promise.all([
     apiClient.request<unknown>({ path: `/rooms/${encodeURIComponent(id)}/candidates`, signal, auth: true }),
     fetchUserDirectory(signal),
-    currentUserId && /^[a-f\d]{24}$/i.test(currentUserId)
-      ? loadApiTripLocalFacts(currentUserId, id).catch(() => null)
-      : Promise.resolve(null),
+    hasValidLocalUserScope
+      ? loadApiTripLocalFactsWithStatus(currentUserId as string, id, {
+          startDate: room.startDate,
+          endDate: room.endDate,
+        })
+      : Promise.resolve(unavailableLocalUserScope
+          ? { status: "unavailable" as const, value: null }
+          : { status: "missing" as const, value: null }),
+    roomPreferenceApiGateway.fetch(id, { memberIds: room.members.map((member) => member.userId) }, signal)
+      .then((value) => ({ status: "loaded" as const, value }))
+      .catch((error: unknown) => {
+        if (signal?.aborted) throw error;
+        return {
+          status: error instanceof RoomPreferenceApiContractError && error.path === "preferences.members"
+            ? "stale" as const
+            : "unavailable" as const,
+          value: null,
+        };
+      }),
+    fetchApiTripDocuments(id, signal)
+      .then((value) => ({ status: "loaded" as const, value }))
+      .catch((error: unknown) => {
+        if (signal?.aborted) throw error;
+        return { status: "unavailable" as const, value: [] as ApiTripDocument[] };
+      }),
   ]);
   const candidateData = parseCandidates(candidatePayload, room, region);
   const usersById = usersForRoom(room, directory, currentUserId);
   let itinerary: ItineraryItem[] = [];
   let scheduleSnapshot: WorkspaceScheduleSnapshot | undefined;
+  let workspaceOverlayStatus: ApiLocalDataStatus = "missing";
   const placesById = { ...candidateData.placesById };
   if (room.startDate && room.endDate) {
-    const overlaysByItemId = currentUserId && MONGO_OBJECT_ID_PATTERN.test(currentUserId)
-      ? await loadApiWorkspaceOverlays(currentUserId, id).catch(() => ({}))
-      : {};
-    const snapshot = await workspaceScheduleApiGateway.load({
+    const serverSnapshot = await workspaceScheduleApiGateway.load({
       roomId: room.id,
       tripId: room.id,
       startDate: room.startDate,
       endDate: room.endDate,
-      overlaysByItemId,
       signal,
     });
+    const overlayResult = hasValidLocalUserScope
+      ? await loadApiWorkspaceOverlaysWithStatus(currentUserId as string, id, serverSnapshot)
+      : unavailableLocalUserScope
+        ? { status: "unavailable" as const, value: {} }
+        : { status: "missing" as const, value: {} };
+    workspaceOverlayStatus = overlayResult.status;
+    const snapshot = overlayResult.status === "loaded"
+      ? applyWorkspaceScheduleLocalOverlays(serverSnapshot, overlayResult.value)
+      : serverSnapshot;
     scheduleSnapshot = snapshot;
     itinerary = snapshot.itinerary.map((item) => {
       const metadata = snapshot.metadataByItemId[item.id];
@@ -464,6 +520,25 @@ export async function fetchApiTripDetail(roomId: string, currentUserId?: string 
     item.id,
     `${item.date} ${item.startTime} · ${item.placeId ? placesById[item.placeId]?.name ?? "장소 일정" : item.note?.trim() || "일정"}`,
   ]));
+  let sharedPreferenceEvidence = preferenceResult.value;
+  let sharedPreferenceEvidenceStatus: SharedPreferenceEvidenceStatus = preferenceResult.status;
+  if (sharedPreferenceEvidence) {
+    try {
+      assertRoomPreferenceEvidenceScope(sharedPreferenceEvidence, {
+        roomId: room.id,
+        memberIds: room.members.map((member) => member.userId),
+        candidatePlaceIds: candidateData.candidates.map((candidate) => candidate.placeId),
+      });
+      const currentScheduleVersion = scheduleSnapshot?.scheduleVersion ?? room.scheduleVersion;
+      if (sharedPreferenceEvidence.factsVersion !== room.factsVersion
+        || sharedPreferenceEvidence.scheduleVersion !== currentScheduleVersion) {
+        sharedPreferenceEvidenceStatus = "stale";
+      }
+    } catch {
+      sharedPreferenceEvidenceStatus = "stale";
+    }
+  }
+  if (sharedPreferenceEvidenceStatus !== "loaded") sharedPreferenceEvidence = null;
   return {
     room,
     region,
@@ -475,7 +550,13 @@ export async function fetchApiTripDetail(roomId: string, currentUserId?: string 
     itineraryItemLabelsById,
     preferenceSummary: buildPreferenceSummary(room, usersById, currentUserId),
     preparation: buildPreparation(room),
-    localFacts,
+    localFacts: localFactsResult.value,
+    localFactsStatus: localFactsResult.status,
+    workspaceOverlayStatus,
+    sharedPreferenceEvidence,
+    sharedPreferenceEvidenceStatus,
+    sharedDocuments: sharedDocumentsResult.value,
+    sharedDocumentsStatus: sharedDocumentsResult.status,
   };
 }
 

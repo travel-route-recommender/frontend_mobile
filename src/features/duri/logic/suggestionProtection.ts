@@ -16,6 +16,7 @@ export type DuriItemProtectionReason =
   | "semantic-reservation"
   | "confirmed-date-time"
   | "confirmed-date"
+  | "linked-order-protected-document"
   | "linked-time-sensitive-document"
   | "linked-document";
 
@@ -92,6 +93,13 @@ export function getDuriItemProtection(
   }
 
   const documents = linkedDocuments(input, item.id);
+  if (documents.some((document) => document.orderProtected === true)) {
+    return {
+      blocked: true,
+      reason: "linked-order-protected-document",
+      message: "사용자가 티켓을 첨부한 일정은 문서 내용을 확인하기 전 두리가 변경할 수 없어요.",
+    };
+  }
   if (documents.some((document) => TIME_SENSITIVE_DOCUMENT_KINDS.has(document.kind))) {
     return {
       blocked: true,

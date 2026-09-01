@@ -161,7 +161,12 @@ export function previewSuggestion(
   suggestion: DuriSuggestion,
   context: SuggestionChangeContext,
 ): SuggestionPreviewResult {
-  const result = applySuggestionChanges(itinerary, suggestion, context);
+  // canApply=false는 자동 적용 금지이지 미리보기 금지가 아니다. 이동·운영시간 같은
+  // Hard 근거가 덜 모인 초안도 동일한 구조 validation을 거쳐 사용자가 검토할 수 있다.
+  const result = applySuggestionChanges(itinerary, suggestion.canApply ? suggestion : {
+    ...suggestion,
+    canApply: true,
+  }, context);
   if (result.success) return { success: true, previewItinerary: result.itinerary, changedItemIds: result.changedItemIds, affectedDate: result.affectedDate };
   return { success: false, reason: result.reason };
 }

@@ -13,7 +13,10 @@ import {
   type WorkspaceScheduleSnapshot,
 } from "../services/workspaceScheduleContract";
 
-export type ApiWorkspaceScheduleDraft = Pick<WorkspaceScheduleSnapshot, "itinerary" | "metadataByItemId">;
+export type ApiWorkspaceScheduleDraft = Pick<WorkspaceScheduleSnapshot, "itinerary" | "metadataByItemId"> & {
+  /** User-authored intent only; Backend must priority is an independent effective lock. */
+  userLockedItemIds: string[];
+};
 
 export type ApiWorkspaceScheduleMutation =
   | { ok: true; draft: ApiWorkspaceScheduleDraft; itemId?: string }
@@ -62,6 +65,27 @@ function cloneMetadata(metadata: Readonly<Record<string, WorkspaceScheduleItemMe
     tags: [...value.tags],
     tickets: value.tickets.map((ticket) => ({ ...ticket })),
   }]));
+}
+
+export function getApiWorkspaceUserLockedItemIds(snapshot: WorkspaceScheduleSnapshot) {
+  return snapshot.itinerary.flatMap((item) => {
+    const protection = snapshot.priorityProtectionsByItemId[item.id];
+    const userLocked = protection
+      ? protection.userLockAlsoPresent
+      : item.lockedForDuri === true;
+    return userLocked ? [item.id] : [];
+  });
+}
+
+function updateUserLockedItemIds(
+  snapshot: WorkspaceScheduleSnapshot,
+  itemId: string,
+  userLocked: boolean,
+) {
+  const itemIds = new Set(getApiWorkspaceUserLockedItemIds(snapshot));
+  if (userLocked) itemIds.add(itemId);
+  else itemIds.delete(itemId);
+  return [...itemIds].sort();
 }
 
 export function prepareApiWorkspaceScheduleAddition(input: {
@@ -115,6 +139,7 @@ export function prepareApiWorkspaceScheduleAddition(input: {
     itemId,
     draft: {
       itinerary,
+      userLockedItemIds: updateUserLockedItemIds(input.snapshot, itemId, input.value.lockedForDuri),
       metadataByItemId: {
         ...cloneMetadata(input.snapshot.metadataByItemId),
         [itemId]: metadata,
@@ -134,6 +159,8 @@ export function prepareApiWorkspaceScheduleUpdate(input: {
   if (permission) return permission;
   const current = input.snapshot.itinerary.find((item) => item.id === input.itemId);
   if (!current) return { ok: false, status: "invalid-item" };
+  const priorityProtection = input.snapshot.priorityProtectionsByItemId[input.itemId];
+  if (priorityProtection && current.date !== input.value.date) return { ok: false, status: "protected-item" };
   if (!isTripDate(input.trip, input.value.date)) return { ok: false, status: "invalid-date" };
   if (!isBackendTimeRange(input.value)) return { ok: false, status: "invalid-time" };
   const note = input.value.note.trim();
@@ -143,7 +170,7 @@ export function prepareApiWorkspaceScheduleUpdate(input: {
     startTime: input.value.startTime,
     durationMinutes: input.value.durationMinutes,
     ...(note ? { note } : { note: undefined }),
-    ...(input.value.lockedForDuri ? { lockedForDuri: true } : { lockedForDuri: undefined }),
+    ...(input.value.lockedForDuri || priorityProtection ? { lockedForDuri: true } : { lockedForDuri: undefined }),
   };
   if (hasConflict(input.snapshot.itinerary, next)) return { ok: false, status: "overlap" };
   const itinerary = normalizeItineraryOrder(input.snapshot.itinerary.map((item) => item.id === input.itemId ? next : item));
@@ -154,6 +181,7 @@ export function prepareApiWorkspaceScheduleUpdate(input: {
     ok: true,
     draft: {
       itinerary,
+      userLockedItemIds: updateUserLockedItemIds(input.snapshot, input.itemId, input.value.lockedForDuri),
       metadataByItemId: {
         ...cloneMetadata(input.snapshot.metadataByItemId),
         [input.itemId]: { ...metadata, reason: note },
@@ -171,12 +199,14 @@ export function prepareApiWorkspaceScheduleRemoval(input: {
   const permission = canEdit(input.trip, input.currentUserId);
   if (permission) return permission;
   if (!input.snapshot.itinerary.some((item) => item.id === input.itemId)) return { ok: false, status: "invalid-item" };
+  if (input.snapshot.priorityProtectionsByItemId[input.itemId]) return { ok: false, status: "protected-item" };
   const metadataByItemId = cloneMetadata(input.snapshot.metadataByItemId);
   delete metadataByItemId[input.itemId];
   return {
     ok: true,
     draft: {
       itinerary: input.snapshot.itinerary.filter((item) => item.id !== input.itemId),
+      userLockedItemIds: getApiWorkspaceUserLockedItemIds(input.snapshot).filter((itemId) => itemId !== input.itemId),
       metadataByItemId,
     },
   };

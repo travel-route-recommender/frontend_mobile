@@ -6,6 +6,7 @@ import {
 } from "../src/services/apiClient";
 import {
   applyBackendMustPriorityProtection,
+  applyWorkspaceScheduleLocalOverlays,
   buildScheduleTripDates,
   createWorkspaceScheduleItemMetadataFromPlace,
   findTicketRemovalImpacts,
@@ -18,9 +19,11 @@ import {
 } from "../src/features/workspace/services/workspaceScheduleContract";
 import {
   HttpWorkspaceScheduleApiGateway,
+  ScheduleReservationPlaceReplacementUnsupportedError,
   ScheduleTicketPlaceReplacementUnsupportedError,
   ScheduleTicketRemovalConfirmationRequiredError,
   WorkspaceScheduleIdentityError,
+  WorkspaceScheduleProtectedItemError,
   WorkspaceScheduleScopeMismatchError,
   WorkspaceScheduleVersionConflictError,
 } from "../src/features/workspace/services/workspaceScheduleApi";
@@ -34,6 +37,20 @@ import {
   buildApiWorkspaceOverlays,
   parseApiWorkspaceOverlays,
 } from "../src/features/workspace/logic/apiWorkspaceOverlay";
+import {
+  buildStoredApiWorkspaceOverlays,
+  clearApiWorkspaceOverlays,
+  loadApiWorkspaceOverlays,
+  loadApiWorkspaceOverlaysWithStatus,
+  parseStoredApiWorkspaceOverlays,
+  saveApiWorkspaceOverlays,
+} from "../src/features/workspace/services/apiWorkspaceOverlayStorage";
+import {
+  describeApiWorkspaceScheduleReservationImpacts,
+  findApiWorkspaceScheduleReservationImpacts,
+  hasApiWorkspaceScheduleRelevantChanges,
+  ticketRemovalItemIdsFromImpacts,
+} from "../src/features/workspace/logic/apiWorkspaceScheduleImpact";
 
 const ROOM_ID = "665abc123def456789012345";
 const OTHER_ROOM_ID = "665abc123def456789012346";
@@ -117,6 +134,11 @@ assertThrows(
   WorkspaceScheduleContractError,
   "8. 종료 시간이 시작과 같거나 이른 응답 차단",
 );
+const outOfRangeCoordinate = parseBackendRoomSchedule({ ...payload, days: [{ day: 1, items: [{ ...payload.days[0].items[0], lat: 91 }] }] });
+assert(outOfRangeCoordinate.days[0]?.items[0]?.lat === 91, "8a. Swagger가 허용한 유한 좌표값은 응답 계약에서 임의 삭제하지 않음");
+const partialCoordinate = parseBackendRoomSchedule({ ...payload, days: [{ day: 1, items: [{ ...payload.days[0].items[0], lng: undefined }] }] });
+assert(partialCoordinate.days[0]?.items[0]?.lat === 35.1587 && partialCoordinate.days[0]?.items[0]?.lng === undefined,
+  "8b. Swagger처럼 위도·경도를 독립 optional 값으로 보존");
 
 assert(buildScheduleTripDates("2026-08-31", "2026-09-02").join(",") === "2026-08-31,2026-09-01,2026-09-02", "9. 월 경계 DAY 매핑");
 assertThrows(() => buildScheduleTripDates("2026-02-30", "2026-03-01"), WorkspaceScheduleContractError, "9a. 달력에 없는 날짜 차단");
@@ -139,17 +161,17 @@ const localItem = snapshot.itinerary[0];
 assert(localItem?.date === "2026-08-19" && localItem.durationMinutes === 90, "12. day/start/end를 date/duration으로 무손실 매핑");
 assert(localItem?.lockedForDuri === true && localItem.preferredByUserIds[0] === "user-1", "13. must priority를 Duri lock으로 투영하고 다른 로컬 overlay 보존");
 const priorityProtection = snapshot.priorityProtectionsByItemId["item-1"];
-assert(priorityProtection?.source === "backend-priority-must" && priorityProtection.blockedChanges.join() === "delete,replace-place,change-date", "13a. 필수 일정 삭제·대체·날짜변경 보호 provenance 제공");
+assert(priorityProtection?.source === "backend-priority-must" && priorityProtection.blockedChanges.join() === "delete,replace-place,change-date,change-time", "13a. 필수 일정 삭제·대체·날짜·시간변경 보호 provenance 제공");
 assert(priorityProtection?.documentConfirmed === false && priorityProtection.reservationConfirmed === false && !("confirmedAt" in priorityProtection), "13b. must priority를 문서·예약 확정으로 둔갑시키지 않음");
 const optionalProtection = applyBackendMustPriorityProtection({
   itinerary: snapshot.itinerary,
-  metadataByItemId: { "item-1": { priority: "optional" } },
+  metadataByItemId: { "item-1": { priority: "optional", locked: false } },
   userLockedItemIds: new Set(),
 });
 assert(optionalProtection.itinerary[0]?.lockedForDuri !== true && !optionalProtection.priorityProtectionsByItemId["item-1"], "13c. must가 해제되면 자동 lock을 가역적으로 제거");
 const optionalWithUserLock = applyBackendMustPriorityProtection({
   itinerary: snapshot.itinerary,
-  metadataByItemId: { "item-1": { priority: "optional" } },
+  metadataByItemId: { "item-1": { priority: "optional", locked: false } },
   userLockedItemIds: new Set(["item-1"]),
 });
 assert(optionalWithUserLock.itinerary[0]?.lockedForDuri === true && !optionalWithUserLock.priorityProtectionsByItemId["item-1"], "13d. priority와 별개의 사용자 lock은 유지");
@@ -221,9 +243,52 @@ const apiUpdated = prepareApiWorkspaceScheduleUpdate({
   itemId: "item-1",
   value: { date: "2026-08-19", startTime: "02:15", durationMinutes: 45, note: "", lockedForDuri: true },
 });
-assert(apiUpdated.ok && apiUpdated.draft.itinerary[0]?.startTime === "02:15" && apiUpdated.draft.metadataByItemId["item-1"]?.reason === "", "15d. API 시간 수정과 메모 지우기를 서버 sidecar에 함께 반영");
+assert(apiUpdated.ok
+  && apiUpdated.draft.itinerary[0]?.startTime === "02:15"
+  && apiUpdated.draft.metadataByItemId["item-1"]?.reason === ""
+  && apiUpdated.draft.userLockedItemIds.includes("item-1"),
+"15d. API 시간 수정·메모 삭제와 사용자 잠금 의도를 서버 sidecar와 별도로 함께 반영");
+const mustWithUserLock = applyWorkspaceScheduleLocalOverlays(snapshot, { "item-1": { lockedForDuri: true } });
+const apiUserUnlockedMust = prepareApiWorkspaceScheduleUpdate({
+  trip: apiTrip,
+  currentUserId: "user-1",
+  snapshot: mustWithUserLock,
+  itemId: "item-1",
+  value: { date: "2026-08-19", startTime: "02:15", durationMinutes: 45, note: "", lockedForDuri: false },
+});
+assert(apiUserUnlockedMust.ok
+  && apiUserUnlockedMust.draft.itinerary[0]?.lockedForDuri === true
+  && !apiUserUnlockedMust.draft.userLockedItemIds.includes("item-1"),
+"15daa. 사용자 잠금을 해제해도 Backend must의 유효 잠금은 약화시키지 않고 의도만 분리");
+const optionalAfterMust = apiUserUnlockedMust.ok
+  ? applyBackendMustPriorityProtection({
+      itinerary: apiUserUnlockedMust.draft.itinerary,
+      metadataByItemId: { "item-1": { priority: "optional", locked: false } },
+      userLockedItemIds: new Set(apiUserUnlockedMust.draft.userLockedItemIds),
+    })
+  : undefined;
+assert(optionalAfterMust?.itinerary[0]?.lockedForDuri !== true,
+  "15dab. 사용자 잠금 해제 의도는 Backend must가 optional로 바뀐 뒤에도 되살아나지 않음");
+const apiProtectedDateChange = prepareApiWorkspaceScheduleUpdate({
+  trip: apiTrip,
+  currentUserId: "user-1",
+  snapshot,
+  itemId: "item-1",
+  value: { date: "2026-08-20", startTime: "02:15", durationMinutes: 45, note: "", lockedForDuri: false },
+});
+assert(!apiProtectedDateChange.ok && apiProtectedDateChange.status === "protected-item", "15da. Backend must 일정의 날짜 변경을 draft 단계에서 차단");
 const apiRemoved = prepareApiWorkspaceScheduleRemoval({ trip: apiTrip, currentUserId: "user-1", snapshot, itemId: "item-1" });
-assert(apiRemoved.ok && apiRemoved.draft.itinerary.length === 0 && !apiRemoved.draft.metadataByItemId["item-1"], "15e. API 일정 삭제 draft에서 item metadata도 정리");
+assert(!apiRemoved.ok && apiRemoved.status === "protected-item", "15e. Backend must 일정의 삭제를 draft 단계에서 차단");
+const optionalSnapshot = {
+  ...snapshot,
+  ...optionalProtection,
+  metadataByItemId: {
+    ...snapshot.metadataByItemId,
+    "item-1": { ...snapshot.metadataByItemId["item-1"], priority: "optional" as const },
+  },
+};
+const apiOptionalRemoved = prepareApiWorkspaceScheduleRemoval({ trip: apiTrip, currentUserId: "user-1", snapshot: optionalSnapshot, itemId: "item-1" });
+assert(apiOptionalRemoved.ok && apiOptionalRemoved.draft.itinerary.length === 0 && !apiOptionalRemoved.draft.metadataByItemId["item-1"], "15ea. optional 일정 삭제 draft에서 item metadata도 정리");
 const apiEndConditionRejected = prepareApiWorkspaceScheduleUpdate({
   trip: { ...apiTrip, endDate: "2026-08-19", endCondition: { type: "train", location: { name: "부산역" }, deadline: "02:00", travelMinutes: 30, serviceBufferMinutes: 0 } },
   currentUserId: "user-1",
@@ -245,6 +310,92 @@ const parsedOverlays = parseApiWorkspaceOverlays({
 });
 assert(parsedOverlays["item-1"]?.lockedForDuri === true && parsedOverlays["item-1"]?.preferredByUserIds?.[0] === ROOM_ID, "15h. 계정별 API lock overlay를 엄격 파싱");
 assert(!parsedOverlays.invalid && Object.keys(parseApiWorkspaceOverlays({ version: 999, items: builtOverlays })).length === 0, "15i. 잘못된 overlay item과 저장 버전 격리");
+const plainOverlaySnapshot = {
+  ...optionalSnapshot,
+  itinerary: optionalSnapshot.itinerary.map((item) => {
+    const { lockedForDuri: _lockedForDuri, note: _note, ...plainItem } = item;
+    return { ...plainItem, itemType: "place" as const, preferredByUserIds: [] };
+  }),
+};
+const longOverlayNote = "긴 서버 일정 사유".repeat(20);
+const customOverlaySnapshot = {
+  ...plainOverlaySnapshot,
+  itinerary: plainOverlaySnapshot.itinerary.map((item) => ({
+    ...item,
+    itemType: "reservation" as const,
+    preferredByUserIds: [ROOM_ID],
+    lockedForDuri: true,
+    note: longOverlayNote,
+  })),
+};
+const canonicalStoredOverlays = buildStoredApiWorkspaceOverlays(customOverlaySnapshot);
+const storedOverlayEnvelope = {
+  version: API_WORKSPACE_OVERLAY_STORAGE_VERSION,
+  scope: {
+    roomId: plainOverlaySnapshot.scope.roomId,
+    startDate: plainOverlaySnapshot.scope.startDate,
+    endDate: plainOverlaySnapshot.scope.endDate,
+  },
+  scheduleVersion: customOverlaySnapshot.scheduleVersion,
+  items: canonicalStoredOverlays,
+  savedAt: "2026-08-19T00:00:00.000Z",
+};
+const storedOverlayRaw = JSON.stringify(storedOverlayEnvelope);
+const loadedStoredOverlays = parseStoredApiWorkspaceOverlays(storedOverlayRaw, plainOverlaySnapshot);
+assert(loadedStoredOverlays.status === "loaded"
+  && loadedStoredOverlays.value["item-1"]?.lockedForDuri === true
+  && loadedStoredOverlays.value["item-1"]?.itemType === "reservation",
+"15j. scope와 항목 정체성이 같은 API overlay 저장값만 loaded로 구분");
+assert(parseStoredApiWorkspaceOverlays(null, plainOverlaySnapshot).status === "missing", "15k. API overlay 저장 키가 없을 때만 missing으로 구분");
+assert(parseStoredApiWorkspaceOverlays("{broken", plainOverlaySnapshot).status === "unavailable"
+  && parseStoredApiWorkspaceOverlays(JSON.stringify({ ...storedOverlayEnvelope, version: 999 }), plainOverlaySnapshot).status === "unavailable"
+  && parseStoredApiWorkspaceOverlays(JSON.stringify({ ...storedOverlayEnvelope, scope: { ...storedOverlayEnvelope.scope, endDate: "2026-08-21" } }), plainOverlaySnapshot).status === "unavailable"
+  && parseStoredApiWorkspaceOverlays(JSON.stringify({ version: 1, items: builtOverlays, savedAt: "2026-08-19T00:00:00.000Z" }), plainOverlaySnapshot).status === "unavailable",
+"15l. JSON·version·날짜 scope·구형 payload가 손상 또는 과거인 API overlay를 빈 설정으로 위장하지 않음");
+const canonicalIdentity = canonicalStoredOverlays["item-1"]?.identity as string;
+const corruptOverlayEntries = [
+  { "item-1": { identity: canonicalIdentity, overlay: { itemType: "unknown" } } },
+  { "item-1": { identity: canonicalIdentity, overlay: { preferredByUserIds: [ROOM_ID, "invalid-user"] } } },
+  { "item-1": { identity: canonicalIdentity, overlay: { note: 123 } } },
+  { "item-1": { identity: canonicalIdentity, overlay: { lockedForDuri: "true" } } },
+  { "item-1": { identity: canonicalIdentity, overlay: { itemType: "meal", unexpected: true } } },
+  { "item-1": { identity: "", overlay: { itemType: "meal" } } },
+];
+assert(corruptOverlayEntries.every((items) => parseStoredApiWorkspaceOverlays(JSON.stringify({
+  ...storedOverlayEnvelope,
+  items,
+}), plainOverlaySnapshot).status === "unavailable"), "15m. overlay entry·identity 손상을 조용히 버리지 않고 전체 unavailable로 격리");
+const canonicalStoredRoundTrip = parseStoredApiWorkspaceOverlays(storedOverlayRaw, {
+  ...plainOverlaySnapshot,
+  scheduleVersion: plainOverlaySnapshot.scheduleVersion + 5,
+});
+assert(
+  canonicalStoredOverlays["item-1"]?.overlay.note?.length === 120
+    && canonicalStoredRoundTrip.status === "unavailable"
+    && Object.keys(canonicalStoredRoundTrip.value).length === 0,
+  "15n. 동일 item identity여도 scheduleVersion이 다르면 실패한 과거 local write 가능성을 배제할 수 없어 fail-closed",
+);
+const changedIdentitySnapshots = [
+  { ...plainOverlaySnapshot, itinerary: plainOverlaySnapshot.itinerary.map((item) => ({ ...item, placeId: OTHER_PLACE_ID })) },
+  { ...plainOverlaySnapshot, itinerary: plainOverlaySnapshot.itinerary.map((item) => ({ ...item, date: "2026-08-20" })) },
+  { ...plainOverlaySnapshot, itinerary: plainOverlaySnapshot.itinerary.map((item) => ({ ...item, startTime: "00:30" })) },
+  { ...plainOverlaySnapshot, itinerary: plainOverlaySnapshot.itinerary.map((item) => ({ ...item, durationMinutes: 75 })) },
+];
+assert(changedIdentitySnapshots.every((current) => parseStoredApiWorkspaceOverlays(storedOverlayRaw, current).status === "unavailable"),
+  "15o. 같은 서버 item ID라도 장소·날짜·시작·길이가 바뀌면 과거 overlay 전체를 unavailable로 격리");
+const changedServerSnapshot = changedIdentitySnapshots[0];
+const mismatchedOverlays = parseStoredApiWorkspaceOverlays(storedOverlayRaw, changedServerSnapshot);
+const safeChangedSnapshot = applyWorkspaceScheduleLocalOverlays(changedServerSnapshot, mismatchedOverlays.value);
+assert(mismatchedOverlays.status === "unavailable"
+  && safeChangedSnapshot.itinerary[0]?.itemType === "place"
+  && safeChangedSnapshot.itinerary[0]?.lockedForDuri !== true
+  && safeChangedSnapshot.itinerary[0]?.preferredByUserIds.length === 0,
+"15p. identity 불일치가 과거 예약 분류·Duri 잠금·선호를 다른 서버 일정에 되살리지 않음");
+const appliedExactOverlay = applyWorkspaceScheduleLocalOverlays(plainOverlaySnapshot, loadedStoredOverlays.value);
+assert(appliedExactOverlay.itinerary[0]?.itemType === "reservation"
+  && appliedExactOverlay.itinerary[0]?.lockedForDuri === true
+  && appliedExactOverlay.itinerary[0]?.preferredByUserIds[0] === ROOM_ID,
+"15q. exact identity인 기기 overlay만 서버 snapshot에 적용");
 
 const batch = mapWorkspaceScheduleToBatch({
   itinerary: snapshot.itinerary,
@@ -387,6 +538,31 @@ const newItemBatch = mapWorkspaceScheduleToBatch({
 });
 assert(newItemMetadata.priority === "optional" && newItemMetadata.tickets.length === 0, "24d. 새 후보 일정은 예약을 날조하지 않고 Backend 기본 optional metadata 생성");
 assert(newItemBatch.days[0]?.items[0]?.reason === "아침 산책" && newItemBatch.days[0]?.items[0]?.lat === 35.1587, "24e. 새 후보 metadata와 UI note를 DTO 필드로 결합");
+const overlappingItem = { ...newItem, id: "item-overlap", startTime: "02:30" };
+const overlappingMetadata = { ...newItemMetadata, itemId: overlappingItem.id };
+assertThrows(
+  () => mapWorkspaceScheduleToBatch({
+    itinerary: [newItem, overlappingItem],
+    metadataByItemId: { [newItem.id]: newItemMetadata, [overlappingItem.id]: overlappingMetadata },
+    tripId: ROOM_ID,
+    startDate: "2026-08-19",
+    endDate: "2026-08-20",
+    expectedVersion: 7,
+  }),
+  WorkspaceScheduleContractError,
+  "24ea. gateway 직전 전체 batch의 일정 겹침을 다시 차단",
+);
+const partialCoordinateBatch = mapWorkspaceScheduleToBatch({
+  itinerary: [newItem],
+  metadataByItemId: { [newItem.id]: { ...newItemMetadata, lat: 35.1, lng: undefined } },
+  tripId: ROOM_ID,
+  startDate: "2026-08-19",
+  endDate: "2026-08-20",
+  expectedVersion: 7,
+});
+assert(partialCoordinateBatch.days[0]?.items[0]?.lat === 35.1
+  && partialCoordinateBatch.days[0]?.items[0]?.lng === undefined,
+"24eb. Backend DTO가 허용하는 독립 optional 좌표를 batch 저장에서도 무손실 보존");
 assertThrows(
   () => createWorkspaceScheduleItemMetadataFromPlace({ itemId: "local-item", place: { id: "local-place", name: "로컬 장소", tags: [] } }),
   WorkspaceScheduleContractError,
@@ -397,6 +573,83 @@ const impacts = findTicketRemovalImpacts(snapshot, []);
 assert(impacts.length === 1 && impacts[0]?.tickets[0]?.id === "ticket-1" && impacts[0].action === "delete", "25. ticket 일정 삭제 영향 탐지");
 assert(findTicketRemovalImpacts(snapshot, [{ ...localItem, placeId: "place-2" }], snapshot.metadataByItemId)[0]?.action === "replace", "26. 같은 ID로 장소를 교체해 ticket이 잘못 승계되는 경우 탐지");
 assert(findTicketRemovalImpacts(snapshot, snapshot.itinerary, snapshot.metadataByItemId).length === 0, "27. 같은 item ID의 시간 이동은 ticket 삭제로 오인하지 않음");
+const apiTimeImpacts = findApiWorkspaceScheduleReservationImpacts({
+  snapshot,
+  draft: {
+    itinerary: snapshot.itinerary.map((item) => ({ ...item, startTime: "03:00" })),
+    userLockedItemIds: [],
+    metadataByItemId: snapshot.metadataByItemId,
+  },
+  localDocuments: [{ id: "local-doc", tripId: ROOM_ID, itineraryItemIds: ["item-1", "item-1"], kind: "admission", displayName: "입장권.pdf" }],
+});
+assert(apiTimeImpacts.length === 1
+  && apiTimeImpacts[0]?.changes.join() === "time"
+  && apiTimeImpacts[0]?.serverTickets.length === 1
+  && apiTimeImpacts[0]?.localDocuments.length === 1,
+"27a. API 시각 변경에서 서버 티켓과 중복 제거한 로컬 문서 연관성을 함께 탐지");
+assert(describeApiWorkspaceScheduleReservationImpacts(apiTimeImpacts).includes("서버 티켓 1개")
+  && ticketRemovalItemIdsFromImpacts(apiTimeImpacts).length === 0,
+"27b. 비삭제 변경은 사용자에게 알리되 Backend 티켓 삭제 확인으로 오인하지 않음");
+const apiDeleteImpacts = findApiWorkspaceScheduleReservationImpacts({
+  snapshot,
+  draft: { itinerary: [], userLockedItemIds: [], metadataByItemId: {} },
+  localDocuments: [{ id: "other-trip-doc", tripId: OTHER_ROOM_ID, itineraryItemIds: ["item-1"], kind: "other", displayName: "다른 여행.pdf" }],
+});
+assert(apiDeleteImpacts[0]?.changes[0] === "delete"
+  && apiDeleteImpacts[0]?.localDocuments.length === 0
+  && ticketRemovalItemIdsFromImpacts(apiDeleteImpacts)[0] === "item-1",
+"27c. 삭제 영향은 같은 여행의 문서만 포함하고 서버 티켓 확인 대상 ID를 반환");
+const apiPlaceImpacts = findApiWorkspaceScheduleReservationImpacts({
+  snapshot,
+  draft: {
+    itinerary: snapshot.itinerary,
+    userLockedItemIds: [],
+    metadataByItemId: {
+      ...snapshot.metadataByItemId,
+      "item-1": { ...snapshot.metadataByItemId["item-1"], placeName: "새 장소" },
+    },
+  },
+  localDocuments: [],
+});
+assert(apiPlaceImpacts[0]?.changes.includes("place"), "27d. 같은 일정 ID의 서버 장소명 교체도 예약 영향으로 탐지");
+assert(findApiWorkspaceScheduleReservationImpacts({
+  snapshot,
+  draft: { itinerary: snapshot.itinerary, userLockedItemIds: [], metadataByItemId: snapshot.metadataByItemId },
+  localDocuments: [{ id: "local-doc", tripId: ROOM_ID, itineraryItemIds: ["item-1"], kind: "admission", displayName: "입장권.pdf" }],
+}).length === 0, "27e. 연결 자료가 있어도 일정 사실이 그대로면 확인을 요구하지 않음");
+assert(hasApiWorkspaceScheduleRelevantChanges({
+  snapshot,
+  draft: { itinerary: [], userLockedItemIds: [], metadataByItemId: {} },
+}), "27f. 로컬 문서 hydration 실패 시에도 삭제 가능성을 보수적으로 알릴 수 있음");
+const reservationImpactSnapshot = {
+  ...snapshot,
+  metadataByItemId: {
+    ...snapshot.metadataByItemId,
+    "item-1": {
+      ...snapshot.metadataByItemId["item-1"],
+      tickets: [],
+      reservation: {
+        id: "res-impact",
+        status: "unconfirmed" as const,
+        date: "2026-08-19",
+        documentTicketIds: [],
+        revision: 1,
+      },
+    },
+  },
+};
+const reservationOnlyImpacts = findApiWorkspaceScheduleReservationImpacts({
+  snapshot: reservationImpactSnapshot,
+  draft: {
+    itinerary: reservationImpactSnapshot.itinerary.map((item) => ({ ...item, startTime: "03:00" })),
+    userLockedItemIds: [],
+    metadataByItemId: reservationImpactSnapshot.metadataByItemId,
+  },
+  localDocuments: [],
+});
+assert(reservationOnlyImpacts[0]?.serverReservation?.id === "res-impact"
+  && describeApiWorkspaceScheduleReservationImpacts(reservationOnlyImpacts).includes("서버 예약 unconfirmed"),
+"27g. 티켓이 없어도 서버 예약이 연결된 일정 변경을 공유 TODO 영향으로 탐지");
 
 class FakeApiClient implements ApiClient {
   requests: ApiRequest[] = [];
@@ -411,12 +664,100 @@ class FakeApiClient implements ApiClient {
 }
 
 async function verifyGateway() {
+  const failingOverlayReader = { getItem: async () => { throw new Error("storage read failed"); } };
+  const unavailableOverlays = await loadApiWorkspaceOverlaysWithStatus(ROOM_ID, ROOM_ID, plainOverlaySnapshot, failingOverlayReader);
+  assert(unavailableOverlays.status === "unavailable", "27h. API overlay read 실패를 unavailable로 보존");
+  assert(Object.keys(await loadApiWorkspaceOverlays(ROOM_ID, ROOM_ID, plainOverlaySnapshot, failingOverlayReader)).length === 0, "27h. 기존 API overlay loader는 read 실패에도 빈 객체 호환 반환 유지");
+  const legacyOverlayReader = { getItem: async (key: string) => key.includes(":v1:") ? JSON.stringify({ version: 1, items: builtOverlays }) : null };
+  assert((await loadApiWorkspaceOverlaysWithStatus(ROOM_ID, ROOM_ID, plainOverlaySnapshot, legacyOverlayReader)).status === "unavailable",
+    "27ha. identity 없는 v1 overlay가 남아 있으면 missing이 아니라 unavailable로 구분");
+  const removedOverlayKeys: string[] = [];
+  await clearApiWorkspaceOverlays(ROOM_ID, OTHER_ROOM_ID, {
+    removeItem: async (key) => { removedOverlayKeys.push(key); },
+  });
+  assert(removedOverlayKeys.length === 2
+    && removedOverlayKeys.every((key) => key.endsWith(`:${ROOM_ID}:${OTHER_ROOM_ID}`))
+    && removedOverlayKeys.some((key) => key.includes(":v1:"))
+    && removedOverlayKeys.some((key) => key.includes(":v2:")),
+  "27i. API overlay 복구는 확인한 계정·여행방의 v2/v1 scoped key만 제거");
+
+  const overlayRaceSnapshot = {
+    ...customOverlaySnapshot,
+    scope: { ...customOverlaySnapshot.scope, roomId: OTHER_ROOM_ID },
+  };
+  let firstOverlayWriteStartedResolve!: () => void;
+  let releaseFirstOverlayWrite!: () => void;
+  const firstOverlayWriteStarted = new Promise<void>((resolve) => { firstOverlayWriteStartedResolve = resolve; });
+  const firstOverlayWriteGate = new Promise<void>((resolve) => { releaseFirstOverlayWrite = resolve; });
+  const overlayRaceValues = new Map<string, string>();
+  let overlayWriteCount = 0;
+  const overlayRaceWriter = {
+    setItem: async (key: string, value: string) => {
+      overlayWriteCount += 1;
+      if (overlayWriteCount === 1) {
+        firstOverlayWriteStartedResolve();
+        await firstOverlayWriteGate;
+      }
+      overlayRaceValues.set(key, value);
+    },
+  };
+  const firstOverlaySave = saveApiWorkspaceOverlays(ROOM_ID, OTHER_ROOM_ID, overlayRaceSnapshot, overlayRaceWriter);
+  await firstOverlayWriteStarted;
+  const secondOverlaySnapshot = {
+    ...overlayRaceSnapshot,
+    scheduleVersion: overlayRaceSnapshot.scheduleVersion + 1,
+    itinerary: overlayRaceSnapshot.itinerary.map((item) => ({ ...item, itemType: "meal" as const })),
+  };
+  const secondOverlaySave = saveApiWorkspaceOverlays(ROOM_ID, OTHER_ROOM_ID, secondOverlaySnapshot, overlayRaceWriter);
+  await Promise.resolve();
+  assert(overlayWriteCount === 1, "27ia. 같은 overlay key의 후속 저장은 진행 중 저장 뒤에 직렬화");
+  releaseFirstOverlayWrite();
+  await Promise.all([firstOverlaySave, secondOverlaySave]);
+  const finalOverlayEnvelope = JSON.parse([...overlayRaceValues.values()][0] as string) as {
+    scheduleVersion?: number;
+    items?: Record<string, { overlay?: { itemType?: string } }>;
+  };
+  assert(overlayRaceValues.size === 1
+    && finalOverlayEnvelope.scheduleVersion === secondOverlaySnapshot.scheduleVersion
+    && finalOverlayEnvelope.items?.["item-1"]?.overlay?.itemType === "meal",
+  "27ib. 같은 overlay key의 동시 저장은 호출 순서상 마지막 snapshot이 최종값");
+
+  let pendingOverlaySetStartedResolve!: () => void;
+  let releasePendingOverlaySet!: () => void;
+  const pendingOverlaySetStarted = new Promise<void>((resolve) => { pendingOverlaySetStartedResolve = resolve; });
+  const pendingOverlaySetGate = new Promise<void>((resolve) => { releasePendingOverlaySet = resolve; });
+  const overlaySaveClearValues = new Map<string, string>();
+  const overlaySaveClearStorage = {
+    setItem: async (key: string, value: string) => {
+      pendingOverlaySetStartedResolve();
+      await pendingOverlaySetGate;
+      overlaySaveClearValues.set(key, value);
+    },
+    removeItem: async (key: string) => { overlaySaveClearValues.delete(key); },
+  };
+  const pendingOverlaySave = saveApiWorkspaceOverlays(OTHER_ROOM_ID, OTHER_ROOM_ID, overlayRaceSnapshot, overlaySaveClearStorage);
+  await pendingOverlaySetStarted;
+  const pendingOverlayClear = clearApiWorkspaceOverlays(OTHER_ROOM_ID, OTHER_ROOM_ID, overlaySaveClearStorage);
+  releasePendingOverlaySet();
+  await Promise.all([pendingOverlaySave, pendingOverlayClear]);
+  assert(overlaySaveClearValues.size === 0,
+    "27ic. overlay 초기화는 진행 중 저장 뒤에 직렬화되어 지운 값이 되살아나지 않음");
+
   const client = new FakeApiClient();
   const gateway = new HttpWorkspaceScheduleApiGateway(client, "http://localhost:3000/api/v1");
   const loaded = await gateway.load({ roomId: ROOM_ID, tripId: ROOM_ID, startDate: "2026-08-19", endDate: "2026-08-20" });
   assert(client.requests[0]?.path === `/rooms/${ROOM_ID}/schedule` && client.requests[0]?.auth === true, "28. 검증된 server room ID 및 인증 GET");
   assert(loaded.scheduleVersion === 7, "29. gateway load가 검증된 snapshot 반환");
   assert(loaded.scope.roomId === ROOM_ID && loaded.scope.tripId === ROOM_ID, "29a. 읽은 version의 room/trip scope 보존");
+  const unprotectedLoaded = {
+    ...loaded,
+    itinerary: loaded.itinerary.map(({ lockedForDuri: _lockedForDuri, ...item }) => item),
+    metadataByItemId: {
+      ...loaded.metadataByItemId,
+      "item-1": { ...loaded.metadataByItemId["item-1"], priority: "optional" as const },
+    },
+    priorityProtectionsByItemId: {},
+  };
 
   let identityBlocked = false;
   try {
@@ -471,7 +812,7 @@ async function verifyGateway() {
   }
   assert(dateScopeBlocked && client.requests.length === 1, "29e. 날짜 범위가 바뀐 뒤 이전 snapshot version 재사용 차단");
 
-  let ticketBlocked = false;
+  let protectedItemBlocked = false;
   try {
     await gateway.save({
       roomId: ROOM_ID,
@@ -479,6 +820,24 @@ async function verifyGateway() {
       startDate: "2026-08-19",
       endDate: "2026-08-20",
       snapshot: loaded,
+      itinerary: [],
+      metadataByItemId: loaded.metadataByItemId,
+      confirmedTicketRemovalItemIds: ["item-1"],
+    });
+  } catch (error) {
+    protectedItemBlocked = error instanceof WorkspaceScheduleProtectedItemError
+      && error.itemIds[0] === "item-1";
+  }
+  assert(protectedItemBlocked && client.requests.length === 1, "29f. prepare 함수를 우회해도 must 일정 삭제를 gateway에서 다시 차단");
+
+  let ticketBlocked = false;
+  try {
+    await gateway.save({
+      roomId: ROOM_ID,
+      tripId: ROOM_ID,
+      startDate: "2026-08-19",
+      endDate: "2026-08-20",
+      snapshot: unprotectedLoaded,
       itinerary: [],
       metadataByItemId: loaded.metadataByItemId,
     });
@@ -494,7 +853,7 @@ async function verifyGateway() {
       tripId: ROOM_ID,
       startDate: "2026-08-19",
       endDate: "2026-08-20",
-      snapshot: loaded,
+      snapshot: unprotectedLoaded,
       itinerary: loaded.itinerary.map((item) => ({ ...item, placeId: OTHER_PLACE_ID })),
       metadataByItemId: loaded.metadataByItemId,
       // Confirmation cannot make this safe: Backend keeps tickets by item ID.
@@ -506,13 +865,47 @@ async function verifyGateway() {
   }
   assert(ticketReplacementBlocked && client.requests.length === 1, "30a. 확인 후에도 같은 item ID의 ticket-bearing 장소 교체는 네트워크 전에 차단");
 
+  const reservationOnlySnapshot = {
+    ...unprotectedLoaded,
+    metadataByItemId: {
+      ...unprotectedLoaded.metadataByItemId,
+      "item-1": {
+        ...unprotectedLoaded.metadataByItemId["item-1"],
+        tickets: [],
+        reservation: {
+          id: "res-1",
+          status: "unconfirmed" as const,
+          date: "2026-08-19",
+          documentTicketIds: [],
+          revision: 1,
+        },
+      },
+    },
+  };
+  let reservationReplacementBlocked = false;
+  try {
+    await gateway.save({
+      roomId: ROOM_ID,
+      tripId: ROOM_ID,
+      startDate: "2026-08-19",
+      endDate: "2026-08-20",
+      snapshot: reservationOnlySnapshot,
+      itinerary: reservationOnlySnapshot.itinerary.map((item) => ({ ...item, placeId: OTHER_PLACE_ID })),
+      metadataByItemId: reservationOnlySnapshot.metadataByItemId,
+    });
+  } catch (error) {
+    reservationReplacementBlocked = error instanceof ScheduleReservationPlaceReplacementUnsupportedError
+      && error.itemIds[0] === "item-1";
+  }
+  assert(reservationReplacementBlocked && client.requests.length === 1, "30b. ticket이 없어도 예약이 있는 같은 item ID 장소 교체는 네트워크 전에 차단");
+
   client.response = { days: [{ day: 1, items: [] }, { day: 2, items: [] }], scheduleVersion: 8 };
   const emptySaved = await gateway.save({
     roomId: ROOM_ID,
     tripId: ROOM_ID,
     startDate: "2026-08-19",
     endDate: "2026-08-20",
-    snapshot: loaded,
+    snapshot: unprotectedLoaded,
     itinerary: [],
     metadataByItemId: loaded.metadataByItemId,
     confirmedTicketRemovalItemIds: ["item-1"],
@@ -529,7 +922,7 @@ async function verifyGateway() {
       tripId: ROOM_ID,
       startDate: "2026-08-19",
       endDate: "2026-08-20",
-      snapshot: { ...loaded, metadataByItemId: { ...loaded.metadataByItemId, "item-1": { ...loaded.metadataByItemId["item-1"], tickets: [] } } },
+      snapshot: { ...unprotectedLoaded, metadataByItemId: { ...unprotectedLoaded.metadataByItemId, "item-1": { ...unprotectedLoaded.metadataByItemId["item-1"], tickets: [] } } },
       itinerary: loaded.itinerary,
       metadataByItemId: loaded.metadataByItemId,
     });
@@ -542,7 +935,7 @@ async function verifyGateway() {
 }
 
 verifyGateway()
-  .then(() => console.log("Workspace schedule contract verification passed: 66 scenarios"))
+  .then(() => console.log("Workspace schedule contract verification passed: 73 scenarios"))
   .catch((error) => {
     console.error(error);
     process.exitCode = 1;

@@ -105,6 +105,9 @@ export type TravelPreferenceSurveyResult = {
     restBlockCount: number;
     averageStayMinutes: number;
     averageDailyScheduledMinutes: number;
+    observedScheduleDayCount: number;
+    averageDayStartMinutes?: number;
+    averageDayEndMinutes?: number;
     densityScore: number;
   };
   placeFeatures: {

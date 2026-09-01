@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Chip, RemoteImage, SecondaryButton } from "../../../components/common";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
@@ -16,6 +17,7 @@ export function CandidatePlaceCard({
   onPress,
   onPrimaryAction,
   onRemove,
+  extra,
 }: {
   candidate: CandidatePlaceViewModel;
   canEdit: boolean;
@@ -23,6 +25,7 @@ export function CandidatePlaceCard({
   onPress: () => void;
   onPrimaryAction: () => void;
   onRemove: () => void;
+  extra?: ReactNode;
 }) {
   const scheduled = candidate.scheduleState !== "unscheduled";
   return <View style={[styles.card, compact && styles.cardCompact]} accessibilityLabel={`${candidate.name}, ${scheduleLabel(candidate)}`}>
@@ -40,6 +43,7 @@ export function CandidatePlaceCard({
         {candidate.placeMissing ? <Text style={styles.warning}>연결된 장소 정보가 누락됐어요.</Text> : null}
       </View>
     </Pressable>
+    {extra}
     <View style={styles.actions}>
       <View style={styles.grow}><SecondaryButton
         label={candidate.scheduleState === "unscheduled" ? "+ 일정에 추가" : candidate.scheduleState === "scheduled-on-selected-date" ? "이 날짜 일정 보기" : "배치 날짜 보기"}

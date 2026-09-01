@@ -11,6 +11,7 @@ type DuriAnalysisFeatureState = {
   suggestionStatusByTripId: Record<string, RunStatus | undefined>;
   analysisErrorByTripId: Record<string, string | undefined>;
   suggestionErrorByTripId: Record<string, string | undefined>;
+  clearAll: () => void;
   beginAnalysis: (tripId: string) => boolean;
   completeAnalysis: (session: DuriAnalysisSession) => void;
   failAnalysis: (tripId: string, message: string) => void;
@@ -28,6 +29,15 @@ export const useDuriAnalysisStore = create<DuriAnalysisFeatureState>((set) => ({
   suggestionStatusByTripId: {},
   analysisErrorByTripId: {},
   suggestionErrorByTripId: {},
+  clearAll: () => set({
+    sessionsByTripId: {},
+    suggestionsByTripId: {},
+    receiptsBySuggestionId: {},
+    analysisStatusByTripId: {},
+    suggestionStatusByTripId: {},
+    analysisErrorByTripId: {},
+    suggestionErrorByTripId: {},
+  }),
   beginAnalysis: (tripId) => {
     let started = false;
     set((state) => {

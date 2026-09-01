@@ -21,7 +21,6 @@ import {
   analyzeRouteCostEvidence,
   analyzeRouteOptimization,
   analyzeRouteTimeConstraints,
-  analyzeTransitRouteDetails,
 } from "./scheduleConstraintAnalysis";
 import { analyzePlaceCongestionConstraints, analyzePlaceOperatingConstraints, analyzePlacePracticalConstraints, analyzeRecommendedDurations } from "./placeConstraintAnalysis";
 import { analyzePreferenceConstraints } from "./preferenceConstraintAnalysis";
@@ -31,7 +30,6 @@ export function createDuriAnalysisSession(input: DuriAnalysisInput, analyzedAt: 
   const result = analyzeTrip(snapshot);
   const confirmedSchedule = analyzeConfirmedScheduleConstraints(snapshot);
   const routeTime = analyzeRouteTimeConstraints(snapshot, analyzedAt);
-  const transitDetails = analyzeTransitRouteDetails(snapshot, analyzedAt);
   const routeOptimization = analyzeRouteOptimization(snapshot);
   const routeCosts = analyzeRouteCostEvidence(snapshot, analyzedAt);
   const operatingHours = analyzePlaceOperatingConstraints(snapshot, analyzedAt);
@@ -46,7 +44,9 @@ export function createDuriAnalysisSession(input: DuriAnalysisInput, analyzedAt: 
   const overnightRecovery = analyzeOvernightRecovery(snapshot);
   const dayBalance = analyzeDayBalance(snapshot, analyzedAt);
   const candidateUsage = analyzeCandidateUsage(snapshot);
-  const coreIssues = [result.route, result.density, result.meal, result.preference].flatMap((category) => category.issues);
+  // legacy preferenceAnalyzer의 동일 몫 크레딧은 만족도 효용이 아니다. 리포트에는
+  // 직접 응답 구간·후보 신호·공정 조율을 사용하는 preferenceConstraints만 싣는다.
+  const coreIssues = [result.route, result.density, result.meal].flatMap((category) => category.issues);
   const mappedCoreIssues = mapCoreIssues(coreIssues);
   const contextIssues = [
     ...confirmedSchedule,
@@ -60,7 +60,6 @@ export function createDuriAnalysisSession(input: DuriAnalysisInput, analyzedAt: 
     ...recommendedDurations,
     ...practicalPlaceFacts,
     ...congestion,
-    ...transitDetails,
     ...documentChecks,
     ...duplicateVisits,
     ...preferenceConstraints,
@@ -75,15 +74,20 @@ export function createDuriAnalysisSession(input: DuriAnalysisInput, analyzedAt: 
     ? "warning"
     : reportIssues.some((issue) => issue.severity === "medium")
       ? "attention"
-      : result.overallStatus === "insufficient-data"
+      : reportIssues.some((issue) => issue.severity === "low")
+        ? "attention"
+        : result.overallStatus === "insufficient-data"
         ? "insufficient-data"
         : "good";
   const confirmedScheduleWarning = confirmedSchedule.find((issue) => issue.severity === "high");
+  const sharedPreferenceConflictWarning = preferenceConstraints.find((issue) => issue.id.startsWith("shared-candidate-signal-conflict-") && issue.severity === "high");
   const routeWarning = routeTime.find((issue) => issue.severity === "high");
   const operatingWarning = operatingHours.find((issue) => issue.severity === "high");
   const endConditionWarning = endCondition.find((issue) => issue.severity === "high");
   const overallMessage = confirmedScheduleWarning
     ? "확정된 예약·교통 일정을 먼저 일정표와 맞춰 주세요."
+    : sharedPreferenceConflictWarning
+      ? "반드시 방문과 제외 의견이 충돌한 후보를 동행자와 먼저 조율해 주세요."
     : routeWarning
       ? "실제 경로 예상시간보다 짧게 잡힌 이동 구간을 먼저 확인해 주세요."
     : operatingWarning

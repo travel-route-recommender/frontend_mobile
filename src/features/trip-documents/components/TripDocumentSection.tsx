@@ -4,6 +4,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Card, SecondaryButton } from "../../../components/common";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import { resolveDeletedDocumentOcrConfirmationTodo } from "../../trip-todos/services/tripTodoAutomationService";
+import { ensureTripDocumentStoreHydrated } from "../hooks/useTripDocumentHydration";
 import { deleteStoredTravelDocument, formatTravelDocumentSize, openOrShareTravelDocument, shareExternalTravelDocument } from "../services/travelDocumentStorage";
 import { useTravelDocumentAvailability } from "../hooks/useTravelDocumentAvailability";
 import { useTripDocumentHydrationState, useTripDocumentStore } from "../store/useTripDocumentStore";
@@ -23,6 +24,8 @@ export function TripDocumentSection({
   tripEndDate,
   itineraryItemLabelsById = {},
   placeOptions = [],
+  allowCreateSchedule = true,
+  scheduleCreationUnavailableMessage,
 }: {
   tripId: string;
   currentUserId: string;
@@ -33,6 +36,8 @@ export function TripDocumentSection({
   tripEndDate?: string;
   itineraryItemLabelsById?: Readonly<Record<string, string>>;
   placeOptions?: readonly { id: string; label: string }[];
+  allowCreateSchedule?: boolean;
+  scheduleCreationUnavailableMessage?: string;
 }) {
   const [addOpen, setAddOpen] = useState(false);
   const [message, setMessage] = useState("");
@@ -117,6 +122,7 @@ export function TripDocumentSection({
       </View>;
     })}</View> : <View style={styles.empty}><Text style={styles.emptyTitle}>아직 보관한 문서가 없어요</Text><Text style={styles.emptyText}>PDF와 이미지를 15MB까지 추가할 수 있어요.</Text></View>}
     {message || hydrationError ? <Text accessibilityRole="alert" style={styles.error}>{message || hydrationError}</Text> : null}
+    {hydrationError ? <SecondaryButton label="문서 목록 다시 불러오기" onPress={() => { setMessage(""); void ensureTripDocumentStoreHydrated().catch(() => undefined); }} /> : null}
     <SecondaryButton label={readOnly ? "완료된 여행에서는 추가할 수 없어요" : "문서 추가"} disabled={!isHydrated || readOnly} onPress={() => { setMessage(""); setAddOpen(true); }} />
     <TravelDocumentAddModal visible={addOpen} tripId={tripId} currentUserId={currentUserId} onClose={() => setAddOpen(false)} onAdded={(document) => setReviewDocumentId(document.id)} />
     <TravelDocumentFactReviewModal
@@ -129,6 +135,8 @@ export function TripDocumentSection({
       itineraryItemLabelsById={itineraryItemLabelsById}
       itineraryOptions={itineraryItemIds.map((id) => ({ id, label: itineraryItemLabelsById[id] ?? "기존 일정" }))}
       placeOptions={placeOptions}
+      allowCreateSchedule={allowCreateSchedule}
+      scheduleCreationUnavailableMessage={scheduleCreationUnavailableMessage}
       onClose={() => setReviewDocumentId(undefined)}
     />
     <Modal visible={Boolean(pendingDelete)} transparent animationType="fade" onRequestClose={() => setPendingDelete(undefined)}>

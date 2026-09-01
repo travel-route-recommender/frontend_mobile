@@ -148,6 +148,9 @@ class ApiCreateTripRoomService implements CreateTripRoomService {
 
     try {
       await saveApiTripLocalFacts(this.currentUserId, created.id, {
+        startDate: request.dateUndecided ? null : request.startDate,
+        endDate: request.dateUndecided ? null : request.endDate,
+      }, {
         transport: request.transport,
         accommodationLocation: request.accommodationLocation,
         endCondition: request.endCondition,

@@ -1,0 +1,29 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "customConditions": [],
+    "target": "ES2022",
+    "rootDir": ".",
+    "outDir": ".preference-auto-fill-verification",
+    "declaration": false,
+    "sourceMap": false
+  },
+  "include": [
+    "expo-env.d.ts",
+    "scripts/verify-preference-auto-fill.ts",
+    "src/domain/**/*.ts",
+    "src/data/workspaceSchedule.ts",
+    "src/duri/duri-analysis/**/*.ts",
+    "src/duri/duri-suggestions/**/*.ts",
+    "src/duri/group-preferences/**/*.ts",
+    "src/duri/preferences/**/*.ts",
+    "src/features/duri/constants.ts",
+    "src/features/duri/types.ts",
+    "src/features/duri/logic/**/*.ts",
+    "src/features/workspace/logic/**/*.ts",
+    "src/utils/schedule.ts"
+  ]
+}

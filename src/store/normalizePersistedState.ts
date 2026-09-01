@@ -306,22 +306,86 @@ function normalizeDuriPreferenceSignals(value: unknown): DuriPreferenceSignals |
   if (!isRecord(value) || !isRecord(value.categoryScores)) return undefined;
   const finite = (entry: unknown) => typeof entry === "number" && Number.isFinite(entry);
   if (![value.surveyVersion, value.algorithmVersion, value.staminaScore, value.densityScore,
-    value.preferredDailyScheduledMinutes, value.preferredAverageStayMinutes,
     value.landmarkImportance, value.localInterest].every(finite)) return undefined;
+  const surveyVersion = Math.trunc(value.surveyVersion as number);
+  const algorithmVersion = Math.trunc(value.algorithmVersion as number);
+  if (surveyVersion !== 9 || (algorithmVersion !== 7 && algorithmVersion !== 8 && algorithmVersion !== 9)) return undefined;
+  if (algorithmVersion === 7 && (value.preferredDailyScheduledResolutionMinutes !== undefined
+    || value.preferredAverageActivityBlockMinutes !== undefined
+    || value.preferredAverageActivityBlockResolutionMinutes !== undefined)) return undefined;
+  if ((algorithmVersion === 8 || algorithmVersion === 9) && (value.preferredAverageStayMinutes !== undefined
+    || value.schedulePreferenceResolutionMinutes !== undefined)) return undefined;
+  if (algorithmVersion < 9 && (value.preferredDayStartMinutes !== undefined
+    || value.preferredDayStartResolutionMinutes !== undefined
+    || value.preferredDayEndMinutes !== undefined
+    || value.preferredDayEndResolutionMinutes !== undefined
+    || value.categoryPreferenceLevels !== undefined)) return undefined;
+  if (value.preferredDailyScheduledMinutes !== undefined && !finite(value.preferredDailyScheduledMinutes)) return undefined;
+  if (value.preferredDailyScheduledResolutionMinutes !== undefined
+    && (!finite(value.preferredDailyScheduledResolutionMinutes) || (value.preferredDailyScheduledResolutionMinutes as number) <= 0)) return undefined;
+  if (value.preferredAverageActivityBlockMinutes !== undefined && !finite(value.preferredAverageActivityBlockMinutes)) return undefined;
+  if (value.preferredAverageActivityBlockResolutionMinutes !== undefined
+    && (!finite(value.preferredAverageActivityBlockResolutionMinutes) || (value.preferredAverageActivityBlockResolutionMinutes as number) <= 0)) return undefined;
+  const dayWindowValues = [
+    value.preferredDayStartMinutes,
+    value.preferredDayStartResolutionMinutes,
+    value.preferredDayEndMinutes,
+    value.preferredDayEndResolutionMinutes,
+  ];
+  if (dayWindowValues.some((entry) => entry !== undefined) && !dayWindowValues.every(finite)) return undefined;
+  if (value.preferredDayStartMinutes !== undefined && ((value.preferredDayStartMinutes as number) < 0
+    || (value.preferredDayStartMinutes as number) >= 24 * 60
+    || (value.preferredDayEndMinutes as number) <= (value.preferredDayStartMinutes as number)
+    || (value.preferredDayEndMinutes as number) > 24 * 60
+    || (value.preferredDayStartResolutionMinutes as number) <= 0
+    || (value.preferredDayEndResolutionMinutes as number) <= 0)) return undefined;
+  if (value.preferredAverageStayMinutes !== undefined && !finite(value.preferredAverageStayMinutes)) return undefined;
+  if (value.schedulePreferenceResolutionMinutes !== undefined
+    && (!finite(value.schedulePreferenceResolutionMinutes) || (value.schedulePreferenceResolutionMinutes as number) <= 0)) return undefined;
   if (value.scheduleStyle !== "relaxed" && value.scheduleStyle !== "packed") return undefined;
   const categoryScores = Object.fromEntries(Object.entries(value.categoryScores)
     .filter((entry): entry is [string, number] => finite(entry[1]))
     .map(([key, score]) => [key, Math.max(0, Math.min(100, score))]));
+  let categoryPreferenceLevels: Record<string, "like" | "neutral" | "dislike"> | undefined;
+  if (value.categoryPreferenceLevels !== undefined) {
+    if (!isRecord(value.categoryPreferenceLevels)) return undefined;
+    const entries = Object.entries(value.categoryPreferenceLevels);
+    if (entries.some(([key, level]) => !key.trim() || (level !== "like" && level !== "neutral" && level !== "dislike"))) return undefined;
+    categoryPreferenceLevels = Object.fromEntries(entries) as Record<string, "like" | "neutral" | "dislike">;
+  }
   return {
-    surveyVersion: Math.max(0, Math.trunc(value.surveyVersion as number)),
-    algorithmVersion: Math.max(0, Math.trunc(value.algorithmVersion as number)),
+    surveyVersion,
+    algorithmVersion,
     staminaScore: Math.max(0, Math.min(100, value.staminaScore as number)),
     densityScore: Math.max(0, Math.min(100, value.densityScore as number)),
     scheduleStyle: value.scheduleStyle,
-    preferredDailyScheduledMinutes: Math.max(0, Math.round(value.preferredDailyScheduledMinutes as number)),
-    preferredAverageStayMinutes: Math.max(0, Math.round(value.preferredAverageStayMinutes as number)),
+    ...(value.preferredDailyScheduledMinutes === undefined ? {} : {
+      preferredDailyScheduledMinutes: Math.max(0, value.preferredDailyScheduledMinutes as number),
+    }),
+    ...(value.preferredDailyScheduledResolutionMinutes === undefined ? {} : {
+      preferredDailyScheduledResolutionMinutes: Math.max(Number.EPSILON, value.preferredDailyScheduledResolutionMinutes as number),
+    }),
+    ...(value.preferredAverageActivityBlockMinutes === undefined ? {} : {
+      preferredAverageActivityBlockMinutes: Math.max(0, value.preferredAverageActivityBlockMinutes as number),
+    }),
+    ...(value.preferredAverageActivityBlockResolutionMinutes === undefined ? {} : {
+      preferredAverageActivityBlockResolutionMinutes: Math.max(Number.EPSILON, value.preferredAverageActivityBlockResolutionMinutes as number),
+    }),
+    ...(value.preferredDayStartMinutes === undefined ? {} : {
+      preferredDayStartMinutes: value.preferredDayStartMinutes as number,
+      preferredDayStartResolutionMinutes: value.preferredDayStartResolutionMinutes as number,
+      preferredDayEndMinutes: value.preferredDayEndMinutes as number,
+      preferredDayEndResolutionMinutes: value.preferredDayEndResolutionMinutes as number,
+    }),
+    ...(value.preferredAverageStayMinutes === undefined ? {} : {
+      preferredAverageStayMinutes: Math.max(0, value.preferredAverageStayMinutes as number),
+    }),
+    ...(value.schedulePreferenceResolutionMinutes === undefined ? {} : {
+      schedulePreferenceResolutionMinutes: Math.max(1, Math.round(value.schedulePreferenceResolutionMinutes as number)),
+    }),
     mobilityModes: unique(asStringArray(value.mobilityModes)),
     categoryScores,
+    ...(categoryPreferenceLevels ? { categoryPreferenceLevels } : {}),
     budgetRanking: unique(asStringArray(value.budgetRanking)),
     landmarkImportance: Math.max(0, Math.min(100, value.landmarkImportance as number)),
     localInterest: Math.max(0, Math.min(100, value.localInterest as number)),
@@ -336,6 +400,7 @@ function normalizePreferenceResults(value: unknown, usersById: Record<EntityId, 
     const traits = asStringArray(entry.traits);
     const preferredTags = asStringArray(entry.preferredTags);
     const detailedSignals = normalizeDuriPreferenceSignals(entry.detailedSignals);
+    const detailedSignalsInvalid = entry.detailedSignals !== undefined && detailedSignals === undefined;
     const hasLegacySignal = typeof entry.profileType === "string" || traits.length > 0 || preferredTags.length > 0;
     if (!answers && !hasLegacySignal) return [];
     if (answers) {
@@ -349,6 +414,7 @@ function normalizePreferenceResults(value: unknown, usersById: Record<EntityId, 
         // 명시적인 미지원 버전은 selector에서 invalid로 판정할 수 있도록 보존한다.
         version: typeof entry.version === "number" ? entry.version : 0,
         ...(detailedSignals ? { detailedSignals } : {}),
+        ...(detailedSignalsInvalid ? { detailedSignalsInvalid: true as const } : {}),
       };
       return [[userId, result]];
     }

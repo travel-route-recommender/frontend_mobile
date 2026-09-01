@@ -24,6 +24,18 @@ export class WorkspaceScheduleVersionConflictError extends Error {
   }
 }
 
+export class WorkspaceFactsVersionConflictError extends Error {
+  readonly currentFactsVersion?: number;
+  readonly expectedFactsVersion: number;
+
+  constructor(expectedFactsVersion: number, currentFactsVersion?: number) {
+    super("분석 이후 예약·성향·후보 사실이 변경됐어요. 최신 정보로 다시 분석해 주세요.");
+    this.name = "WorkspaceFactsVersionConflictError";
+    this.expectedFactsVersion = expectedFactsVersion;
+    this.currentFactsVersion = currentFactsVersion;
+  }
+}
+
 export class ScheduleTicketRemovalConfirmationRequiredError extends Error {
   readonly impacts: TicketRemovalImpact[];
 
@@ -50,6 +62,21 @@ export class ScheduleTicketPlaceReplacementUnsupportedError extends Error {
   }
 }
 
+/**
+ * Backend batch save currently carries a reservation by item ID when the item
+ * has no ticket, even if its place changes. Until the server clears both
+ * atomically, require the user to remove the reservation before replacement.
+ */
+export class ScheduleReservationPlaceReplacementUnsupportedError extends Error {
+  readonly itemIds: string[];
+
+  constructor(itemIds: readonly string[]) {
+    super("예약 정보가 있는 일정은 같은 항목 ID로 장소만 바꿀 수 없어요. 예약 정보를 먼저 삭제한 뒤 장소를 바꿔 주세요.");
+    this.name = "ScheduleReservationPlaceReplacementUnsupportedError";
+    this.itemIds = [...new Set(itemIds)].sort();
+  }
+}
+
 export class WorkspaceScheduleScopeMismatchError extends Error {
   readonly snapshotScope: WorkspaceScheduleScope;
   readonly requestedScope: WorkspaceScheduleScope;
@@ -59,6 +86,16 @@ export class WorkspaceScheduleScopeMismatchError extends Error {
     this.name = "WorkspaceScheduleScopeMismatchError";
     this.snapshotScope = snapshotScope;
     this.requestedScope = requestedScope;
+  }
+}
+
+export class WorkspaceScheduleProtectedItemError extends Error {
+  readonly itemIds: string[];
+
+  constructor(itemIds: readonly string[]) {
+    super("서버에서 필수로 지정한 일정은 삭제하거나 장소·날짜를 바꿀 수 없어요. 최신 일정을 다시 확인해 주세요.");
+    this.name = "WorkspaceScheduleProtectedItemError";
+    this.itemIds = [...new Set(itemIds)].sort();
   }
 }
 
@@ -91,9 +128,15 @@ export type SaveWorkspaceScheduleInput = {
   snapshot: WorkspaceScheduleSnapshot;
   itinerary: readonly ItineraryItem[];
   metadataByItemId: Readonly<Record<string, WorkspaceScheduleItemMetadata | undefined>>;
+  /** Explicit user lock intent, separate from effective Backend must protection. */
+  userLockedItemIds?: readonly string[];
   /** Ticket-bearing item deletion or place replacement requires explicit confirmation. */
   confirmedTicketRemovalItemIds?: readonly string[];
   signal?: AbortSignal;
+};
+
+export type ApplyWorkspaceScheduleProposalInput = SaveWorkspaceScheduleInput & {
+  expectedFactsVersion: number;
 };
 
 function encodePathSegment(value: string, field: string) {
@@ -147,24 +190,85 @@ function currentVersionFromApiError(error: ApiError): number | undefined {
   return Number.isInteger(value) && (value as number) >= 0 ? value as number : undefined;
 }
 
+function factsConflictFromApiError(error: ApiError) {
+  if (!error.payload || typeof error.payload !== "object") return undefined;
+  const payload = error.payload as { code?: unknown; currentFactsVersion?: unknown };
+  if (payload.code !== "FACTS_VERSION_CONFLICT") return undefined;
+  return Number.isInteger(payload.currentFactsVersion) && (payload.currentFactsVersion as number) >= 0
+    ? payload.currentFactsVersion as number
+    : undefined;
+}
+
 function localOverlays(
   items: readonly ItineraryItem[],
-  priorityProtectionsByItemId: WorkspaceScheduleSnapshot["priorityProtectionsByItemId"],
+  userLockedItemIds: ReadonlySet<string>,
 ): Record<string, WorkspaceScheduleLocalOverlay> {
   return Object.fromEntries(items.map((item) => [item.id, {
     itemType: item.itemType,
     preferredByUserIds: [...item.preferredByUserIds],
     ...(item.note ? { note: item.note } : {}),
-    ...(item.lockedForDuri === true
-      && (!priorityProtectionsByItemId[item.id] || priorityProtectionsByItemId[item.id].userLockAlsoPresent)
-      ? { lockedForDuri: true }
-      : {}),
+    ...(userLockedItemIds.has(item.id) ? { lockedForDuri: true } : {}),
   }]));
+}
+
+function resolveUserLockedItemIds(input: SaveWorkspaceScheduleInput) {
+  if (input.userLockedItemIds === undefined) {
+    return new Set(input.snapshot.itinerary.flatMap((item) => {
+      const protection = input.snapshot.priorityProtectionsByItemId[item.id];
+      const userLocked = protection ? protection.userLockAlsoPresent : item.lockedForDuri === true;
+      return userLocked ? [item.id] : [];
+    }));
+  }
+  const itineraryIds = new Set(input.itinerary.map((item) => item.id));
+  const result = new Set<string>();
+  input.userLockedItemIds.forEach((itemId) => {
+    if (!itineraryIds.has(itemId)) throw new Error(`사용자 잠금 대상 일정 ${itemId}을 찾을 수 없어요.`);
+    result.add(itemId);
+  });
+  return result;
+}
+
+function assertPriorityProtectionsPreserved(input: SaveWorkspaceScheduleInput) {
+  const nextById = new Map(input.itinerary.map((item) => [item.id, item]));
+  const protectedItemIds = Object.keys(input.snapshot.priorityProtectionsByItemId).filter((itemId) => {
+    const protection = input.snapshot.priorityProtectionsByItemId[itemId];
+    const before = input.snapshot.itinerary.find((item) => item.id === itemId);
+    const after = nextById.get(itemId);
+    const nextMetadata = input.metadataByItemId[itemId];
+    if (!before || !after || !nextMetadata) return true;
+    if (before.placeId !== after.placeId || before.date !== after.date) return true;
+    if (protection?.source === "backend-priority-must") return nextMetadata.priority !== "must";
+    const previousReservation = input.snapshot.metadataByItemId[itemId]?.reservation;
+    return before.startTime !== after.startTime
+      || before.durationMinutes !== after.durationMinutes
+      || previousReservation?.status !== "confirmed"
+      || nextMetadata.reservation?.id !== previousReservation.id
+      || nextMetadata.reservation.status !== "confirmed";
+  });
+  if (protectedItemIds.length) throw new WorkspaceScheduleProtectedItemError(protectedItemIds);
+}
+
+function assertReservationPlaceReplacementSafe(input: SaveWorkspaceScheduleInput) {
+  const nextById = new Map(input.itinerary.map((item) => [item.id, item]));
+  const changedItemIds = input.snapshot.itinerary.flatMap((before) => {
+    const reservation = input.snapshot.metadataByItemId[before.id]?.reservation;
+    const after = nextById.get(before.id);
+    if (!reservation || !after || before.placeId === after.placeId) return [];
+    return [before.id];
+  });
+  if (changedItemIds.length) {
+    throw new ScheduleReservationPlaceReplacementUnsupportedError(changedItemIds);
+  }
 }
 
 export interface WorkspaceScheduleApiGateway {
   load(input: LoadWorkspaceScheduleInput): Promise<WorkspaceScheduleSnapshot>;
   save(input: SaveWorkspaceScheduleInput): Promise<WorkspaceScheduleSnapshot>;
+  applyProposal(input: ApplyWorkspaceScheduleProposalInput): Promise<WorkspaceScheduleSnapshot>;
+}
+
+function mutationId(prefix: string) {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 export class HttpWorkspaceScheduleApiGateway implements WorkspaceScheduleApiGateway {
@@ -194,6 +298,8 @@ export class HttpWorkspaceScheduleApiGateway implements WorkspaceScheduleApiGate
   async save(input: SaveWorkspaceScheduleInput): Promise<WorkspaceScheduleSnapshot> {
     const identity = assertGatewayIdentity(input);
     assertSnapshotScope(input.snapshot, input);
+    assertPriorityProtectionsPreserved(input);
+    assertReservationPlaceReplacementSafe(input);
     const impacts = findTicketRemovalImpacts(input.snapshot, input.itinerary, input.metadataByItemId);
     const replacementImpacts = impacts.filter((impact) => impact.action === "replace");
     if (replacementImpacts.length) {
@@ -203,6 +309,7 @@ export class HttpWorkspaceScheduleApiGateway implements WorkspaceScheduleApiGate
     const unconfirmed = impacts.filter((impact) => !confirmed.has(impact.itemId));
     if (unconfirmed.length) throw new ScheduleTicketRemovalConfirmationRequiredError(unconfirmed);
 
+    const userLockedItemIds = resolveUserLockedItemIds(input);
     const body = mapWorkspaceScheduleToBatch({
       itinerary: input.itinerary,
       metadataByItemId: input.metadataByItemId,
@@ -210,6 +317,8 @@ export class HttpWorkspaceScheduleApiGateway implements WorkspaceScheduleApiGate
       startDate: input.startDate,
       endDate: input.endDate,
       expectedVersion: input.snapshot.scheduleVersion,
+      userLockedItemIds,
+      clientMutationId: mutationId("schedule-save"),
     });
     try {
       const payload = await this.client.request<unknown>({
@@ -226,10 +335,64 @@ export class HttpWorkspaceScheduleApiGateway implements WorkspaceScheduleApiGate
         startDate: input.startDate,
         endDate: input.endDate,
         apiBaseUrl: this.apiBaseUrl,
-        overlaysByItemId: localOverlays(input.itinerary, input.snapshot.priorityProtectionsByItemId),
+        overlaysByItemId: localOverlays(input.itinerary, userLockedItemIds),
       });
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) {
+        throw new WorkspaceScheduleVersionConflictError(
+          input.snapshot.scheduleVersion,
+          currentVersionFromApiError(error),
+        );
+      }
+      throw error;
+    }
+  }
+
+  async applyProposal(input: ApplyWorkspaceScheduleProposalInput): Promise<WorkspaceScheduleSnapshot> {
+    const identity = assertGatewayIdentity(input);
+    assertSnapshotScope(input.snapshot, input);
+    assertPriorityProtectionsPreserved(input);
+    assertReservationPlaceReplacementSafe(input);
+    const impacts = findTicketRemovalImpacts(input.snapshot, input.itinerary, input.metadataByItemId);
+    if (impacts.length) {
+      throw new ScheduleTicketRemovalConfirmationRequiredError(impacts);
+    }
+    const userLockedItemIds = resolveUserLockedItemIds(input);
+    const batch = mapWorkspaceScheduleToBatch({
+      itinerary: input.itinerary,
+      metadataByItemId: input.metadataByItemId,
+      tripId: identity.tripId,
+      startDate: input.startDate,
+      endDate: input.endDate,
+      expectedVersion: input.snapshot.scheduleVersion,
+      userLockedItemIds,
+      clientMutationId: mutationId("schedule-apply"),
+    });
+    try {
+      const payload = await this.client.request<unknown>({
+        path: `/rooms/${encodePathSegment(identity.roomId, "roomId")}/schedule/apply`,
+        method: "POST",
+        body: { ...batch, expectedFactsVersion: input.expectedFactsVersion },
+        signal: input.signal,
+        auth: true,
+      });
+      return mapBackendScheduleToWorkspace({
+        payload,
+        roomId: identity.roomId,
+        tripId: identity.tripId,
+        startDate: input.startDate,
+        endDate: input.endDate,
+        apiBaseUrl: this.apiBaseUrl,
+        overlaysByItemId: localOverlays(input.itinerary, userLockedItemIds),
+      });
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        if ((error.payload as { code?: unknown } | undefined)?.code === "FACTS_VERSION_CONFLICT") {
+          throw new WorkspaceFactsVersionConflictError(
+            input.expectedFactsVersion,
+            factsConflictFromApiError(error),
+          );
+        }
         throw new WorkspaceScheduleVersionConflictError(
           input.snapshot.scheduleVersion,
           currentVersionFromApiError(error),

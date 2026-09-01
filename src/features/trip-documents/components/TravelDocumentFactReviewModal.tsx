@@ -60,6 +60,8 @@ export function TravelDocumentFactReviewModal({
   itineraryItemLabelsById = {},
   itineraryOptions = [],
   placeOptions = [],
+  allowCreateSchedule = true,
+  scheduleCreationUnavailableMessage,
   recognizer,
   onClose,
 }: {
@@ -72,6 +74,8 @@ export function TravelDocumentFactReviewModal({
   itineraryItemLabelsById?: Readonly<Record<string, string>>;
   itineraryOptions?: readonly { id: string; label: string }[];
   placeOptions?: readonly { id: string; label: string }[];
+  allowCreateSchedule?: boolean;
+  scheduleCreationUnavailableMessage?: string;
   recognizer?: TravelDocumentTextRecognizer;
   onClose(): void;
 }) {
@@ -86,6 +90,8 @@ export function TravelDocumentFactReviewModal({
     itineraryItemLabelsById={itineraryItemLabelsById}
     itineraryOptions={itineraryOptions}
     placeOptions={placeOptions}
+    allowCreateSchedule={allowCreateSchedule}
+    scheduleCreationUnavailableMessage={scheduleCreationUnavailableMessage}
     recognizer={recognizer}
     onClose={onClose}
   />;
@@ -100,6 +106,8 @@ function TravelDocumentFactReviewEditor({
   itineraryItemLabelsById,
   itineraryOptions,
   placeOptions,
+  allowCreateSchedule,
+  scheduleCreationUnavailableMessage,
   recognizer,
   onClose,
 }: {
@@ -111,6 +119,8 @@ function TravelDocumentFactReviewEditor({
   itineraryItemLabelsById: Readonly<Record<string, string>>;
   itineraryOptions: readonly { id: string; label: string }[];
   placeOptions: readonly { id: string; label: string }[];
+  allowCreateSchedule: boolean;
+  scheduleCreationUnavailableMessage?: string;
   recognizer?: TravelDocumentTextRecognizer;
   onClose(): void;
 }) {
@@ -129,7 +139,7 @@ function TravelDocumentFactReviewEditor({
   const initialItineraryItemId = initialFact.itineraryItemId && itineraryOptions.some((item) => item.id === initialFact.itineraryItemId)
     ? initialFact.itineraryItemId
     : document.itineraryItemIds.length === 1 && itineraryOptions.some((item) => item.id === document.itineraryItemIds[0]) ? document.itineraryItemIds[0] : undefined;
-  const [scheduleTarget, setScheduleTarget] = useState(initialItineraryItemId ?? "create");
+  const [scheduleTarget, setScheduleTarget] = useState(initialItineraryItemId ?? (allowCreateSchedule ? "create" : "place-only"));
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -148,7 +158,7 @@ function TravelDocumentFactReviewEditor({
     const target = fact.itineraryItemId && itineraryOptions.some((item) => item.id === fact.itineraryItemId)
       ? fact.itineraryItemId
       : document.itineraryItemIds.length === 1 && itineraryOptions.some((item) => item.id === document.itineraryItemIds[0]) ? document.itineraryItemIds[0] : undefined;
-    setScheduleTarget(target ?? "create");
+    setScheduleTarget(target ?? (allowCreateSchedule ? "create" : "place-only"));
   };
 
   const linkedItems = useMemo(() => new Set(document?.itineraryItemIds ?? []), [document?.itineraryItemIds]);
@@ -208,14 +218,20 @@ function TravelDocumentFactReviewEditor({
       tripStartDate,
       tripEndDate,
     };
-    const itineraryBefore = (useDuriStore.getState().itineraryByTripId[document.tripId] ?? []).map((item) => ({ ...item, preferredByUserIds: [...item.preferredByUserIds] }));
+    const itineraryBefore = allowCreateSchedule
+      ? (useDuriStore.getState().itineraryByTripId[document.tripId] ?? []).map((item) => ({ ...item, preferredByUserIds: [...item.preferredByUserIds] }))
+      : undefined;
     const documentsBefore = (useTripDocumentStore.getState().documentsByTripId[document.tripId] ?? []).map((entry) => ({ ...entry, itineraryItemIds: [...entry.itineraryItemIds] }));
     const rollback = () => {
-      useDuriStore.setState((state) => ({ itineraryByTripId: { ...state.itineraryByTripId, [document.tripId]: itineraryBefore } }));
+      if (itineraryBefore) useDuriStore.setState((state) => ({ itineraryByTripId: { ...state.itineraryByTripId, [document.tripId]: itineraryBefore } }));
       useTripDocumentStore.setState((state) => ({ documentsByTripId: { ...state.documentsByTripId, [document.tripId]: documentsBefore } }));
     };
     let targetItemId: string | undefined;
     if (scheduleTarget === "create") {
+      if (!allowCreateSchedule) {
+        setMessage(scheduleCreationUnavailableMessage ?? "이 여행방에서는 새 일정을 자동으로 만들 수 없어요. 기존 일정에 연결하거나 예약 사실만 확정해 주세요.");
+        return;
+      }
       const draftResult = buildLockedDocumentScheduleDraft({ kind, label, date, startTime, endTime, ...(placeId ? { placeId } : {}) });
       if (!draftResult.ok) { setMessage(draftResult.message); return; }
       const preflight = confirmTravelDocumentFact(working, { ...baseConfirmation, itineraryItemId: "pending-locked-document-schedule" });
@@ -302,10 +318,10 @@ function TravelDocumentFactReviewEditor({
             {placeOptions.length ? <View style={styles.targetSection}><Text style={styles.targetTitle}>여행방 장소와 연결 (선택)</Text><Text style={styles.targetHint}>아직 일정에 없는 예약 장소라면 연결해 누락 여부를 검사할 수 있어요.</Text><View style={styles.targetOptions}><Pressable accessibilityRole="radio" accessibilityState={{ checked: !placeId }} onPress={() => setPlaceId("")} style={({ pressed }) => [styles.targetOption, !placeId && styles.targetOptionSelected, pressed && styles.pressed]}><Text style={[styles.targetLabel, !placeId && styles.targetLabelSelected]}>선택 안 함</Text></Pressable>{placeOptions.map((option) => <Pressable key={option.id} accessibilityRole="radio" accessibilityState={{ checked: placeId === option.id }} onPress={() => { setPlaceId(option.id); if (!placeName.trim()) setPlaceName(option.label); }} style={({ pressed }) => [styles.targetOption, placeId === option.id && styles.targetOptionSelected, pressed && styles.pressed]}><Text style={[styles.targetLabel, placeId === option.id && styles.targetLabelSelected]}>{option.label}</Text></Pressable>)}</View></View> : null}
             <View style={styles.targetSection}>
               <Text style={styles.targetTitle}>일정표 반영</Text>
-              <Text style={styles.targetHint}>새 일정은 확인한 시작·종료 시각 그대로 추가되고 두리 변경 잠금이 켜집니다. 기존 일정 연결은 그 일정을 자동으로 옮기지 않아요.</Text>
+              <Text style={styles.targetHint}>{allowCreateSchedule ? "새 일정은 확인한 시작·종료 시각 그대로 추가되고 두리 변경 잠금이 켜집니다. 기존 일정 연결은 그 일정을 자동으로 옮기지 않아요." : scheduleCreationUnavailableMessage ?? "새 일정 자동 추가는 지원되지 않아 기존 일정에 연결하거나 예약 사실만 검증할 수 있어요."}</Text>
               <View style={styles.targetOptions}>
-                <Pressable accessibilityRole="radio" accessibilityState={{ checked: scheduleTarget === "create" }} onPress={() => setScheduleTarget("create")} style={({ pressed }) => [styles.targetOption, scheduleTarget === "create" && styles.targetOptionSelected, pressed && styles.pressed]}><Text style={[styles.targetLabel, scheduleTarget === "create" && styles.targetLabelSelected]}>새 잠금 일정으로 추가</Text></Pressable>
-                {placeId ? <Pressable accessibilityRole="radio" accessibilityState={{ checked: scheduleTarget === "place-only" }} onPress={() => setScheduleTarget("place-only")} style={({ pressed }) => [styles.targetOption, scheduleTarget === "place-only" && styles.targetOptionSelected, pressed && styles.pressed]}><Text style={[styles.targetLabel, scheduleTarget === "place-only" && styles.targetLabelSelected]}>일정 추가 없이 장소만 검증</Text></Pressable> : null}
+                {allowCreateSchedule ? <Pressable accessibilityRole="radio" accessibilityState={{ checked: scheduleTarget === "create" }} onPress={() => setScheduleTarget("create")} style={({ pressed }) => [styles.targetOption, scheduleTarget === "create" && styles.targetOptionSelected, pressed && styles.pressed]}><Text style={[styles.targetLabel, scheduleTarget === "create" && styles.targetLabelSelected]}>새 잠금 일정으로 추가</Text></Pressable> : null}
+                {placeId || !allowCreateSchedule ? <Pressable accessibilityRole="radio" accessibilityState={{ checked: scheduleTarget === "place-only" }} onPress={() => setScheduleTarget("place-only")} style={({ pressed }) => [styles.targetOption, scheduleTarget === "place-only" && styles.targetOptionSelected, pressed && styles.pressed]}><Text style={[styles.targetLabel, scheduleTarget === "place-only" && styles.targetLabelSelected]}>{placeId ? "일정 추가 없이 장소만 검증" : "일정 추가 없이 예약 사실만 검증"}</Text></Pressable> : null}
                 {itineraryOptions.map((item, index) => <Pressable key={item.id} accessibilityRole="radio" accessibilityState={{ checked: scheduleTarget === item.id }} onPress={() => setScheduleTarget(item.id)} style={({ pressed }) => [styles.targetOption, scheduleTarget === item.id && styles.targetOptionSelected, pressed && styles.pressed]}><Text style={[styles.targetLabel, scheduleTarget === item.id && styles.targetLabelSelected]}>{linkedItems.has(item.id) ? "연결됨 · " : ""}{itineraryItemLabelsById[item.id] ?? item.label ?? `기존 일정 ${index + 1}`}</Text></Pressable>)}
               </View>
             </View>

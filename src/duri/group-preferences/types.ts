@@ -12,6 +12,8 @@ export type GroupDimensionStatus = "common" | "compatible" | "needs-tuning";
 export interface NormalizedPreferenceVector {
   userId: EntityId;
   values: PersonalPreferenceAnswers;
+  /** 실제로 직접 관측되었거나 같은 문항 의미로 복원 가능한 축만 포함한다. */
+  observedDimensions: PreferenceDimension[];
   preferredTags: string[];
   profileType?: string;
 }
@@ -24,6 +26,12 @@ export interface GroupPreferenceDimensionDiagnosis {
   max?: number;
   average?: number;
   spread?: number;
+  median?: number;
+  variance?: number;
+  standardDeviation?: number;
+  meanAbsoluteDeviation?: number;
+  pairwiseAgreement?: number;
+  pairwiseComparisonCount?: number;
 }
 
 export interface GroupPreferredTagSummary {

@@ -172,10 +172,18 @@ export function createDocumentOcrConfirmationTodoSeed(
   };
 }
 
+export type ScheduleImpactExternalReference = {
+  id: string;
+  label: string;
+  sourceLabel?: string;
+  linkType?: "ticket" | "reservation";
+};
+
 type ScheduleImpactInput = {
   before: ItineraryItem;
   after: ItineraryItem;
   documents: readonly Pick<TravelDocument, "id" | "kind" | "displayName">[];
+  externalReferences?: readonly ScheduleImpactExternalReference[];
   createdByUserId: string;
   placeName?: string;
 };
@@ -192,9 +200,39 @@ function stableShortFingerprint(value: string) {
   return `${hash(value)}${hash([...value].reverse().join(""))}`;
 }
 
-function scheduleOccurrenceKey(item: ItineraryItem, documentIds: readonly string[], kind: "changed" | "removed") {
-  const facts = [kind, item.date, item.startTime, String(item.durationMinutes), item.placeId ?? "", item.itemType, ...documentIds].join("|");
+function scheduleOccurrenceKey(item: ItineraryItem, referenceIds: readonly string[], kind: "changed" | "removed") {
+  const facts = [kind, item.date, item.startTime, String(item.durationMinutes), item.placeId ?? "", item.itemType, ...referenceIds].join("|");
   return `schedule-impact:${item.id}:${stableShortFingerprint(facts)}`;
+}
+
+function normalizeScheduleImpactExternalReferences(values: readonly ScheduleImpactExternalReference[] | undefined) {
+  const seen = new Set<string>();
+  return (values ?? []).flatMap((value) => {
+    const id = value.id.trim();
+    const label = value.label.trim().slice(0, 120);
+    if (!id || !label || seen.has(id)) return [];
+    seen.add(id);
+    return [{
+      id,
+      label,
+      sourceLabel: value.sourceLabel?.trim().slice(0, 40) || "외부 예약·티켓",
+      ...(value.linkType ? { linkType: value.linkType } : {}),
+    }];
+  });
+}
+
+function scheduleImpactReferenceSummary(
+  documents: readonly Pick<TravelDocument, "id" | "kind" | "displayName">[],
+  externalReferences: ReturnType<typeof normalizeScheduleImpactExternalReferences>,
+) {
+  return [
+    documents.length
+      ? `이 기기 문서: ${documents.map((document) => `${documentKindLabel[document.kind]} ${document.displayName}`).join(", ")}`
+      : "",
+    externalReferences.length
+      ? `서버 참조: ${externalReferences.map((reference) => `${reference.sourceLabel} ${reference.label}`).join(", ")}`
+      : "",
+  ].filter(Boolean).join("\n");
 }
 
 export function isSuccessfulWorkspaceMutation(status: string) {
@@ -240,21 +278,28 @@ export async function runWorkspaceTodoPostCommit(
 }
 
 export function createScheduleImpactTodoSeed(input: ScheduleImpactInput): TripTodoGeneratedSeed | undefined {
-  if (input.before.tripId !== input.after.tripId || !input.documents.length || !hasScheduleRelevantChange(input.before, input.after)) return undefined;
+  const externalReferences = normalizeScheduleImpactExternalReferences(input.externalReferences);
+  if (input.before.tripId !== input.after.tripId
+    || (!input.documents.length && !externalReferences.length)
+    || !hasScheduleRelevantChange(input.before, input.after)) return undefined;
   const changes = [
     input.before.date !== input.after.date ? `날짜 ${input.before.date} → ${input.after.date}` : "",
     input.before.startTime !== input.after.startTime ? `시각 ${input.before.startTime} → ${input.after.startTime}` : "",
     input.before.durationMinutes !== input.after.durationMinutes ? `체류 ${input.before.durationMinutes}분 → ${input.after.durationMinutes}분` : "",
     input.before.placeId !== input.after.placeId ? "장소 변경" : "",
   ].filter(Boolean);
-  const documentNames = input.documents.map((document) => `${documentKindLabel[document.kind]} ${document.displayName}`).join(", ");
   const dueDate = [input.before.date, input.after.date].filter(isValidCalendarDate).sort()[0];
   const dueTime = input.before.date === dueDate ? input.before.startTime : input.after.startTime;
   const documentIds = [...new Set(input.documents.map((document) => document.id))].sort();
+  const referenceIds = [
+    ...documentIds.map((id) => `document:${id}`),
+    ...externalReferences.map((reference) => `external:${reference.id}`),
+  ].sort();
+  const referenceSummary = scheduleImpactReferenceSummary(input.documents, externalReferences);
   return {
     tripId: input.before.tripId,
     title: `예약 정보 재확인: ${input.placeName?.trim() || "연결 일정"}`,
-    description: `문서가 연결된 일정이 바뀌었습니다.\n${changes.join("\n")}\n\n연결 문서: ${documentNames}`,
+    description: `예약·티켓과 연결된 일정이 바뀌었습니다.\n${changes.join("\n")}\n\n${referenceSummary}`,
     priority: "urgent",
     ...(dueDate ? { due: { date: dueDate, ...(dueTime ? { time: dueTime } : {}), reminderMinutesBefore: 24 * 60 } } : {}),
     checklist: [
@@ -269,7 +314,7 @@ export function createScheduleImpactTodoSeed(input: ScheduleImpactInput): TripTo
       placeIds: input.after.placeId ? [input.after.placeId] : [],
     },
     source: { kind: "schedule-impact", scope: "schedule-impact", referenceId: input.after.id },
-    dedupeKey: scheduleOccurrenceKey(input.after, documentIds, "changed"),
+    dedupeKey: scheduleOccurrenceKey(input.after, referenceIds, "changed"),
     createdByUserId: input.createdByUserId,
   };
 }
@@ -277,16 +322,22 @@ export function createScheduleImpactTodoSeed(input: ScheduleImpactInput): TripTo
 export function createScheduleRemovalImpactTodoSeed(input: {
   item: ItineraryItem;
   documents: readonly Pick<TravelDocument, "id" | "kind" | "displayName">[];
+  externalReferences?: readonly ScheduleImpactExternalReference[];
   createdByUserId: string;
   placeName?: string;
 }): TripTodoGeneratedSeed | undefined {
-  if (!input.documents.length) return undefined;
+  const externalReferences = normalizeScheduleImpactExternalReferences(input.externalReferences);
+  if (!input.documents.length && !externalReferences.length) return undefined;
   const documentIds = [...new Set(input.documents.map((document) => document.id))].sort();
-  const documentNames = input.documents.map((document) => `${documentKindLabel[document.kind]} ${document.displayName}`).join(", ");
+  const referenceIds = [
+    ...documentIds.map((id) => `document:${id}`),
+    ...externalReferences.map((reference) => `external:${reference.id}`),
+  ].sort();
+  const referenceSummary = scheduleImpactReferenceSummary(input.documents, externalReferences);
   return {
     tripId: input.item.tripId,
     title: `삭제된 일정의 예약 확인: ${input.placeName?.trim() || "연결 일정"}`,
-    description: `예약·티켓 문서가 연결된 ${input.item.date} ${input.item.startTime} 일정이 삭제되었습니다. 문서 자체는 남아 있으므로 예약 변경·취소 또는 새 일정 연결이 필요한지 확인해 주세요.\n\n연결 문서: ${documentNames}`,
+    description: `예약·티켓이 연결된 ${input.item.date} ${input.item.startTime} 일정이 삭제되었습니다. 예약·티켓 자체는 남아 있을 수 있으므로 변경·취소 또는 새 일정 연결이 필요한지 확인해 주세요.\n\n${referenceSummary}`,
     priority: "urgent",
     due: { date: input.item.date, time: input.item.startTime, reminderMinutesBefore: 24 * 60 },
     checklist: [
@@ -300,7 +351,7 @@ export function createScheduleRemovalImpactTodoSeed(input: {
       placeIds: input.item.placeId ? [input.item.placeId] : [],
     },
     source: { kind: "schedule-impact", scope: "schedule-impact", referenceId: input.item.id },
-    dedupeKey: scheduleOccurrenceKey(input.item, documentIds, "removed"),
+    dedupeKey: scheduleOccurrenceKey(input.item, referenceIds, "removed"),
     createdByUserId: input.createdByUserId,
   };
 }
@@ -309,8 +360,10 @@ export function createWorkspaceScheduleImpactTodoSeeds(input: {
   beforeItinerary: readonly ItineraryItem[];
   afterItinerary: readonly ItineraryItem[];
   documents: readonly TravelDocument[];
+  externalReferencesByItemId?: Readonly<Record<string, readonly ScheduleImpactExternalReference[] | undefined>>;
   createdByUserId: string;
   placeNameById?: Readonly<Record<string, string>>;
+  placeNameByItemId?: Readonly<Record<string, string>>;
 }) {
   const afterById = new Map(input.afterItinerary.map((item) => [item.id, item]));
   const documentsByItemId = new Map<string, TravelDocument[]>();
@@ -319,12 +372,14 @@ export function createWorkspaceScheduleImpactTodoSeeds(input: {
   }));
   return input.beforeItinerary.flatMap((before) => {
     const documents = documentsByItemId.get(before.id) ?? [];
-    if (!documents.length) return [];
-    const placeName = before.placeId ? input.placeNameById?.[before.placeId] : undefined;
+    const externalReferences = input.externalReferencesByItemId?.[before.id] ?? [];
+    if (!documents.length && !externalReferences.length) return [];
+    const placeName = input.placeNameByItemId?.[before.id]
+      ?? (before.placeId ? input.placeNameById?.[before.placeId] : undefined);
     const after = afterById.get(before.id);
     const seed = after
-      ? createScheduleImpactTodoSeed({ before, after, documents, createdByUserId: input.createdByUserId, placeName })
-      : createScheduleRemovalImpactTodoSeed({ item: before, documents, createdByUserId: input.createdByUserId, placeName });
+      ? createScheduleImpactTodoSeed({ before, after, documents, externalReferences, createdByUserId: input.createdByUserId, placeName })
+      : createScheduleRemovalImpactTodoSeed({ item: before, documents, externalReferences, createdByUserId: input.createdByUserId, placeName });
     return seed ? [seed] : [];
   });
 }

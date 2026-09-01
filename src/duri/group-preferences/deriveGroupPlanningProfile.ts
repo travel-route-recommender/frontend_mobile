@@ -13,7 +13,7 @@ export function deriveGroupPlanningProfile(diagnosis?: GroupPreferenceDiagnosis)
   const includeDimensions = dataStatus !== "insufficient";
   const dimensionProfiles = Object.fromEntries(planningDimensions.map((dimension) => [
     dimension,
-    includeDimensions
+    includeDimensions && (diagnosis?.dimensions[dimension].responses.length ?? 0) >= 2
       ? { average: diagnosis?.dimensions[dimension].average, spread: diagnosis?.dimensions[dimension].spread }
       : { average: undefined, spread: undefined },
   ])) as Pick<GroupPlanningProfile, GroupPlanningDimension>;

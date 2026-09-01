@@ -1,16 +1,18 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { Card, Screen, SectionHeader } from "../../../components/common";
 import { ErrorState, LoadingState } from "../../../components/feedback";
 import { queryKeys } from "../../../query/keys";
+import { queryClient } from "../../../query/queryClient";
 import { colors, spacing, typography } from "../../../theme/tokens";
 import { useAuthSessionStore } from "../../auth/store/useAuthSessionStore";
 import { buildTripExploreHref } from "../../explore/logic/exploreNavigation";
 import { useExploreSearchStore } from "../../explore/store/useExploreSearchStore";
 import { TripInviteManagerModal } from "../../invitations/components/TripInviteManagerModal";
-import { TripTodoSection } from "../../trip-todos";
+import { ApiTripDocumentSection, type ApiTripDocument } from "../../trip-documents";
+import { ApiTripTodoSection } from "../../trip-todos";
 import {
   CandidateSummaryCard,
   DuriAnalysisCard,
@@ -28,10 +30,23 @@ export function ApiTripDetailContent({ tripId, created }: { tripId: string; crea
   const router = useRouter();
   const currentUserId = useAuthSessionStore((state) => state.currentSessionUserId);
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [sharedDocuments, setSharedDocuments] = useState<readonly ApiTripDocument[]>([]);
+  const handleDocumentsChange = useCallback((documents: readonly ApiTripDocument[]) => {
+    setSharedDocuments(documents);
+    if (!currentUserId) return;
+    queryClient.setQueryData<Awaited<ReturnType<typeof fetchApiTripDetail>>>(
+      queryKeys.trips.detail(tripId, currentUserId),
+      (current) => current ? {
+        ...current,
+        sharedDocuments: [...documents],
+        sharedDocumentsStatus: "loaded",
+      } : current,
+    );
+  }, [currentUserId, tripId]);
   const startTripExplore = useExploreSearchStore((state) => state.startTripExplore);
   const syncActiveTripRegion = useExploreSearchStore((state) => state.syncActiveTripRegion);
   const query = useQuery({
-    queryKey: queryKeys.trips.detail(tripId),
+    queryKey: queryKeys.trips.detail(tripId, currentUserId ?? ""),
     queryFn: ({ signal }) => fetchApiTripDetail(tripId, currentUserId, signal),
     enabled: Boolean(tripId && currentUserId),
   });
@@ -42,6 +57,13 @@ export function ApiTripDetailContent({ tripId, created }: { tripId: string; crea
   if (!currentUserId) return <Screen><ErrorState message="로그인 사용자 정보를 확인하지 못했어요." /></Screen>;
   if (query.isLoading) return <Screen><LoadingState label="서버 여행방과 일정을 불러오고 있어요." /></Screen>;
   if (query.error || !data) return <Screen><ErrorState message={query.error instanceof Error ? query.error.message : "여행방을 불러오지 못했어요."} onRetry={() => void query.refetch()} /></Screen>;
+
+  const isOwner = data.room.members.some((member) => member.userId === currentUserId && member.role === "owner");
+  const documentOptions = sharedDocuments.map((document) => ({
+    id: document.id,
+    label: document.originalName || "공유 문서",
+    description: document.note || document.mimeType || "공유 문서",
+  }));
 
   const openWorkspace = () => router.push({ pathname: "/trips/[tripId]/workspace", params: { tripId } });
   const explore = () => {
@@ -77,7 +99,14 @@ export function ApiTripDetailContent({ tripId, created }: { tripId: string; crea
       <Text style={styles.noticeText}>여행방 응답에는 멤버별 성향 유형 스냅샷만 포함돼요. 세부 문항 축을 임의로 복원하지 않고, 완료 여부와 유형만 표시합니다.</Text>
     </Card>
 
-    <SectionBlock><TripTodoSection
+    <SectionBlock><ApiTripDocumentSection
+      roomId={tripId}
+      currentUserId={currentUserId}
+      readOnly={completed}
+      isOwner={isOwner}
+      onDocumentsChange={handleDocumentsChange}
+    /></SectionBlock>
+    <SectionBlock><ApiTripTodoSection
       tripId={tripId}
       currentUserId={currentUserId}
       members={data.preferenceSummary.members.map((member) => ({ userId: member.userId, name: member.name }))}
@@ -85,7 +114,10 @@ export function ApiTripDetailContent({ tripId, created }: { tripId: string; crea
       placesById={data.placesById}
       tripStartDate={data.room.startDate}
       tripEndDate={data.room.endDate}
+      timezone={data.scheduleSnapshot?.planning?.timezone ?? "Asia/Seoul"}
+      documentOptions={documentOptions}
       readOnly={completed}
+      isOwner={isOwner}
     /></SectionBlock>
     <SectionBlock><CandidateSummaryCard trip={data.room} candidates={data.candidates} placesById={data.placesById} usersById={data.usersById} itinerary={data.itinerary} onExplore={explore} onWorkspace={openWorkspace} /></SectionBlock>
     <SectionBlock><ItinerarySummaryCard trip={data.room} itinerary={data.itinerary} placesById={data.placesById} onWorkspace={openWorkspace} /></SectionBlock>

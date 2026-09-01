@@ -2,6 +2,60 @@ import type { ItineraryItem, ItineraryItemType, Place } from "../../../domain";
 
 export type BackendSchedulePriority = "must" | "optional" | "skip";
 
+export type BackendSignedDownload = {
+  token: string;
+  url: string;
+  path: string;
+  expiresAt: string;
+  expiresInSec: number;
+};
+
+export type BackendVersionedValue<T> = {
+  value: T;
+  updatedBy: string;
+  updatedAt: string;
+  confirmedAt?: string;
+  version: number;
+};
+
+export type BackendPlaceAnchor = {
+  name: string;
+  lat?: number;
+  lng?: number;
+  placeId?: string;
+  externalId?: string;
+  source?: "tour" | "kakao" | "manual";
+};
+
+export type BackendWorkspacePlanning = {
+  timezone: string;
+  lodging?: BackendPlaceAnchor;
+  returnPoint?: BackendPlaceAnchor;
+  transportMode?: BackendVersionedValue<"car" | "transit" | "walk" | "mixed">;
+  returnDeadline?: BackendVersionedValue<string>;
+  travelBufferMinutes?: BackendVersionedValue<number>;
+  prepBufferMinutes?: BackendVersionedValue<number>;
+};
+
+export type BackendScheduleReservation = {
+  id: string;
+  status: "confirmed" | "unconfirmed" | "cancelled";
+  date?: string;
+  startTime?: string;
+  endTime?: string;
+  timeWindowStart?: string;
+  timeWindowEnd?: string;
+  timezone?: string;
+  placeId?: string;
+  externalId?: string;
+  confirmationCode?: string;
+  note?: string;
+  documentTicketIds: string[];
+  confirmedBy?: string;
+  confirmedAt?: string;
+  revision: number;
+};
+
 export type BackendScheduleTicket = {
   id: string;
   imageUrl: string;
@@ -11,6 +65,7 @@ export type BackendScheduleTicket = {
   originalName?: string;
   mimeType?: string;
   createdAt: string;
+  download?: BackendSignedDownload;
 };
 
 export type BackendScheduleItem = {
@@ -25,7 +80,11 @@ export type BackendScheduleItem = {
   day: number;
   lat?: number;
   lng?: number;
+  locked: boolean;
+  lockedBy?: string;
+  lockedAt?: string;
   tickets: BackendScheduleTicket[];
+  reservation?: BackendScheduleReservation;
 };
 
 export type BackendScheduleDay = {
@@ -36,9 +95,23 @@ export type BackendScheduleDay = {
 export type BackendRoomSchedule = {
   days: BackendScheduleDay[];
   scheduleVersion: number;
+  planning?: BackendWorkspacePlanning;
 };
 
-export type BackendBatchScheduleItem = Omit<BackendScheduleItem, "tickets">;
+export type BackendBatchScheduleItem = Pick<BackendScheduleItem,
+  | "id"
+  | "placeId"
+  | "placeName"
+  | "startTime"
+  | "endTime"
+  | "tags"
+  | "reason"
+  | "priority"
+  | "day"
+  | "lat"
+  | "lng"
+  | "locked"
+>;
 
 export type BackendBatchScheduleRequest = {
   days: {
@@ -46,6 +119,7 @@ export type BackendBatchScheduleRequest = {
     items: BackendBatchScheduleItem[];
   }[];
   expectedVersion: number;
+  clientMutationId?: string;
 };
 
 /**
@@ -63,7 +137,12 @@ export type WorkspaceScheduleItemMetadata = {
   wireEndTime?: string;
   lat?: number;
   lng?: number;
+  /** Backend shared lock. Device overlays must never override this value. */
+  locked: boolean;
+  lockedBy?: string;
+  lockedAt?: string;
   tickets: BackendScheduleTicket[];
+  reservation?: BackendScheduleReservation;
 };
 
 export type WorkspaceScheduleLocalOverlay = {
@@ -91,17 +170,17 @@ export type WorkspaceScheduleSnapshot = {
   metadataByItemId: Record<string, WorkspaceScheduleItemMetadata>;
   priorityProtectionsByItemId: Record<string, WorkspaceSchedulePriorityProtection>;
   scheduleVersion: number;
+  planning?: BackendWorkspacePlanning;
 };
 
 export type WorkspaceSchedulePriorityProtection = {
   itemId: string;
-  source: "backend-priority-must";
-  /** This is a Duri mutation guard, not evidence of a reservation or document. */
-  evidenceKind: "server-declared-priority";
-  documentConfirmed: false;
-  reservationConfirmed: false;
+  source: "backend-priority-must" | "backend-confirmed-reservation";
+  evidenceKind: "server-declared-priority" | "confirmed-reservation";
+  documentConfirmed: boolean;
+  reservationConfirmed: boolean;
   effectiveLock: "all-duri-changes";
-  blockedChanges: readonly ["delete", "replace-place", "change-date"];
+  blockedChanges: readonly ("delete" | "replace-place" | "change-date" | "change-time")[];
   userLockAlsoPresent: boolean;
 };
 
@@ -185,12 +264,163 @@ function asOptionalNumber(value: unknown, path: string): number | undefined {
   return value;
 }
 
+function asBoolean(value: unknown, path: string): boolean {
+  if (typeof value !== "boolean") return contractError(path, "boolean이어야 합니다.");
+  return value;
+}
+
+function asOptionalTimestamp(value: unknown, path: string): string | undefined {
+  const parsed = asOptionalString(value, path);
+  if (parsed === undefined) return undefined;
+  if (!Number.isFinite(Date.parse(parsed))) return contractError(path, "유효한 날짜/시간 문자열이어야 합니다.");
+  return parsed;
+}
+
+function asOptionalEnum<T extends string>(value: unknown, path: string, values: readonly T[]): T | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value !== "string" || !values.includes(value as T)) {
+    return contractError(path, `${values.join(", ")} 중 하나여야 합니다.`);
+  }
+  return value as T;
+}
+
+function asCoordinates(latitudeValue: unknown, longitudeValue: unknown, path: string) {
+  const latitude = asOptionalNumber(latitudeValue, `${path}.lat`);
+  const longitude = asOptionalNumber(longitudeValue, `${path}.lng`);
+  // Swagger/Backend DTO declares lat and lng as independently optional. Keep
+  // every finite wire value losslessly; route collection separately requires
+  // a complete, geographically valid pair before using it as evidence.
+  return {
+    ...(latitude !== undefined ? { lat: latitude } : {}),
+    ...(longitude !== undefined ? { lng: longitude } : {}),
+  };
+}
+
 function asStringArray(value: unknown, path: string): string[] {
   if (value === undefined || value === null) return [];
   return asArray(value, path).map((entry, index) => {
     if (typeof entry !== "string") return contractError(`${path}[${index}]`, "문자열이어야 합니다.");
     return entry;
   });
+}
+
+function parseSignedDownload(value: unknown, path: string): BackendSignedDownload | undefined {
+  if (value === undefined || value === null) return undefined;
+  const record = asRecord(value, path);
+  const url = asRequiredString(record.url, `${path}.url`);
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return contractError(`${path}.url`, "HTTP(S) URL이어야 합니다.");
+  } catch {
+    return contractError(`${path}.url`, "유효한 URL이어야 합니다.");
+  }
+  return {
+    token: asRequiredString(record.token, `${path}.token`),
+    url,
+    path: asRequiredString(record.path, `${path}.path`),
+    expiresAt: asOptionalTimestamp(record.expiresAt, `${path}.expiresAt`)
+      ?? contractError(`${path}.expiresAt`, "만료 시각이 필요합니다."),
+    expiresInSec: asInteger(record.expiresInSec, `${path}.expiresInSec`, 0),
+  };
+}
+
+function parsePlaceAnchor(value: unknown, path: string): BackendPlaceAnchor | undefined {
+  if (value === undefined || value === null) return undefined;
+  const record = asRecord(value, path);
+  const source = asOptionalEnum(record.source, `${path}.source`, ["tour", "kakao", "manual"] as const);
+  const placeId = asOptionalMongoObjectId(record.placeId, `${path}.placeId`);
+  const externalId = asOptionalString(record.externalId, `${path}.externalId`);
+  return {
+    name: asRequiredString(record.name, `${path}.name`),
+    ...(asOptionalNumber(record.lat, `${path}.lat`) !== undefined ? { lat: asOptionalNumber(record.lat, `${path}.lat`) } : {}),
+    ...(asOptionalNumber(record.lng, `${path}.lng`) !== undefined ? { lng: asOptionalNumber(record.lng, `${path}.lng`) } : {}),
+    ...(placeId ? { placeId } : {}),
+    ...(externalId ? { externalId } : {}),
+    ...(source ? { source } : {}),
+  };
+}
+
+function parseVersionedValue<T>(
+  value: unknown,
+  path: string,
+  parseValue: (value: unknown, path: string) => T,
+): BackendVersionedValue<T> | undefined {
+  if (value === undefined || value === null) return undefined;
+  const record = asRecord(value, path);
+  const confirmedAt = asOptionalTimestamp(record.confirmedAt, `${path}.confirmedAt`);
+  return {
+    value: parseValue(record.value, `${path}.value`),
+    updatedBy: asRequiredString(record.updatedBy, `${path}.updatedBy`),
+    updatedAt: asOptionalTimestamp(record.updatedAt, `${path}.updatedAt`)
+      ?? contractError(`${path}.updatedAt`, "수정 시각이 필요합니다."),
+    ...(confirmedAt ? { confirmedAt } : {}),
+    version: asInteger(record.version, `${path}.version`, 1),
+  };
+}
+
+export function parseBackendWorkspacePlanning(value: unknown, path = "planning"): BackendWorkspacePlanning | undefined {
+  if (value === undefined || value === null) return undefined;
+  const record = asRecord(value, path);
+  const transportMode = parseVersionedValue(record.transportMode, `${path}.transportMode`, (entry, entryPath) => (
+    asOptionalEnum(entry, entryPath, ["car", "transit", "walk", "mixed"] as const)
+      ?? contractError(entryPath, "이동수단 값이 필요합니다.")
+  ));
+  const returnDeadline = parseVersionedValue(record.returnDeadline, `${path}.returnDeadline`, (entry, entryPath) => {
+    const parsed = asRequiredString(entry, entryPath);
+    timeToMinutes(parsed, entryPath);
+    return parsed;
+  });
+  const parseNonNegativeInteger = (entry: unknown, entryPath: string) => asInteger(entry, entryPath, 0);
+  return {
+    timezone: asOptionalString(record.timezone, `${path}.timezone`) ?? "Asia/Seoul",
+    ...(parsePlaceAnchor(record.lodging, `${path}.lodging`) ? { lodging: parsePlaceAnchor(record.lodging, `${path}.lodging`) } : {}),
+    ...(parsePlaceAnchor(record.returnPoint, `${path}.returnPoint`) ? { returnPoint: parsePlaceAnchor(record.returnPoint, `${path}.returnPoint`) } : {}),
+    ...(transportMode ? { transportMode } : {}),
+    ...(returnDeadline ? { returnDeadline } : {}),
+    ...(parseVersionedValue(record.travelBufferMinutes, `${path}.travelBufferMinutes`, parseNonNegativeInteger)
+      ? { travelBufferMinutes: parseVersionedValue(record.travelBufferMinutes, `${path}.travelBufferMinutes`, parseNonNegativeInteger) }
+      : {}),
+    ...(parseVersionedValue(record.prepBufferMinutes, `${path}.prepBufferMinutes`, parseNonNegativeInteger)
+      ? { prepBufferMinutes: parseVersionedValue(record.prepBufferMinutes, `${path}.prepBufferMinutes`, parseNonNegativeInteger) }
+      : {}),
+  };
+}
+
+function parseReservation(value: unknown, path: string): BackendScheduleReservation | undefined {
+  if (value === undefined || value === null) return undefined;
+  const record = asRecord(value, path);
+  const status = asOptionalEnum(record.status, `${path}.status`, ["confirmed", "unconfirmed", "cancelled"] as const)
+    ?? contractError(`${path}.status`, "예약 상태가 필요합니다.");
+  const date = asOptionalString(record.date, `${path}.date`);
+  if (date && !DATE_ONLY_PATTERN.test(date)) return contractError(`${path}.date`, "YYYY-MM-DD 형식이어야 합니다.");
+  const timeField = (key: "startTime" | "endTime" | "timeWindowStart" | "timeWindowEnd") => {
+    const parsed = asOptionalString(record[key], `${path}.${key}`);
+    if (parsed) timeToMinutes(parsed, `${path}.${key}`);
+    return parsed;
+  };
+  const confirmedAt = asOptionalTimestamp(record.confirmedAt, `${path}.confirmedAt`);
+  const placeId = asOptionalMongoObjectId(record.placeId, `${path}.placeId`);
+  const optionalFields = {
+    date,
+    startTime: timeField("startTime"),
+    endTime: timeField("endTime"),
+    timeWindowStart: timeField("timeWindowStart"),
+    timeWindowEnd: timeField("timeWindowEnd"),
+    timezone: asOptionalString(record.timezone, `${path}.timezone`),
+    externalId: asOptionalString(record.externalId, `${path}.externalId`),
+    confirmationCode: asOptionalString(record.confirmationCode, `${path}.confirmationCode`),
+    note: asOptionalString(record.note, `${path}.note`),
+    confirmedBy: asOptionalString(record.confirmedBy, `${path}.confirmedBy`),
+  };
+  return {
+    id: asRequiredString(record.id, `${path}.id`),
+    status,
+    ...Object.fromEntries(Object.entries(optionalFields).filter(([, entry]) => entry !== undefined)),
+    ...(placeId ? { placeId } : {}),
+    documentTicketIds: asStringArray(record.documentTicketIds, `${path}.documentTicketIds`),
+    ...(confirmedAt ? { confirmedAt } : {}),
+    revision: asInteger(record.revision, `${path}.revision`, 1),
+  } as BackendScheduleReservation;
 }
 
 function asPriority(value: unknown, path: string): BackendSchedulePriority {
@@ -220,6 +450,7 @@ function parseTicket(value: unknown, path: string): BackendScheduleTicket {
   if (!Number.isFinite(Date.parse(createdAt))) {
     return contractError(`${path}.createdAt`, "유효한 날짜/시간 문자열이어야 합니다.");
   }
+  const download = parseSignedDownload(record.download, `${path}.download`);
   return {
     id: asRequiredString(record.id, `${path}.id`),
     imageUrl: asRequiredString(record.imageUrl, `${path}.imageUrl`),
@@ -228,6 +459,7 @@ function parseTicket(value: unknown, path: string): BackendScheduleTicket {
     ...(asOptionalString(record.originalName, `${path}.originalName`) ? { originalName: asOptionalString(record.originalName, `${path}.originalName`) } : {}),
     ...(asOptionalString(record.mimeType, `${path}.mimeType`) ? { mimeType: asOptionalString(record.mimeType, `${path}.mimeType`) } : {}),
     createdAt,
+    ...(download ? { download } : {}),
   };
 }
 
@@ -244,6 +476,13 @@ function parseScheduleItem(value: unknown, containerDay: number, path: string): 
   if (endMinutes <= startMinutes) {
     return contractError(`${path}.endTime`, "startTime보다 이후여야 합니다.");
   }
+  const coordinates = asCoordinates(record.lat, record.lng, path);
+  const locked = record.locked === undefined || record.locked === null
+    ? false
+    : asBoolean(record.locked, `${path}.locked`);
+  const lockedBy = asOptionalString(record.lockedBy, `${path}.lockedBy`);
+  const lockedAt = asOptionalTimestamp(record.lockedAt, `${path}.lockedAt`);
+  const reservation = parseReservation(record.reservation, `${path}.reservation`);
   return {
     id: asRequiredString(record.id, `${path}.id`),
     ...(asOptionalMongoObjectId(record.placeId, `${path}.placeId`) ? { placeId: asOptionalMongoObjectId(record.placeId, `${path}.placeId`) } : {}),
@@ -254,11 +493,14 @@ function parseScheduleItem(value: unknown, containerDay: number, path: string): 
     reason: asOptionalString(record.reason, `${path}.reason`) ?? "",
     priority: asPriority(record.priority, `${path}.priority`),
     day: itemDay,
-    ...(asOptionalNumber(record.lat, `${path}.lat`) !== undefined ? { lat: asOptionalNumber(record.lat, `${path}.lat`) } : {}),
-    ...(asOptionalNumber(record.lng, `${path}.lng`) !== undefined ? { lng: asOptionalNumber(record.lng, `${path}.lng`) } : {}),
+    ...coordinates,
+    locked,
+    ...(lockedBy ? { lockedBy } : {}),
+    ...(lockedAt ? { lockedAt } : {}),
     tickets: record.tickets === undefined
       ? []
       : asArray(record.tickets, `${path}.tickets`).map((ticket, index) => parseTicket(ticket, `${path}.tickets[${index}]`)),
+    ...(reservation ? { reservation } : {}),
   };
 }
 
@@ -290,7 +532,8 @@ export function parseBackendRoomSchedule(payload: unknown): BackendRoomSchedule 
     });
     return { day, items };
   });
-  return { days, scheduleVersion };
+  const planning = parseBackendWorkspacePlanning(record.planning, "schedule.planning");
+  return { days, scheduleVersion, ...(planning ? { planning } : {}) };
 }
 
 export function buildScheduleTripDates(startDate: string, endDate: string): string[] {
@@ -329,7 +572,7 @@ export function resolveScheduleTicketImageUrl(imageUrl: string, apiBaseUrl: stri
 
 export function applyBackendMustPriorityProtection(input: {
   itinerary: readonly ItineraryItem[];
-  metadataByItemId: Readonly<Record<string, Pick<WorkspaceScheduleItemMetadata, "priority"> | undefined>>;
+  metadataByItemId: Readonly<Record<string, Pick<WorkspaceScheduleItemMetadata, "priority" | "locked" | "reservation"> | undefined>>;
   /** User-authored locks are kept separate so a later must -> optional change is reversible. */
   userLockedItemIds: ReadonlySet<string>;
 }): {
@@ -338,26 +581,70 @@ export function applyBackendMustPriorityProtection(input: {
 } {
   const priorityProtectionsByItemId: Record<string, WorkspaceSchedulePriorityProtection> = {};
   const itinerary = input.itinerary.map((item) => {
-    const userLocked = input.userLockedItemIds.has(item.id);
-    const priorityMust = input.metadataByItemId[item.id]?.priority === "must";
-    if (priorityMust) {
+    const metadata = input.metadataByItemId[item.id];
+    const userLocked = input.userLockedItemIds.has(item.id) || metadata?.locked === true;
+    const priorityMust = metadata?.priority === "must";
+    const confirmedReservation = metadata?.reservation?.status === "confirmed";
+    if (priorityMust || confirmedReservation) {
+      const reservationProtection = confirmedReservation;
       priorityProtectionsByItemId[item.id] = {
         itemId: item.id,
-        source: "backend-priority-must",
-        evidenceKind: "server-declared-priority",
-        documentConfirmed: false,
-        reservationConfirmed: false,
+        source: reservationProtection ? "backend-confirmed-reservation" : "backend-priority-must",
+        evidenceKind: reservationProtection ? "confirmed-reservation" : "server-declared-priority",
+        documentConfirmed: Boolean(metadata?.reservation?.documentTicketIds.length),
+        reservationConfirmed: reservationProtection,
         effectiveLock: "all-duri-changes",
-        blockedChanges: ["delete", "replace-place", "change-date"],
+        blockedChanges: ["delete", "replace-place", "change-date", "change-time"],
         userLockAlsoPresent: userLocked,
       };
     }
     const { lockedForDuri: _staleLock, ...unlockedItem } = item;
-    return userLocked || priorityMust
+    return userLocked || priorityMust || confirmedReservation
       ? { ...unlockedItem, lockedForDuri: true }
       : unlockedItem;
   });
   return { itinerary, priorityProtectionsByItemId };
+}
+
+/**
+ * Applies already provenance-validated device-only fields to a server snapshot.
+ * The server reason and must-priority protection remain authoritative.
+ */
+export function applyWorkspaceScheduleLocalOverlays(
+  snapshot: WorkspaceScheduleSnapshot,
+  overlaysByItemId: Readonly<Record<string, WorkspaceScheduleLocalOverlay | undefined>>,
+): WorkspaceScheduleSnapshot {
+  const userLockedItemIds = new Set<string>();
+  const itinerary = snapshot.itinerary.map((item) => {
+    const overlay = overlaysByItemId[item.id];
+    if (overlay?.lockedForDuri === true) userLockedItemIds.add(item.id);
+    const {
+      itemType: _staleItemType,
+      preferredByUserIds: _stalePreferredByUserIds,
+      note: _staleNote,
+      lockedForDuri: _staleLock,
+      ...serverItem
+    } = item;
+    const serverReason = snapshot.metadataByItemId[item.id]?.reason ?? "";
+    const note = serverReason || overlay?.note;
+    return {
+      ...serverItem,
+      itemType: overlay?.itemType ?? "place",
+      preferredByUserIds: [...(overlay?.preferredByUserIds ?? [])],
+      ...(note ? { note } : {}),
+      ...(overlay?.lockedForDuri === true || snapshot.metadataByItemId[item.id]?.locked === true
+        ? { lockedForDuri: true }
+        : {}),
+    };
+  });
+  return {
+    ...snapshot,
+    ...applyBackendMustPriorityProtection({
+      itinerary,
+      metadataByItemId: snapshot.metadataByItemId,
+      userLockedItemIds,
+    }),
+  };
 }
 
 /**
@@ -375,14 +662,15 @@ export function createWorkspaceScheduleItemMetadataFromPlace(input: {
   asRequiredMongoObjectId(input.place.id, "place.id");
   const latitude = asOptionalNumber(input.place.latitude, "place.latitude");
   const longitude = asOptionalNumber(input.place.longitude, "place.longitude");
-  const hasCoordinatePair = latitude !== undefined && longitude !== undefined;
   return {
     itemId,
     placeName: asRequiredString(input.place.name, "place.name"),
     tags: asStringArray(input.place.tags, "place.tags"),
     reason: asOptionalString(input.reason, "reason") ?? "",
     priority: asPriority(input.priority, "priority"),
-    ...(hasCoordinatePair ? { lat: latitude, lng: longitude } : {}),
+    ...(latitude !== undefined ? { lat: latitude } : {}),
+    ...(longitude !== undefined ? { lng: longitude } : {}),
+    locked: false,
     tickets: [],
   };
 }
@@ -411,7 +699,7 @@ export function mapBackendScheduleToWorkspace(input: {
     }
     scheduleDay.items.forEach((serverItem) => {
       const overlay = input.overlaysByItemId?.[serverItem.id];
-      if (overlay?.lockedForDuri === true) userLockedItemIds.add(serverItem.id);
+      if (overlay?.lockedForDuri === true || serverItem.locked) userLockedItemIds.add(serverItem.id);
       const startMinutes = timeToMinutes(serverItem.startTime, `schedule.items.${serverItem.id}.startTime`);
       const endMinutes = timeToMinutes(serverItem.endTime, `schedule.items.${serverItem.id}.endTime`);
       itinerary.push({
@@ -424,7 +712,7 @@ export function mapBackendScheduleToWorkspace(input: {
         itemType: overlay?.itemType ?? "place",
         preferredByUserIds: [...(overlay?.preferredByUserIds ?? [])],
         ...(serverItem.reason || overlay?.note ? { note: serverItem.reason || overlay?.note } : {}),
-        ...(overlay?.lockedForDuri === true ? { lockedForDuri: true } : {}),
+        ...(overlay?.lockedForDuri === true || serverItem.locked ? { lockedForDuri: true } : {}),
       });
       metadataByItemId[serverItem.id] = {
         itemId: serverItem.id,
@@ -435,10 +723,15 @@ export function mapBackendScheduleToWorkspace(input: {
         wireEndTime: serverItem.endTime,
         ...(serverItem.lat !== undefined ? { lat: serverItem.lat } : {}),
         ...(serverItem.lng !== undefined ? { lng: serverItem.lng } : {}),
+        locked: serverItem.locked,
+        ...(serverItem.lockedBy ? { lockedBy: serverItem.lockedBy } : {}),
+        ...(serverItem.lockedAt ? { lockedAt: serverItem.lockedAt } : {}),
         tickets: serverItem.tickets.map((ticket) => {
-          const resolvedImageUrl = resolveScheduleTicketImageUrl(ticket.imageUrl, input.apiBaseUrl);
+          const resolvedImageUrl = ticket.download?.url
+            ?? resolveScheduleTicketImageUrl(ticket.imageUrl, input.apiBaseUrl);
           return { ...ticket, ...(resolvedImageUrl ? { resolvedImageUrl } : {}) };
         }),
+        ...(serverItem.reservation ? { reservation: serverItem.reservation } : {}),
       };
     });
   });
@@ -458,6 +751,7 @@ export function mapBackendScheduleToWorkspace(input: {
     ...protectedSchedule,
     metadataByItemId,
     scheduleVersion: schedule.scheduleVersion,
+    ...(schedule.planning ? { planning: schedule.planning } : {}),
   };
 }
 
@@ -468,6 +762,8 @@ export function mapWorkspaceScheduleToBatch(input: {
   startDate: string;
   endDate: string;
   expectedVersion: number;
+  userLockedItemIds?: ReadonlySet<string>;
+  clientMutationId?: string;
 }): BackendBatchScheduleRequest {
   const tripDates = buildScheduleTripDates(input.startDate, input.endDate);
   const tripId = asRequiredString(input.tripId, "tripId").trim();
@@ -494,6 +790,7 @@ export function mapWorkspaceScheduleToBatch(input: {
     const metadata = input.metadataByItemId[itemId];
     if (!metadata) return contractError(`${path}.metadata`, "서버 필드 보존을 위한 메타데이터가 필요합니다.");
     if (metadata.itemId !== itemId) return contractError(`${path}.metadata.itemId`, "일정 ID와 일치해야 합니다.");
+    const coordinates = asCoordinates(metadata.lat, metadata.lng, `${path}.metadata`);
 
     days[day - 1].items.push({
       id: itemId,
@@ -505,12 +802,32 @@ export function mapWorkspaceScheduleToBatch(input: {
       reason: item.note ?? metadata.reason,
       priority: asPriority(metadata.priority, `${path}.metadata.priority`),
       day,
-      ...(metadata.lat !== undefined ? { lat: asOptionalNumber(metadata.lat, `${path}.metadata.lat`) } : {}),
-      ...(metadata.lng !== undefined ? { lng: asOptionalNumber(metadata.lng, `${path}.metadata.lng`) } : {}),
+      ...coordinates,
+      locked: input.userLockedItemIds?.has(itemId) ?? metadata.locked,
     });
   });
 
-  return { days, expectedVersion };
+  days.forEach((day) => {
+    const ordered = [...day.items].sort((left, right) => (
+      timeToMinutes(left.startTime, `schedule.days[${day.day}].startTime`)
+      - timeToMinutes(right.startTime, `schedule.days[${day.day}].startTime`)
+      || left.id.localeCompare(right.id)
+    ));
+    for (let index = 1; index < ordered.length; index += 1) {
+      const previous = ordered[index - 1];
+      const current = ordered[index];
+      if (timeToMinutes(current.startTime, `schedule.days[${day.day}].startTime`)
+        < timeToMinutes(previous.endTime, `schedule.days[${day.day}].endTime`)) {
+        return contractError(`schedule.days[${day.day}]`, `${previous.id}와 ${current.id} 일정이 겹칩니다.`);
+      }
+    }
+  });
+
+  return {
+    days,
+    expectedVersion,
+    ...(input.clientMutationId ? { clientMutationId: input.clientMutationId } : {}),
+  };
 }
 
 export function findTicketRemovalImpacts(

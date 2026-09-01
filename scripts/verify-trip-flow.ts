@@ -13,13 +13,21 @@ import { buildInitialTripDays, mapDraftToCreateTripRoomRequest } from "../src/fe
 import { createTripDraftEditCopy, getRegionSelectionPatch, getTripEditCommitPatch } from "../src/features/trip-creation/logic/tripDraftEditing";
 import { buildCalendarMonth, moveCalendarMonth, selectTripDateRange } from "../src/features/trip-creation/logic/tripDateRange";
 import { createTripRoomService, validateCreateTripRoomRequest } from "../src/features/trip-creation/services/createTripRoomService";
-import { parseApiTripLocalFacts } from "../src/features/trip-creation/services/apiTripFactsStorage";
+import {
+  clearApiTripLocalFacts,
+  loadApiTripLocalFacts,
+  loadApiTripLocalFactsWithStatus,
+  parseApiTripLocalFacts,
+  parseStoredApiTripLocalFacts,
+  saveApiTripLocalFacts,
+} from "../src/features/trip-creation/services/apiTripFactsStorage";
 import { normalizeCreateTripDraft } from "../src/features/trip-creation/store/useCreateTripDraftStore";
 import { createRegionService, mapRegionToOption } from "../src/features/trip-creation/services/regionService";
 import { normalizeInvitedUserIds, validateCreateTripDraft } from "../src/features/trip-creation/validation/validateCreateTripDraft";
 import type { CreateTripDraft } from "../src/features/trip-creation/types";
 import { CREATE_TRIP_DRAFT_VERSION } from "../src/features/trip-creation/types";
 import { selectCompletedTripsForCurrentUser, selectPlanningTripsForCurrentUser } from "../src/store/selectors";
+import { hasDuplicateMemberIds, parseTravelTypeSnapshotRecord, parseTravelTypeSnapshotTags } from "../src/features/trips/logic/travelTypeSnapshot";
 
 function assert(condition: unknown, message: string): asserts condition { if (!condition) throw new Error(message); }
 
@@ -61,6 +69,14 @@ function createDraft(overrides: Partial<CreateTripDraft> = {}): CreateTripDraft 
 }
 
 async function main() {
+  const parsedSnapshotTags = parseTravelTypeSnapshotTags([" 카페 ", "ＣＡＦＥ", "카페", "로컬"]);
+  assert(parsedSnapshotTags.ok && parsedSnapshotTags.tags.join(",") === "카페,ＣＡＦＥ,로컬", "서버 성향 태그는 trim·Unicode 정규화 중복 제거 후 실제 값만 보존해야 한다");
+  assert(!parseTravelTypeSnapshotTags("카페").ok && !parseTravelTypeSnapshotTags([" "]).ok, "서버 성향 태그가 존재하면 비어 있지 않은 문자열 배열만 허용해야 한다");
+  assert(!parseTravelTypeSnapshotTags(Array.from({ length: 65 }, (_, index) => `tag-${index}`)).ok, "과도한 서버 성향 태그는 기기 분석 입력으로 받지 않아야 한다");
+  assert(parseTravelTypeSnapshotTags(undefined).ok, "성향 태그 누락은 중립값이 아니라 빈 근거로 보존해야 한다");
+  assert(parseTravelTypeSnapshotRecord(undefined).ok && parseTravelTypeSnapshotRecord(null).ok, "서버 성향 snapshot의 undefined/null만 미응답으로 허용해야 한다");
+  assert(!parseTravelTypeSnapshotRecord("invalid").ok && !parseTravelTypeSnapshotRecord([]).ok, "존재하지만 객체가 아닌 서버 성향 snapshot을 조용히 누락시키면 안 된다");
+  assert(hasDuplicateMemberIds(["owner", "owner"]) && !hasDuplicateMemberIds(["owner", "friend"]), "API 여행방 멤버 ID 중복을 계약 오류로 판별해야 한다");
   assert(selectPlanningTripsForCurrentUser(collection).map((item) => item.id).join(",") === "sooner,later", "진행 중 여행은 시작일 오름차순이며 중복 ID를 제거해야 한다");
   assert(selectCompletedTripsForCurrentUser(collection).map((item) => item.id).join(",") === "latestDone,olderDone", "완료 여행은 종료일 내림차순이어야 한다");
   assert(getTripDayCount("2026-08-01", "2026-08-02") === 2, "1박 2일은 달력일 2일이어야 한다");
@@ -139,8 +155,137 @@ async function main() {
     expectedMemberCount: 3,
     savedAt: "2026-08-19T00:00:00.000Z",
   });
+  const apiLocalFactsScope = {
+    roomId: "665abc123def456789012346",
+    startDate: "2026-08-20",
+    endDate: "2026-08-22",
+  };
   assert(apiLocalFacts?.accommodationLocation?.name === "부산역 호텔" && apiLocalFacts.endCondition?.deadline === "18:07", "API 기기 사실은 중첩 위치·1분 마감 시각을 엄격 파싱해 보존해야 한다");
   assert(parseApiTripLocalFacts({ ...apiLocalFacts, endCondition: { ...apiLocalFacts?.endCondition, deadline: "18:60" } }) === null, "손상된 기기 종료 조건은 Workspace에 주입하지 않아야 한다");
+  const storedApiLocalFacts = JSON.stringify({ version: 3, scope: apiLocalFactsScope, facts: apiLocalFacts });
+  const loadedLocalFacts = parseStoredApiTripLocalFacts(storedApiLocalFacts, apiLocalFactsScope);
+  assert(loadedLocalFacts.status === "loaded" && loadedLocalFacts.value.endCondition?.deadline === "18:07", "유효한 API 기기 사실 저장값은 loaded로 구분한다");
+  assert(parseStoredApiTripLocalFacts(null, apiLocalFactsScope).status === "missing", "API 기기 사실 저장 키가 없을 때만 missing으로 구분한다");
+  assert(parseStoredApiTripLocalFacts("{broken", apiLocalFactsScope).status === "unavailable"
+    && parseStoredApiTripLocalFacts(JSON.stringify({ version: 3, scope: apiLocalFactsScope, facts: { ...apiLocalFacts, transport: "plane" } }), apiLocalFactsScope).status === "unavailable",
+  "JSON 또는 schema가 손상된 API 기기 사실을 미설정으로 위장하지 않는다");
+  assert(parseStoredApiTripLocalFacts(storedApiLocalFacts, { ...apiLocalFactsScope, endDate: "2026-08-23" }).status === "unavailable"
+    && parseStoredApiTripLocalFacts(JSON.stringify(apiLocalFacts), apiLocalFactsScope).status === "unavailable",
+  "여행 날짜 범위가 달라졌거나 scope 없는 구 저장값이면 과거 복귀 조건을 새 마지막 날에 적용하지 않는다");
+  const failingFactsReader = { getItem: async () => { throw new Error("storage read failed"); } };
+  const unavailableLocalFacts = await loadApiTripLocalFactsWithStatus("665abc123def456789012345", "665abc123def456789012346", apiLocalFactsScope, failingFactsReader);
+  assert(unavailableLocalFacts.status === "unavailable", "API 기기 사실 read 실패를 unavailable로 보존한다");
+  assert(await loadApiTripLocalFacts("665abc123def456789012345", "665abc123def456789012346", apiLocalFactsScope, failingFactsReader) === null, "기존 API 기기 사실 loader는 read 실패에도 null 호환 반환을 유지한다");
+  const legacyFactsReader = { getItem: async (key: string) => key.includes(":v1:") ? JSON.stringify(apiLocalFacts) : null };
+  assert((await loadApiTripLocalFactsWithStatus("665abc123def456789012345", "665abc123def456789012346", apiLocalFactsScope, legacyFactsReader)).status === "unavailable",
+    "scope 없는 v1 저장값이 남아 있으면 missing이 아니라 사용자 확인이 필요한 unavailable로 구분한다");
+  const removedFactsKeys: string[] = [];
+  await clearApiTripLocalFacts("665abc123def456789012345", "665abc123def456789012346", apiLocalFactsScope, {
+    removeItem: async (key) => { removedFactsKeys.push(key); },
+  });
+  assert(removedFactsKeys.length === 3
+    && removedFactsKeys.some((key) => key.endsWith(":665abc123def456789012345:665abc123def456789012346:2026-08-20:2026-08-22"))
+    && removedFactsKeys.some((key) => key.includes(":v1:"))
+    && removedFactsKeys.some((key) => key.includes(":v2:")),
+  "API 기기 사실 복구는 확인한 계정·여행방·날짜의 v3 key와 구형 v1/v2 key만 제거한다");
+
+  const raceUserId = "665abc123def456789012345";
+  const raceRoomId = "665abc123def456789012346";
+  const factsWithoutSavedAt = {
+    transport: "car" as const,
+    accommodationLocation: null,
+    endCondition: null,
+    companionType: null,
+    expectedMemberCount: null,
+  };
+  let firstWriteStartedResolve!: () => void;
+  let releaseFirstWrite!: () => void;
+  const firstWriteStarted = new Promise<void>((resolve) => { firstWriteStartedResolve = resolve; });
+  const releaseFirst = new Promise<void>((resolve) => { releaseFirstWrite = resolve; });
+  const sameScopeValues = new Map<string, string>();
+  let sameScopeWriteCount = 0;
+  const sameScopeWriter = {
+    setItem: async (key: string, value: string) => {
+      sameScopeWriteCount += 1;
+      if (sameScopeWriteCount === 1) {
+        firstWriteStartedResolve();
+        await releaseFirst;
+      }
+      sameScopeValues.set(key, value);
+    },
+  };
+  const firstSameScopeSave = saveApiTripLocalFacts(raceUserId, raceRoomId, apiLocalFactsScope, factsWithoutSavedAt, sameScopeWriter);
+  await firstWriteStarted;
+  const secondSameScopeSave = saveApiTripLocalFacts(raceUserId, raceRoomId, apiLocalFactsScope, {
+    ...factsWithoutSavedAt,
+    transport: "public",
+  }, sameScopeWriter);
+  await Promise.resolve();
+  assert(sameScopeWriteCount === 1, "같은 user·room·date key의 두 번째 저장은 첫 저장 완료 전 storage에 진입하면 안 된다");
+  releaseFirstWrite();
+  await Promise.all([firstSameScopeSave, secondSameScopeSave]);
+  const sameScopeStored = [...sameScopeValues.values()][0];
+  assert(sameScopeValues.size === 1
+    && sameScopeStored
+    && parseStoredApiTripLocalFacts(sameScopeStored, apiLocalFactsScope).value?.transport === "public",
+  "같은 범위의 동시 저장은 호출 순서대로 직렬화되어 마지막 요청이 최종값이어야 한다");
+
+  let pendingSetStartedResolve!: () => void;
+  let releasePendingSet!: () => void;
+  const pendingSetStarted = new Promise<void>((resolve) => { pendingSetStartedResolve = resolve; });
+  const pendingSetGate = new Promise<void>((resolve) => { releasePendingSet = resolve; });
+  const saveClearValues = new Map<string, string>();
+  const saveClearStorage = {
+    setItem: async (key: string, value: string) => {
+      pendingSetStartedResolve();
+      await pendingSetGate;
+      saveClearValues.set(key, value);
+    },
+    removeItem: async (key: string) => { saveClearValues.delete(key); },
+  };
+  const pendingSave = saveApiTripLocalFacts(raceUserId, raceRoomId, apiLocalFactsScope, factsWithoutSavedAt, saveClearStorage);
+  await pendingSetStarted;
+  const pendingClear = clearApiTripLocalFacts(raceUserId, raceRoomId, apiLocalFactsScope, saveClearStorage);
+  releasePendingSet();
+  await Promise.all([pendingSave, pendingClear]);
+  assert(saveClearValues.size === 0, "초기화는 같은 key의 진행 중 저장 뒤에 직렬화되어 지운 값이 되살아나면 안 된다");
+
+  let oldScopeWriteStartedResolve!: () => void;
+  let releaseOldScopeWrite!: () => void;
+  const oldScopeWriteStarted = new Promise<void>((resolve) => { oldScopeWriteStartedResolve = resolve; });
+  const releaseOldScope = new Promise<void>((resolve) => { releaseOldScopeWrite = resolve; });
+  const dateScopedValues = new Map<string, string>();
+  const oldScope = { startDate: "2026-08-20", endDate: "2026-08-22" };
+  const newScope = { startDate: "2026-08-20", endDate: "2026-08-23" };
+  const dateScopedWriter = {
+    setItem: async (key: string, value: string) => {
+      if (key.endsWith(":2026-08-20:2026-08-22")) {
+        oldScopeWriteStartedResolve();
+        await releaseOldScope;
+      }
+      dateScopedValues.set(key, value);
+    },
+  };
+  const oldScopeSave = saveApiTripLocalFacts(raceUserId, raceRoomId, oldScope, factsWithoutSavedAt, dateScopedWriter);
+  await oldScopeWriteStarted;
+  await saveApiTripLocalFacts(raceUserId, raceRoomId, newScope, { ...factsWithoutSavedAt, transport: "public" }, dateScopedWriter);
+  releaseOldScopeWrite();
+  await oldScopeSave;
+  assert(dateScopedValues.size === 2
+    && [...dateScopedValues.keys()].some((key) => key.endsWith(":2026-08-20:2026-08-22"))
+    && [...dateScopedValues.keys()].some((key) => key.endsWith(":2026-08-20:2026-08-23")),
+  "느린 과거 날짜 저장과 새 날짜 저장은 서로 다른 v3 key라 값을 덮어쓰지 않는다");
+  const newScopeReads: string[] = [];
+  const newScopeLoaded = await loadApiTripLocalFactsWithStatus(raceUserId, raceRoomId, newScope, {
+    getItem: async (key) => {
+      newScopeReads.push(key);
+      return dateScopedValues.get(key) ?? null;
+    },
+  });
+  assert(newScopeLoaded.status === "loaded"
+    && newScopeLoaded.value.transport === "public"
+    && newScopeReads.every((key) => !key.endsWith(":2026-08-20:2026-08-22")),
+  "현재 범위 loader는 다른 날짜의 orphan v3 key를 읽거나 자동 적용하지 않는다");
   let invalidMapperRejected = false;
   try { mapDraftToCreateTripRoomRequest(createDraft({ endCondition: { ...endCondition, travelMinutes: "" } }), regionOption, []); } catch { invalidMapperRejected = true; }
   assert(invalidMapperRejected, "mapper를 직접 호출해도 빈 예상 이동시간을 숫자 0으로 위장하면 안 된다");

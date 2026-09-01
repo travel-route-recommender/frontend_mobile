@@ -3,16 +3,28 @@ import {
   BUSAN_PLACE_SPECS,
   CURATED_BUSAN_PLACES,
   FIXTURE_ITEM_PREFIX,
+  STRESS_FIXTURE_ITEM_PREFIX,
+  STRESS_PERSONAS,
+  STRESS_SCHEDULED_PLACE_KEYS,
+  areScheduleCoresEqual,
   assertCuratedFallbackAllowed,
   assertExistingScheduleIsReplaceable,
+  assertStressScenarioMutationAllowed,
   buildCuratedScheduleDays,
   buildScheduleDays,
+  buildHardConflictCandidateSignals,
+  buildStressCandidateSignals,
+  buildStressScenario,
   chooseTourPlace,
+  createSeededRandom,
   getDefaultTripDates,
   isBusanCoordinate,
+  isFixtureScheduleItemId,
   isLocalApiBaseUrl,
   normalizePlaceName,
   readScheduleDays,
+  stableSeedTag,
+  validateStressScenario,
 } from "./seed-busan-api-room.mjs";
 
 assert.equal(normalizePlaceName(" 부산 엑스 더 스카이 (해운대) "), "부산엑스더스카이");
@@ -28,6 +40,26 @@ assert.deepEqual(
   "local Backend의 Mongoose subdocument 응답도 읽어야 한다",
 );
 assert.deepEqual(readScheduleDays({}), []);
+assert.deepEqual(
+  readScheduleDays({
+    items: [
+      { id: "late", day: 2, startTime: "14:00" },
+      { id: "early", day: 2, startTime: "09:00" },
+      { id: "day-one", day: 1, startTime: "10:00" },
+    ],
+  }),
+  [
+    { day: 1, items: [{ id: "day-one", day: 1, startTime: "10:00" }] },
+    {
+      day: 2,
+      items: [
+        { id: "early", day: 2, startTime: "09:00" },
+        { id: "late", day: 2, startTime: "14:00" },
+      ],
+    },
+  ],
+  "GET schedule의 flat items 응답도 day별로 복원해야 한다",
+);
 assert.doesNotThrow(() => assertCuratedFallbackAllowed(true, true));
 assert.throws(
   () => assertCuratedFallbackAllowed(true, false),
@@ -73,6 +105,12 @@ assert.equal(dates.endDate, "2026-09-20");
 assert.deepEqual(assertExistingScheduleIsReplaceable([], false), { itemCount: 0, foreignItemCount: 0 });
 assert.deepEqual(
   assertExistingScheduleIsReplaceable([{ day: 1, items: [{ id: `${FIXTURE_ITEM_PREFIX}one` }] }], false),
+  { itemCount: 1, foreignItemCount: 0 },
+);
+assert.equal(isFixtureScheduleItemId(`${STRESS_FIXTURE_ITEM_PREFIX}one`), true);
+assert.equal(isFixtureScheduleItemId("real-user-item"), false);
+assert.deepEqual(
+  assertExistingScheduleIsReplaceable([{ day: 1, items: [{ id: `${STRESS_FIXTURE_ITEM_PREFIX}one` }] }], false),
   { itemCount: 1, foreignItemCount: 0 },
 );
 assert.throws(
@@ -125,6 +163,122 @@ for (const item of curatedItems) {
   assert.equal(isBusanCoordinate(item.lat, item.lng), true);
 }
 
+const randomA = createSeededRandom("repeatable-seed");
+const randomB = createSeededRandom("repeatable-seed");
+assert.deepEqual(
+  Array.from({ length: 10 }, () => randomA()),
+  Array.from({ length: 10 }, () => randomB()),
+  "같은 seed의 난수열은 완전히 재현되어야 한다",
+);
+assert.equal(stableSeedTag("repeatable-seed"), stableSeedTag("repeatable-seed"));
+assert.notEqual(stableSeedTag("repeatable-seed"), stableSeedTag("different-seed"));
+
+const stressScenario = buildStressScenario(resolvedPlaces, {
+  seed: "group-conflict-001",
+  startDate: "2026-09-18",
+});
+const repeatedStressScenario = buildStressScenario(resolvedPlaces, {
+  seed: "group-conflict-001",
+  startDate: "2026-09-18",
+});
+const alternateStressScenario = buildStressScenario(resolvedPlaces, {
+  seed: "group-conflict-002",
+  startDate: "2026-09-18",
+});
+const carStressScenario = buildStressScenario(resolvedPlaces, {
+  seed: "group-conflict-001",
+  startDate: "2026-09-18",
+  transportMode: "car",
+});
+assert.deepEqual(stressScenario, repeatedStressScenario, "같은 seed의 stress 방은 byte-level로 재현되어야 한다");
+assert.notDeepEqual(
+  stressScenario.scheduleDays,
+  alternateStressScenario.scheduleDays,
+  "다른 seed는 시간·체류·근거리 순서 중 적어도 하나를 바꿔야 한다",
+);
+assert.equal(validateStressScenario(stressScenario), true);
+assert.equal(stressScenario.planning.transportMode, "mixed");
+assert.equal(carStressScenario.planning.transportMode, "car", "자동차 실제 경로 검증용 stress 방을 선택할 수 있어야 한다");
+assert.equal(STRESS_PERSONAS.length, 5);
+assert.equal(stressScenario.scheduleDays.length, 3);
+assert.equal(stressScenario.scheduleDays.flatMap((day) => day.items).length, STRESS_SCHEDULED_PLACE_KEYS.length);
+const scheduledStressKeys = new Set(
+  stressScenario.scheduleDays
+    .flatMap((day) => day.items)
+    .map((item) => item.id.slice(STRESS_FIXTURE_ITEM_PREFIX.length)),
+);
+const unplacedStressKeys = BUSAN_PLACE_SPECS
+  .map((spec) => spec.key)
+  .filter((key) => !scheduledStressKeys.has(key));
+assert.deepEqual(unplacedStressKeys.sort(), ["gukje", "huinnyeoul"]);
+assert.ok(unplacedStressKeys.length >= 2, "자동 채우기가 선택할 후보를 2개 이상 남겨야 한다");
+assert.equal(stressScenario.reservations.length, 2);
+assert.equal(stressScenario.lockItemIds.length, 3);
+assert.equal(stressScenario.todos.length, 4);
+assert.equal(
+  stressScenario.candidateSignals.length,
+  STRESS_PERSONAS.length * BUSAN_PLACE_SPECS.length,
+  "모든 참여자가 모든 후보에 1–5 강도와 must/avoid를 명시해야 한다",
+);
+assert.deepEqual(
+  buildStressCandidateSignals("group-conflict-001"),
+  stressScenario.candidateSignals,
+  "후보 신호도 schedule과 같은 seed로 재현되어야 한다",
+);
+const conflictingPlaces = BUSAN_PLACE_SPECS.filter((spec) => {
+  const signals = stressScenario.candidateSignals.filter((entry) => entry.placeKey === spec.key);
+  return signals.some((entry) => entry.signal.mustVisit) && signals.some((entry) => entry.signal.avoid);
+});
+assert.deepEqual(conflictingPlaces, [], "기본 stress는 must/avoid 교차 Hard 충돌로 자동 채우기를 중단시키면 안 된다");
+const softConflictPlaces = BUSAN_PLACE_SPECS.filter((spec) => {
+  const strengths = stressScenario.candidateSignals
+    .filter((entry) => entry.placeKey === spec.key)
+    .map((entry) => entry.signal.preferenceStrength);
+  return Math.min(...strengths) === 1 && Math.max(...strengths) === 5;
+});
+assert.ok(softConflictPlaces.length >= 3, "preferenceStrength 1↔5의 Soft 상충은 충분히 남아야 한다");
+const hardConflictSignals = buildHardConflictCandidateSignals("group-conflict-001");
+const hardConflictPlaces = BUSAN_PLACE_SPECS.filter((spec) => {
+  const signals = hardConflictSignals.filter((entry) => entry.placeKey === spec.key);
+  return signals.some((entry) => entry.signal.mustVisit) && signals.some((entry) => entry.signal.avoid);
+});
+assert.ok(hardConflictPlaces.length >= 3, "Hard 충돌 중단 로직용 순수 fixture는 별도로 보존해야 한다");
+for (const day of stressScenario.scheduleDays) {
+  assert.equal(day.items[0].date, `2026-09-${String(17 + day.day).padStart(2, "0")}`);
+  for (const item of day.items) {
+    assert.ok(item.id.startsWith(STRESS_FIXTURE_ITEM_PREFIX));
+    assert.equal(item.locked, false, "초기 batch 후 versioned lock API로 잠가야 한다");
+  }
+}
+assert.equal(areScheduleCoresEqual(stressScenario.scheduleDays, repeatedStressScenario.scheduleDays), true);
+assert.equal(areScheduleCoresEqual(stressScenario.scheduleDays, alternateStressScenario.scheduleDays), false);
+assert.deepEqual(
+  assertStressScenarioMutationAllowed([], stressScenario.scheduleDays, false),
+  { changed: true, existingItemCount: 0 },
+);
+assert.deepEqual(
+  assertStressScenarioMutationAllowed(stressScenario.scheduleDays, repeatedStressScenario.scheduleDays, false),
+  { changed: false, existingItemCount: STRESS_SCHEDULED_PLACE_KEYS.length },
+);
+assert.throws(
+  () => assertStressScenarioMutationAllowed(stressScenario.scheduleDays, alternateStressScenario.scheduleDays, false),
+  /기존 fixture 일정과 seed 결과가 다릅니다/,
+  "기존 stress 방을 다른 seed로 조용히 덮어쓰면 안 된다",
+);
+assert.deepEqual(
+  assertStressScenarioMutationAllowed(stressScenario.scheduleDays, alternateStressScenario.scheduleDays, true),
+  { changed: true, existingItemCount: STRESS_SCHEDULED_PLACE_KEYS.length },
+);
+assert.throws(
+  () => assertStressScenarioMutationAllowed(
+    [{ day: 1, items: [{ id: "real-user-item" }] }],
+    stressScenario.scheduleDays,
+    false,
+  ),
+  /기존 실제 일정 1개/,
+  "실사용자 일정 id가 하나라도 있으면 stress 시드를 중단해야 한다",
+);
+
 console.log(
-  `Busan API fixture verification passed (${BUSAN_PLACE_SPECS.length} Tour places + ${curatedItems.length} curated manual items, ${days.length} days).`,
+  `Busan API fixture verification passed (${BUSAN_PLACE_SPECS.length} Tour places + ${curatedItems.length} curated manual items, ${STRESS_PERSONAS.length} stress personas, ${stressScenario.candidateSignals.length} preference signals).`,
 );

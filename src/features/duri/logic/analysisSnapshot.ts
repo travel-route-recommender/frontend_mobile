@@ -1,5 +1,5 @@
 import type { EntityId, Place, UserPreferenceResult } from "../../../domain";
-import type { DuriAnalysisInput } from "../../../duri/duri-analysis";
+import type { DuriAnalysisInput, SharedDuriPreferenceEvidence } from "../../../duri/duri-analysis";
 import { deriveGroupPlanningProfile, diagnoseGroupPreferences, isSupportedPreferenceResult } from "../../../duri/group-preferences";
 import { getTripDates, isValidScheduleRange, sortItineraryItemsByDateAndTime } from "../../../utils/schedule";
 import { DURI_ANALYSIS_VERSION } from "../constants";
@@ -15,6 +15,29 @@ function clonePlace(place: Place): Place {
     ...(Number.isFinite(coordinates.latitude) ? { latitude: coordinates.latitude } : {}),
     ...(Number.isFinite(coordinates.longitude) ? { longitude: coordinates.longitude } : {}),
   } as Place;
+}
+
+function cloneSharedPreferenceEvidence(evidence: SharedDuriPreferenceEvidence): SharedDuriPreferenceEvidence {
+  return {
+    ...evidence,
+    members: evidence.members.map((member) => ({
+      ...member,
+      travelType: member.travelType ? { ...member.travelType, tags: [...member.travelType.tags] } : null,
+      personalityAxes: member.personalityAxes ? {
+        scheduleDensity: { ...member.personalityAxes.scheduleDensity, range: [...member.personalityAxes.scheduleDensity.range] as [number, number] },
+        landmarkNecessity: { ...member.personalityAxes.landmarkNecessity, range: [...member.personalityAxes.landmarkNecessity.range] as [number, number] },
+        localInterest: { ...member.personalityAxes.localInterest, range: [...member.personalityAxes.localInterest.range] as [number, number] },
+        challenging: { ...member.personalityAxes.challenging, range: [...member.personalityAxes.challenging.range] as [number, number] },
+      } : null,
+      mobilityConstraints: { ...member.mobilityConstraints, values: [...member.mobilityConstraints.values] },
+      interestTags: [...member.interestTags],
+    })).sort((left, right) => left.userId.localeCompare(right.userId)),
+    candidateSignals: evidence.candidateSignals.map((candidate) => ({
+      ...candidate,
+      signals: candidate.signals.map((signal) => ({ ...signal }))
+        .sort((left, right) => left.userId.localeCompare(right.userId)),
+    })).sort((left, right) => left.placeId.localeCompare(right.placeId)),
+  };
 }
 
 export function createDuriAnalysisSnapshot(input: DuriAnalysisInput): DuriAnalysisSnapshot {
@@ -55,6 +78,12 @@ export function createDuriAnalysisSnapshot(input: DuriAnalysisInput): DuriAnalys
   const groupPreferenceDiagnosis = diagnoseGroupPreferences(trip, preferenceResults);
   const groupPlanningProfile = deriveGroupPlanningProfile(groupPreferenceDiagnosis);
   return {
+    ...(input.sourceRevision ? { sourceRevision: input.sourceRevision } : {}),
+    ...(input.sourceFactsVersion === undefined ? {} : { sourceFactsVersion: input.sourceFactsVersion }),
+    ...(input.localPlanningFactsStatus ? { localPlanningFactsStatus: input.localPlanningFactsStatus } : {}),
+    ...(input.scheduleOverlayStatus ? { scheduleOverlayStatus: input.scheduleOverlayStatus } : {}),
+    ...(input.sharedPreferenceEvidenceStatus ? { sharedPreferenceEvidenceStatus: input.sharedPreferenceEvidenceStatus } : {}),
+    ...(input.sharedPreferenceEvidence ? { sharedPreferenceEvidence: cloneSharedPreferenceEvidence(input.sharedPreferenceEvidence) } : {}),
     trip,
     members: [...input.members]
       .filter((member) => memberIds.includes(member.id))
@@ -105,6 +134,7 @@ export function createDuriAnalysisSnapshot(input: DuriAnalysisInput): DuriAnalys
         pendingReviewFactIds: [...new Set(reference.pendingReviewFactIds ?? [])].sort(),
       }))
       .sort((left, right) => left.id.localeCompare(right.id)),
+    documentCollectionStatus: input.documentCollectionStatus ?? "loaded",
     evidenceCollection: input.evidenceCollection ? {
       route: { ...input.evidenceCollection.route },
       placeDetails: { ...input.evidenceCollection.placeDetails },
@@ -135,6 +165,49 @@ export function canonicalizeDuriInput(snapshot: DuriAnalysisSnapshot) {
   const diagnosis = snapshot.groupPreferenceDiagnosis;
   return {
     algorithmVersion: DURI_ANALYSIS_VERSION,
+    sourceRevision: snapshot.sourceRevision ?? null,
+    sourceFactsVersion: snapshot.sourceFactsVersion ?? null,
+    localPlanningFactsStatus: snapshot.localPlanningFactsStatus ?? null,
+    scheduleOverlayStatus: snapshot.scheduleOverlayStatus ?? null,
+    sharedPreferenceEvidenceStatus: snapshot.sharedPreferenceEvidenceStatus ?? null,
+    sharedPreferenceEvidence: snapshot.sharedPreferenceEvidence ? {
+      roomId: snapshot.sharedPreferenceEvidence.roomId,
+      factsVersion: snapshot.sharedPreferenceEvidence.factsVersion,
+      scheduleVersion: snapshot.sharedPreferenceEvidence.scheduleVersion,
+      members: snapshot.sharedPreferenceEvidence.members.map((member) => ({
+        userId: member.userId,
+        nickname: member.nickname,
+        travelType: member.travelType ? {
+          name: member.travelType.name,
+          tags: [...member.travelType.tags].sort(),
+          emoji: member.travelType.emoji,
+        } : null,
+        personalityAxes: member.personalityAxes ? Object.fromEntries(Object.entries(member.personalityAxes)
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([axisId, axis]) => [axisId, {
+            value: axis.value,
+            unit: axis.unit,
+            range: [...axis.range],
+            resolution: axis.resolution,
+            source: axis.source,
+            method: axis.method,
+          }])) : null,
+        mobilityConstraints: {
+          values: [...member.mobilityConstraints.values].sort(),
+          status: member.mobilityConstraints.status,
+          source: member.mobilityConstraints.source,
+          version: member.mobilityConstraints.version,
+          updatedAt: member.mobilityConstraints.updatedAt,
+        },
+        preferenceUpdatedAt: member.preferenceUpdatedAt,
+        interestTags: [...member.interestTags].sort(),
+      })).sort((left, right) => left.userId.localeCompare(right.userId)),
+      candidateSignals: snapshot.sharedPreferenceEvidence.candidateSignals.map((candidate) => ({
+        placeId: candidate.placeId,
+        signals: candidate.signals.map((signal) => ({ ...signal }))
+          .sort((left, right) => left.userId.localeCompare(right.userId)),
+      })).sort((left, right) => left.placeId.localeCompare(right.placeId)),
+    } : null,
     trip: {
       id: snapshot.trip.id,
       regionId: snapshot.trip.regionId,
@@ -191,10 +264,12 @@ export function canonicalizeDuriInput(snapshot: DuriAnalysisSnapshot) {
       id: reference.id,
       kind: reference.kind,
       itineraryItemIds: [...reference.itineraryItemIds].sort(),
+      orderProtected: reference.orderProtected ?? false,
       extractionStatus: reference.extractionStatus ?? "not-requested",
       confirmedFactIds: [...(reference.confirmedFactIds ?? [])].sort(),
       pendingReviewFactIds: [...(reference.pendingReviewFactIds ?? [])].sort(),
     })),
+    documentCollectionStatus: snapshot.documentCollectionStatus ?? "loaded",
     candidates: snapshot.candidates.map((candidate) => ({
       tripId: candidate.tripId,
       placeId: candidate.placeId,
@@ -264,7 +339,12 @@ export function getDuriAnalysisAvailability({
 }): DuriAnalysisAvailability {
   if (!engineAvailable) return { status: "engine-unavailable", canAnalyze: false, readOnly: false, message: "서버 두리 계약이 확인되지 않아 분석을 실행할 수 없어요." };
   if (!input || !getTripDates(input.trip.startDate, input.trip.endDate).length) return { status: "invalid-trip-dates", canAnalyze: false, readOnly: false, message: "여행 날짜를 확인한 뒤 분석해 주세요." };
-  if (!input.itinerary.length) return { status: "no-itinerary", canAnalyze: false, readOnly: input.trip.status === "completed", message: "일정을 하나 이상 추가하면 두리가 점검할 수 있어요." };
+  if (!input.itinerary.length) return {
+    status: "no-itinerary",
+    canAnalyze: true,
+    readOnly: input.trip.status === "completed",
+    message: "현재 일정은 비어 있어 점검 결과는 제한적이에요. 분석 후 실제 성향·후보 근거가 있으면 검토용 자동 채우기 초안을 만들 수 있어요.",
+  };
   const tripDates = new Set(getTripDates(input.trip.startDate, input.trip.endDate));
   const ids = new Set<EntityId>();
   const invalid = input.itinerary.some((item) => {

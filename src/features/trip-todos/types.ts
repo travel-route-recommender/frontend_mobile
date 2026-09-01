@@ -8,7 +8,7 @@ export type TripTodoAutomationScope = "duri-analysis" | "document-ocr" | "schedu
 export type TripTodoDue = {
   date: ISODateString;
   time?: TimeString;
-  /** IANA timezone. 현재 UI에서는 여행방의 timezone 계약이 없어 기기 timezone을 사용한다. */
+  /** IANA timezone. 값이 있으면 기기 timezone 대신 이 지역의 wall-clock으로 기한을 계산한다. */
   timezone?: string;
   /** OS 알림이 아닌 인앱 정렬·표시에 사용하는 사전 알림 설정이다. */
   reminderMinutesBefore?: number;

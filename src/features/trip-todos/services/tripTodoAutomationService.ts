@@ -8,6 +8,7 @@ import {
   getDocumentOcrConfirmationTodoAction,
   runFreshDuriTodoSync,
   type OcrConfirmationCandidate,
+  type ScheduleImpactExternalReference,
 } from "../logic/todoAutomation";
 import { useTripTodoStore } from "../store/useTripTodoStore";
 import type { ItineraryItem } from "../../../domain";
@@ -115,6 +116,7 @@ export async function upsertScheduleImpactTodo(input: {
   before: ItineraryItem;
   after: ItineraryItem;
   documents: readonly Pick<TravelDocument, "id" | "kind" | "displayName">[];
+  externalReferences?: readonly ScheduleImpactExternalReference[];
   createdByUserId: string;
   placeName?: string;
   now?: string;
@@ -133,11 +135,16 @@ export async function syncWorkspaceScheduleImpactTodos(input: {
   beforeItinerary: readonly ItineraryItem[];
   afterItinerary: readonly ItineraryItem[];
   documents: readonly TravelDocument[];
+  externalReferencesByItemId?: Readonly<Record<string, readonly ScheduleImpactExternalReference[] | undefined>>;
   createdByUserId: string;
   placeNameById?: Readonly<Record<string, string>>;
+  placeNameByItemId?: Readonly<Record<string, string>>;
   now?: string;
+  /** hydration 대기 중 계정이 바뀌면 다른 사용자의 private TODO에 기록하지 않는다. */
+  isCurrent?: () => boolean;
 }) {
   await ensureTripTodoStoreHydrated();
+  if (input.isCurrent && !input.isCurrent()) return [];
   const seeds = createWorkspaceScheduleImpactTodoSeeds(input);
   return seeds.flatMap((seed) => {
     const todo = useTripTodoStore.getState().upsertGeneratedTodo(seed, input.now);

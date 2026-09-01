@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SecondaryButton } from "../../../components/common";
 import { colors, radius, sizes, spacing, typography } from "../../../theme/tokens";
@@ -25,6 +26,7 @@ export function CandidateBoard({
   onOpenCandidate,
   onCandidateAction,
   onRemoveCandidate,
+  renderCandidateExtra,
 }: {
   candidates: readonly CandidatePlaceViewModel[];
   totalCount: number;
@@ -39,6 +41,7 @@ export function CandidateBoard({
   onOpenCandidate: (placeId: string) => void;
   onCandidateAction: (candidate: CandidatePlaceViewModel) => void;
   onRemoveCandidate: (candidate: CandidatePlaceViewModel) => void;
+  renderCandidateExtra?: (candidate: CandidatePlaceViewModel) => ReactNode;
 }) {
   return <View style={styles.section}>
     <Text style={styles.description}>전체 후보 {totalCount}곳 · 미배치 {unscheduledCount}곳 · 일정에 넣어도 후보는 유지돼요.</Text>
@@ -74,6 +77,7 @@ export function CandidateBoard({
         onPress={() => onOpenCandidate(item.placeId)}
         onPrimaryAction={() => onCandidateAction(item)}
         onRemove={() => onRemoveCandidate(item)}
+        extra={renderCandidateExtra?.(item)}
       />)}
     </View> : <View style={styles.empty}><Text style={styles.emptyTitle}>{totalCount ? "조건에 맞는 후보가 없어요" : "아직 후보 장소가 없어요"}</Text><Text style={styles.description}>{totalCount ? "검색어나 필터를 바꿔보세요." : "함께 가고 싶은 장소를 먼저 담아보세요."}</Text>{!totalCount ? <SecondaryButton label="장소 찾아보기" onPress={onExplore} /> : null}</View>}
     <SecondaryButton label="장소 더 찾기" onPress={onExplore} disabled={!canEdit} />

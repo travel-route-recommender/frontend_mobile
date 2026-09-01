@@ -96,7 +96,7 @@ export function WorkspaceScheduleGrid({
     {endCondition ? <View style={styles.endConditionSummary}>
       <Text style={styles.endConditionSummaryTitle}>마지막 날 복귀 조건</Text>
       <Text style={styles.endConditionSummaryText}>{formatEndConditionStart(endCondition)} → {endCondition.locationName} {endCondition.deadline}까지</Text>
-      <Text style={styles.endConditionSummaryMeta}>예상 이동 {endCondition.travelMinutes}분 + 승차·반납 준비 {endCondition.serviceBufferMinutes}분</Text>
+      <Text style={styles.endConditionSummaryMeta}>이동에 확보 {endCondition.travelMinutes}분 + 승차·반납 준비 {endCondition.serviceBufferMinutes}분</Text>
     </View> : null}
     <ScrollView
       ref={scrollRef}

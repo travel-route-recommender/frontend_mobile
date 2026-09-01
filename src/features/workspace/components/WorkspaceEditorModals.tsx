@@ -75,6 +75,7 @@ const resultMessages: Partial<Record<ItineraryMutationResult, string>> = {
   "invalid-date": "여행 기간 안의 날짜를 선택해 주세요.",
   "invalid-time": "시간 범위를 다시 확인해 주세요.",
   "invalid-attachment": "선택한 문서가 문서함에서 변경됐어요. 첨부를 다시 확인해 주세요.",
+  "protected-item": "서버에서 필수로 지정한 일정은 삭제하거나 다른 날짜로 옮길 수 없어요.",
   overlap: "다른 일정과 시간이 겹쳐 저장하지 않았어요.",
   boundary: "더 이상 이동할 수 없어요.",
   "end-condition": "종료 지점 이동과 준비시간을 고려한 마지막 일정 종료 시각을 넘겨 저장할 수 없어요. 더 이른 시간을 선택해 주세요.",
@@ -318,7 +319,7 @@ function ScheduleEditorModalContent({
       {activeEndCondition ? <View accessibilityRole={endConditionConflict ? "alert" : undefined} style={[styles.endConditionNotice, endConditionConflict && styles.endConditionNoticeConflict]}>
         <Text style={styles.endConditionNoticeTitle}>마지막 날 복귀 조건</Text>
         <Text style={styles.endConditionNoticeText}>마지막 일정은 {formatEndConditionCutoff(activeEndCondition)}까지 끝나야 {activeEndCondition.locationName}에 {activeEndCondition.deadline}까지 도착할 수 있어요.</Text>
-        <Text style={styles.endConditionNoticeMeta}>예상 이동 {activeEndCondition.travelMinutes}분 + 준비 {activeEndCondition.serviceBufferMinutes}분</Text>
+        <Text style={styles.endConditionNoticeMeta}>이동에 확보 {activeEndCondition.travelMinutes}분 + 준비 {activeEndCondition.serviceBufferMinutes}분</Text>
       </View> : null}
       <View style={styles.timeFields}><View style={styles.timeField}><WorkspaceTimeField label="시작 시간" value={value.startTime} onChange={(startTime) => setValue((current) => ({ ...current, startTime }))} error={!timeValidation.valid ? timeValidation.message : undefined} /></View><View style={styles.timeField}><WorkspaceTimeField label="종료 시간" value={value.endTime} onChange={(endTime) => setValue((current) => ({ ...current, endTime }))} allowEndOfDay /></View></View>
       <View><Text style={styles.fieldTitle}>빠른 체류 시간</Text><View style={styles.durationOptions}>{[15, 30, 60, 90, 120].map((minutes) => <Pressable key={minutes} accessibilityRole="button" accessibilityLabel={`체류 ${minutes}분`} onPress={() => setDuration(minutes)} style={({ pressed }) => [styles.duration, pressed && styles.pressed]}><Text style={styles.durationText}>{minutes}분</Text></Pressable>)}</View></View>
@@ -521,12 +522,15 @@ const factEndConditionOptions: readonly { value: TripEndConditionType | "none"; 
   { value: "other", label: "기타 종료 지점" },
 ];
 
-const tripFactResultMessages: Record<Exclude<TripPlanningFactsMutationResult, "success" | "success-adjusted">, string> = {
+type WorkspaceTripFactsSubmitResult = TripPlanningFactsMutationResult | "saving";
+
+const tripFactResultMessages: Record<Exclude<WorkspaceTripFactsSubmitResult, "success" | "success-adjusted">, string> = {
   "invalid-trip": "여행방 정보를 찾을 수 없어요.",
   "trip-not-editable": "완료된 여행방의 사실 정보는 수정할 수 없어요.",
   "not-member": "이 여행방의 사실 정보를 수정할 권한이 없어요.",
   "invalid-facts": "이동 방식·숙소·종료 조건 입력값을 다시 확인해 주세요.",
   "end-condition": "현재 일정의 순서·체류시간·이동 및 대기 간격을 유지하면 새 종료 조건을 맞출 수 없어요. 마지막 일정을 줄이거나 제외한 뒤 다시 저장해 주세요.",
+  saving: "이전 여행 사실을 저장하고 있어요. 완료된 뒤 다시 시도해 주세요.",
 };
 
 export function WorkspaceTripFactsModal({
@@ -540,7 +544,7 @@ export function WorkspaceTripFactsModal({
   editorKey: string;
   initialValue: WorkspaceTripFactsDraft;
   onClose(): void;
-  onSubmit(value: UpdateTripPlanningFactsInput): TripPlanningFactsMutationResult;
+  onSubmit(value: UpdateTripPlanningFactsInput): WorkspaceTripFactsSubmitResult;
 }) {
   if (!visible) return null;
   return <WorkspaceTripFactsModalContent
@@ -558,7 +562,7 @@ function WorkspaceTripFactsModalContent({
 }: {
   initialValue: WorkspaceTripFactsDraft;
   onClose(): void;
-  onSubmit(value: UpdateTripPlanningFactsInput): TripPlanningFactsMutationResult;
+  onSubmit(value: UpdateTripPlanningFactsInput): WorkspaceTripFactsSubmitResult;
 }) {
   const [value, setValue] = useState(initialValue);
   const [submitError, setSubmitError] = useState("");
@@ -629,7 +633,7 @@ function WorkspaceTripFactsModalContent({
     onClose={onClose}
   >
     <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={styles.editorContent}>
-      <View style={styles.factNotice}><Text style={styles.factNoticeTitle}>실제 예약 정보를 기준으로 입력해 주세요.</Text><Text style={styles.factNoticeText}>현재 앱은 경로 API를 사용하지 않으므로 마지막 일정에서 종료 지점까지의 예상 이동시간은 직접 확인한 값입니다.</Text></View>
+      <View style={styles.factNotice}><Text style={styles.factNoticeTitle}>실제 예약 정보를 기준으로 입력해 주세요.</Text><Text style={styles.factNoticeText}>아래 이동시간은 경로 API가 측정한 ETA가 아니라 사용자가 복귀를 위해 확보할 시간입니다. 두리는 별도로 조회에 성공한 실제 경로 근거만 정밀 이동시간으로 사용해요.</Text></View>
       <View style={styles.dateOptions}><Text style={styles.fieldTitle}>이동 방식</Text>{factTransportOptions.map((option) => <Pressable
         key={option.value}
         accessibilityRole="radio"
@@ -645,7 +649,7 @@ function WorkspaceTripFactsModalContent({
       {value.endCondition ? <View style={styles.endConditionFields}>
         <TextField label="종료 지점" value={value.endCondition.location} onChangeText={(location) => updateEndCondition({ location })} placeholder="예: 부산역, 렌터카 반납 지점" maxLength={100} />
         <WorkspaceTimeField label="도착 또는 반납 마감 시각" value={value.endCondition.deadline} onChange={(deadline) => updateEndCondition({ deadline })} error={endConditionError?.includes("종료 시각") ? endConditionError : undefined} />
-        <TextField label="마지막 일정에서 종료 지점까지 예상 이동시간 (분)" value={value.endCondition.travelMinutes} onChangeText={(travelMinutes) => updateEndCondition({ travelMinutes: travelMinutes.replace(/\D/g, "") })} keyboardType="number-pad" maxLength={4} />
+        <TextField label="마지막 일정에서 종료 지점까지 확보할 이동시간 (분)" value={value.endCondition.travelMinutes} onChangeText={(travelMinutes) => updateEndCondition({ travelMinutes: travelMinutes.replace(/\D/g, "") })} keyboardType="number-pad" maxLength={4} />
         <TextField label="승차 준비 또는 반납에 필요한 시간 (분)" value={value.endCondition.serviceBufferMinutes} onChangeText={(serviceBufferMinutes) => updateEndCondition({ serviceBufferMinutes: serviceBufferMinutes.replace(/\D/g, "") })} keyboardType="number-pad" maxLength={3} />
         <TextField label="종료 조건 메모 (선택)" value={value.endCondition.note} onChangeText={(note) => updateEndCondition({ note })} maxLength={300} multiline />
       </View> : null}

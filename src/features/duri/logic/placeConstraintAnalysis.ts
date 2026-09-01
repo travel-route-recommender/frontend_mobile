@@ -405,7 +405,8 @@ export function analyzePlacePracticalConstraints(snapshot: DuriAnalysisSnapshot,
       source: "external-evidence" as const,
     };
 
-    if (snapshot.trip.transport === "car"
+    if ((!snapshot.localPlanningFactsStatus || snapshot.localPlanningFactsStatus === "loaded")
+      && snapshot.trip.transport === "car"
       && evidence.parkingText
       && parseExplicitParkingAvailability(evidence.parkingText) === "unavailable") {
       issues.push({

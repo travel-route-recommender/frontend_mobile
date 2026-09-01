@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { queryClient } from "../../../query/queryClient";
 import { useDuriStore } from "../../../store/useDuriStore";
+import { useDuriAnalysisStore } from "../../duri/store/useDuriAnalysisStore";
 import type { AuthSuccess } from "../types";
 import { authService } from "../services/authService";
 import { activateLocalPrivateDataForUser, deactivateLocalPrivateData, transferLocalPrivateDataForVerifiedUpgrade } from "../services/localPrivateData";
@@ -11,6 +12,9 @@ export async function applyAuthSuccessToStores(
   options?: { verifiedGuestUpgrade?: boolean },
 ) {
   const previousUserId = useAuthSessionStore.getState().currentSessionUserId;
+  // 같은 ID의 guest→member 전환도 응답 권한과 사용자별 overlay가 달라질 수 있다.
+  queryClient.removeQueries({ queryKey: ["trips"] });
+  useDuriAnalysisStore.getState().clearAll();
   if (options?.verifiedGuestUpgrade && previousUserId) {
     await transferLocalPrivateDataForVerifiedUpgrade(previousUserId, result.user.id);
   } else {
@@ -34,6 +38,7 @@ export function clearAuthStores() {
   deactivateLocalPrivateData();
   useAuthSessionStore.getState().clearSession();
   useDuriStore.getState().setCurrentUser(null);
+  useDuriAnalysisStore.getState().clearAll();
   queryClient.clear();
 }
 

@@ -190,7 +190,15 @@ function buildEndConditionSuggestion(session: DuriAnalysisSession, issue: DuriRe
 }
 
 export function generateDuriSuggestions(session: DuriAnalysisSession, createdAt: string): DuriSuggestionEnvelope[] {
-  const webSuggestions = generateWebDuriSuggestions({ ...session.snapshot, analysis: session.result });
+  const supportedIssueIds = new Set(session.issues
+    .filter((issue) => issue.suggestionSupported)
+    .map((issue) => issue.id));
+  // legacy 생성기는 식사창·휴식시간 같은 낮은 신뢰도의 휴리스틱도 변경안으로
+  // 만들 수 있다. 최신 리포트가 실제 변경을 지원한다고 명시한 원인만 통과시켜
+  // 분석 의미와 조율 제안의 의미가 어긋나지 않게 한다.
+  const webSuggestions = generateWebDuriSuggestions({ ...session.snapshot, analysis: session.result })
+    .filter((suggestion) => suggestion.sourceIssueIds.length > 0
+      && suggestion.sourceIssueIds.every((issueId) => supportedIssueIds.has(issueId)));
   const supplemental = session.issues.flatMap((issue) => {
     if (issue.category === "end-condition" && issue.severity === "high") return buildEndConditionSuggestion(session, issue) ?? [];
     if (issue.category === "time-conflict") return buildConflictSuggestion(session, issue) ?? [];

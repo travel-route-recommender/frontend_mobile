@@ -37,6 +37,13 @@ function normalizeTags(value: unknown) {
   });
 }
 
+function dimensionsFromDetailedSignals(value: unknown, fallback: PersonalPreferenceAnswers) {
+  if (!isRecord(value)) return { values: fallback, observedDimensions: [...preferenceDimensions] };
+  // 새 설문의 0~100 신호를 임의 25/75 경계로 legacy 0/1/2 축에 투영하지 않는다.
+  // 상세 신호는 해상도와 원래 단위를 보존하는 전용 분석기가 사용한다.
+  return { values: fallback, observedDimensions: [] as PreferenceDimension[] };
+}
+
 export function normalizePreferenceResult(
   value: unknown,
   expectedUserId?: string,
@@ -44,15 +51,18 @@ export function normalizePreferenceResult(
   if (!isRecord(value)) return null;
   const userId = typeof value.userId === "string" ? value.userId : "";
   if (!userId || (expectedUserId !== undefined && userId !== expectedUserId)) return null;
+  if (value.detailedSignalsInvalid === true) return null;
   if (value.version !== PERSONAL_TEST_VERSION) return null;
-  const values = normalizeAnswers(value.answers);
-  if (!values) return null;
+  const fallbackValues = normalizeAnswers(value.answers);
+  if (!fallbackValues) return null;
+  const { values, observedDimensions } = dimensionsFromDetailedSignals(value.detailedSignals, fallbackValues);
   const profileType = typeof value.profileType === "string" && value.profileType.trim()
     ? value.profileType.trim()
     : undefined;
   return {
     userId,
     values,
+    observedDimensions,
     preferredTags: normalizeTags(value.preferredTags),
     ...(profileType ? { profileType } : {}),
   };

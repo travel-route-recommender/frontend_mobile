@@ -163,7 +163,7 @@ export function isRouteOptimizationFixedItem(
         && constraint.placeId === item.placeId
       ));
   const fixedByLinkedDocument = (input.documentReferences ?? []).some((reference) =>
-    ROUTE_ORDER_LOCKING_DOCUMENT_KINDS.has(reference.kind)
+    (reference.orderProtected === true || ROUTE_ORDER_LOCKING_DOCUMENT_KINDS.has(reference.kind))
     && reference.itineraryItemIds.includes(item.id));
   const fixedByTimeSensitivePlaceFact = Boolean(item.placeId && (input.placeConstraintEvidence ?? []).some((evidence) =>
     evidence.placeId === item.placeId && hasEvaluableOperatingFactForDate(evidence, item.date)));
@@ -187,7 +187,7 @@ function collectRouteOptimizationFixedItemIds(input: DuriAnalysisInput) {
     confirmedPlaceIds.add(constraint.placeId);
   });
   (input.documentReferences ?? []).forEach((reference) => {
-    if (!ROUTE_ORDER_LOCKING_DOCUMENT_KINDS.has(reference.kind)) return;
+    if (reference.orderProtected !== true && !ROUTE_ORDER_LOCKING_DOCUMENT_KINDS.has(reference.kind)) return;
     reference.itineraryItemIds.forEach((itemId) => fixedItemIds.add(itemId));
   });
   const evidenceByPlaceId = new Map<string, NonNullable<DuriAnalysisInput["placeConstraintEvidence"]>>();
@@ -535,6 +535,20 @@ export async function collectCarRouteEvidence(
   routeCollection: DuriEvidenceCollection["route"];
 }> {
   const scheduledLegs = buildScheduledRouteLegs(input);
+  if (input.localPlanningFactsStatus && input.localPlanningFactsStatus !== "loaded") {
+    return {
+      routeLegEstimates: [],
+      routeOrderEvaluations: [],
+      routeCollection: {
+        requiredLegCount: scheduledLegs.length,
+        analyzedLegCount: 0,
+        mode: input.trip.transport,
+        unavailableReason: input.localPlanningFactsStatus === "unavailable"
+          ? "여행방 이동수단 정보를 불러오지 못해 실제 경로 판단을 생략했어요."
+          : "여행방에 이동수단이 설정되지 않아 실제 경로 판단을 생략했어요.",
+      },
+    };
+  }
   if (input.trip.transport !== "car") {
     return {
       routeLegEstimates: [],
@@ -572,8 +586,12 @@ export async function collectCarRouteEvidence(
     });
   // 현재 순서의 필수 간선 하나라도 실패하면 그 날짜의 총 이동시간 자체를 계산할 수 없다.
   // 이때 결과에 쓸 수 없는 최적화용 추가 요청을 보내지 않는다.
+  // 잠금 overlay 또는 문서 목록을 읽지 못하면 어떤 일정이 고정인지 알 수 없다.
+  // 필수 현재 경로 검증은 유지하되 순서 변경용 추가 요청과 제안만 보수적으로 생략한다.
+  const canEvaluateOrder = input.scheduleOverlayStatus !== "unavailable"
+    && input.documentCollectionStatus !== "unavailable";
   const optimizationPairs = [...locatedByDate.entries()].flatMap(([date, items]) =>
-    hasCompleteRequiredRouteForDate(date)
+    canEvaluateOrder && hasCompleteRequiredRouteForDate(date)
       ? collectOptimizationPairs(items, (index) => canSwapAtIndex(date, index))
       : []);
   failedCount += await collectPairsIntoCache({ pairs: optimizationPairs, cache, attempted, requestDirections });
@@ -599,7 +617,7 @@ export async function collectCarRouteEvidence(
     }];
   });
 
-  const routeOrderEvaluations = [...locatedByDate.entries()].flatMap(([date, items]) => {
+  const routeOrderEvaluations = canEvaluateOrder ? [...locatedByDate.entries()].flatMap(([date, items]) => {
     const evaluation = bestAdjacentSwap(
       input,
       date,
@@ -609,7 +627,7 @@ export async function collectCarRouteEvidence(
       (index) => canSwapAtIndex(date, index),
     );
     return evaluation ? [evaluation] : [];
-  });
+  }) : [];
   return {
     routeLegEstimates,
     routeOrderEvaluations,

@@ -130,6 +130,7 @@ function LocalWorkspaceScreen() {
   const startTripExplore = useExploreSearchStore((state) => state.startTripExplore);
   const tripDocuments = useTripDocumentStore((state) => state.documentsByTripId[tripId] ?? EMPTY_TRAVEL_DOCUMENTS);
   const documentsHydrated = useTripDocumentHydrationState((state) => state.isHydrated);
+  const documentHydrationError = useTripDocumentHydrationState((state) => state.hydrationError);
   const setLinksForItinerary = useTripDocumentStore((state) => state.setLinksForItinerary);
   const reconcileTripLinks = useTripDocumentStore((state) => state.reconcileTripLinks);
 
@@ -193,9 +194,12 @@ function LocalWorkspaceScreen() {
     [source.itineraryByTripId, tripId],
   );
   const itineraryItemIdKey = useMemo(() => JSON.stringify(rawItinerary.map((item) => item.id).sort()), [rawItinerary]);
+  const documentCollectionStatus = documentsHydrated ? "loaded" as const : documentHydrationError ? "unavailable" as const : undefined;
   const analysisInput = useMemo(
-    () => buildDuriAnalysisInputWithDocuments(source, tripId, tripDocuments),
-    [source, tripDocuments, tripId],
+    () => documentCollectionStatus
+      ? buildDuriAnalysisInputWithDocuments(source, tripId, tripDocuments, [], documentCollectionStatus)
+      : undefined,
+    [documentCollectionStatus, source, tripDocuments, tripId],
   );
   const automaticShiftProtectedItemIds = useMemo(() => {
     if (!analysisInput) return [];
@@ -604,8 +608,12 @@ function LocalWorkspaceScreen() {
           session={analysisState.session}
           stale={analysisStale}
           loading={analysisState.status === "loading"}
-          engineAvailable={duriAnalysisService.available && workspaceScheduleService.available}
-          engineMessage={!workspaceScheduleService.available ? workspaceScheduleService.message : duriAnalysisService.unavailableMessage}
+          engineAvailable={duriAnalysisService.available && workspaceScheduleService.available && Boolean(documentCollectionStatus)}
+          engineMessage={!workspaceScheduleService.available
+            ? workspaceScheduleService.message
+            : !documentCollectionStatus
+              ? "첨부 문서 확인 상태를 불러온 뒤 분석할 수 있어요."
+              : duriAnalysisService.unavailableMessage}
           onOpen={() => router.push({ pathname: "/trips/[tripId]/analysis", params: { tripId } })}
         />
       </ScrollView>
