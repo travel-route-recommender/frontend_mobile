@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
-import { AppHeader, Card, PrimaryButton, Screen, SecondaryButton } from "../../../components/common";
+import { Card, PrimaryButton, Screen, SecondaryButton } from "../../../components/common";
 import { EmptyState } from "../../../components/feedback";
 import type { PreferenceScore } from "../../../domain";
 import { personalTestQuestions, preferenceDimensionLabels } from "../../../duri/preferences";
@@ -9,12 +9,15 @@ import { useDuriStore } from "../../../store/useDuriStore";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import { useAuthSessionStore } from "../../auth/store/useAuthSessionStore";
 import type { SessionKind } from "../../auth/types";
+import { DuriKoreanText } from "../../duri/components/DuriKoreanText";
+import { PreferenceFlowHeader } from "../components/PreferenceFlowChrome";
 import { PreferenceRestartModal } from "../components/PreferenceModals";
 import { PreferenceResultSummary } from "../components/PreferenceResultSummary";
 import { PreferenceSurveyResultDetails } from "../components/PreferenceSurveyResultDetails";
 import { useTravelPreferenceSurveyResult } from "../hooks/useTravelPreferenceSurveyResult";
 import { calculateLegacyPreferenceProjection } from "../logic/calculate-travel-preference-result";
 import { formatPreferenceCompletedAt } from "../logic/formatPreferenceResult";
+import { resolvePreferenceResultPair } from "../logic/resolve-preference-result-pair";
 import { usePersonalPreferenceDraftStore } from "../store/usePersonalPreferenceDraftStore";
 import type { PreferenceDraftOwner, PreferencePreviewResult } from "../types";
 
@@ -46,36 +49,87 @@ export function PersonalResultScreen() {
     return preview;
   }, [detailedResult, sessionKind]);
   const result: PreferencePreviewResult | undefined = sessionKind === "anonymous" ? anonymousPreview : persistentResult;
-  const detailedAnswers = owner && detailedResult && detailedResult.completedAt === result?.completedAt
-    ? detailedResult.answers
-    : null;
+  const resultPair = useMemo(() => result ? resolvePreferenceResultPair(
+    result,
+    detailedResult,
+    owner?.kind === "user" ? owner.userId : detailedResult?.userId,
+  ) : null, [detailedResult, owner, result]);
 
+  const backDestination = sessionKind === "anonymous" ? "/(tabs)/home" : "/(tabs)/mypage";
   const restart = () => {
     if (!owner) { setRestartVisible(false); router.replace("/(auth)/login"); return; }
-    startTest(owner); setRestartVisible(false); router.replace({ pathname: "/tests/personal", params: { restart: "1" } });
+    startTest(owner);
+    setRestartVisible(false);
+    router.replace({ pathname: "/tests/personal", params: { restart: "1" } });
   };
 
-  if (!result) return <Screen><AppHeader title="여행 성향 결과" onBack={() => router.back()} /><EmptyState title="아직 여행 성향 테스트를 완료하지 않았어요" description={sessionKind === "anonymous" ? "체험 결과는 앱을 다시 시작하면 사라질 수 있어요. 테스트를 완료해 결과를 확인해 보세요." : "모든 문항을 완료하면 저장된 결과를 이곳에서 다시 볼 수 있어요."} ctaLabel="테스트 시작" onPress={() => router.replace("/tests/personal")} /></Screen>;
+  if (!result) return <Screen
+    backgroundColor={colors.surface}
+    header={<PreferenceFlowHeader onBack={() => router.back()} />}
+  >
+    <EmptyState title="아직 여행 성향 테스트를 완료하지 않았어요" description={sessionKind === "anonymous" ? "체험 결과는 앱을 다시 시작하면 사라질 수 있어요. 테스트를 완료해 결과를 확인해 보세요." : "모든 문항을 완료하면 저장된 결과를 이곳에서 다시 볼 수 있어요."} ctaLabel="테스트 시작" onPress={() => router.replace("/tests/personal")} />
+  </Screen>;
 
-  return <Screen testID="personal-preference-result">
-    <AppHeader title="내 여행 성향 결과" onBack={() => router.replace(sessionKind === "anonymous" ? "/(tabs)/home" : "/(tabs)/mypage")} />
-    <PreferenceResultSummary result={result} challengeStyle={detailedResult?.challengeStylePreference} scheduleStyle={detailedResult?.scheduleStylePreference} userName={sessionKind === "anonymous" ? undefined : user?.name} />
-    <View style={styles.detailToggle}><SecondaryButton label={detailsVisible ? "상세 정보 닫기" : "상세 보기"} onPress={() => setDetailsVisible((visible) => !visible)} /></View>
-    {detailsVisible ? <View style={styles.details}>
-      <Text style={styles.completed}>{formatPreferenceCompletedAt(result.completedAt)}</Text>
-      {detailedAnswers && detailedResult ? <PreferenceSurveyResultDetails result={detailedResult} /> : <>
-        <Text style={styles.sectionTitle}>내가 선택한 여행 기준</Text>
-        <View style={styles.responses}>{personalTestQuestions.map((question) => {
-          const score = result.answers[question.dimension];
-          const choice = question.choices.find((entry) => entry.value === score);
-          return <Card key={question.id} style={styles.responseCard}><View style={styles.responseHeading}><Text style={styles.dimension}>{preferenceDimensionLabels[question.dimension]}</Text><Text style={styles.choice}>{choice?.label ?? "응답 없음"}</Text></View><View accessibilityRole="progressbar" accessibilityLabel={`${preferenceDimensionLabels[question.dimension]} ${question.choices.length}단계 중 ${question.choices.findIndex((entry) => entry.value === score) + 1}단계`} accessibilityValue={{ min: 1, max: question.choices.length, now: question.choices.findIndex((entry) => entry.value === score) + 1 }} style={styles.scale}>{question.choices.map((entry) => <View key={entry.value} style={[styles.scaleSegment, isChoiceReached(entry.value, score) && styles.scaleSegmentActive]} />)}</View></Card>;
-        })}</View>
-      </>}
-      {sessionKind === "anonymous" ? <View style={styles.anonymousNotice}><Text style={styles.anonymousTitle}>체험 결과는 영구 저장되지 않아요</Text><Text style={styles.anonymousText}>로그인하거나 가입한 뒤 테스트를 완료하면 새 결과를 여행방의 동행자 성향 비교에 활용할 수 있어요. 현재 체험 결과는 자동 이전되지 않아요.</Text></View> : null}
-      {sessionKind === "guest" ? <View style={styles.guestNotice}><Text style={styles.guestTitle}>게스트 결과로 저장됐어요</Text><Text style={styles.guestText}>현재 초대 계정에서 확인할 수 있어요. 정식 계정으로 결과를 옮기는 기능은 아직 제공하지 않아요.</Text></View> : null}
-      {sessionKind !== "anonymous" && sessionUserId !== domainUserId ? <Pressable accessibilityRole="button" onPress={() => router.replace("/")}><Text style={styles.sessionWarning}>사용자 상태 다시 확인하기</Text></Pressable> : null}
-    </View> : null}
-    <View style={styles.actions}><PrimaryButton label="테스트 다시 하기" onPress={() => setRestartVisible(true)} />{sessionKind === "anonymous" ? <><SecondaryButton label="로그인하기" onPress={() => router.push("/(auth)/login")} /><SecondaryButton label="회원가입" onPress={() => router.push("/(auth)/signup-choice")} /></> : <SecondaryButton label="마이페이지에서 결과 보기" onPress={() => router.replace("/(tabs)/mypage")} />}<SecondaryButton label="홈으로 이동" onPress={() => router.replace("/(tabs)/home")} /></View>
+  return <Screen
+    backgroundColor={colors.surface}
+    contentContainerStyle={styles.content}
+    header={<PreferenceFlowHeader onBack={() => router.replace(backDestination)} />}
+    testID="personal-preference-result"
+  >
+    <PreferenceResultSummary presentation={resultPair!.canonicalPresentation} userName={sessionKind === "anonymous" ? undefined : user?.name} />
+
+    <View style={styles.detailSection}>
+      <Text style={styles.sectionTitle}>성향 상세</Text>
+      <Pressable
+        accessibilityLabel={detailsVisible ? "성향 상세 닫기" : "성향 상세 전체 보기"}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: detailsVisible }}
+        onPress={() => setDetailsVisible((visible) => !visible)}
+        style={({ pressed }) => [styles.detailDisclosure, pressed && styles.pressed]}
+      >
+        <View style={styles.detailIcon}><Text style={styles.detailIconText}>≡</Text></View>
+        <View style={styles.detailCopy}>
+          <Text style={styles.detailTitle}>내가 선택한 여행 기준</Text>
+          <Text style={styles.detailMeta}>{formatPreferenceCompletedAt(result.completedAt)}</Text>
+        </View>
+        <Text style={styles.detailAction}>{detailsVisible ? "닫기" : "전체 보기"} ›</Text>
+      </Pressable>
+
+      {detailsVisible ? <View style={styles.details}>
+        {resultPair?.detailedResult ? <PreferenceSurveyResultDetails result={resultPair.detailedResult} /> : <>
+          <Text style={styles.detailCaption}>현재 저장된 결과와 일치하는 상세 응답이 없어, 같은 결과의 기본 여행 기준만 보여드려요.</Text>
+          <Card style={styles.legacyCard}>{personalTestQuestions.map((question, index) => {
+            const score = result.answers[question.dimension];
+            const choice = question.choices.find((entry) => entry.value === score);
+            const selectedIndex = question.choices.findIndex((entry) => entry.value === score);
+            return <View key={question.id}>
+              <View style={styles.responseRow}>
+                <View style={styles.responseHeading}><Text style={styles.dimension}>{preferenceDimensionLabels[question.dimension]}</Text><DuriKoreanText style={styles.choice}>{choice?.label ?? "응답 없음"}</DuriKoreanText></View>
+                <View accessibilityRole="progressbar" accessibilityLabel={`${preferenceDimensionLabels[question.dimension]} ${question.choices.length}단계 중 ${selectedIndex + 1}단계`} accessibilityValue={{ min: 1, max: question.choices.length, now: selectedIndex + 1 }} style={styles.scale}>{question.choices.map((entry) => <View key={entry.value} style={[styles.scaleSegment, isChoiceReached(entry.value, score) && styles.scaleSegmentActive]} />)}</View>
+              </View>
+              {index < personalTestQuestions.length - 1 ? <View style={styles.divider} /> : null}
+            </View>;
+          })}</Card>
+        </>}
+        {sessionKind === "anonymous" ? <View style={styles.anonymousNotice}><Text style={styles.anonymousTitle}>체험 결과는 영구 저장되지 않아요</Text><DuriKoreanText style={styles.noticeBody}>로그인하거나 가입한 뒤 테스트를 완료하면 새 결과를 여행방의 동행자 성향 비교에 활용할 수 있어요. 현재 체험 결과는 자동 이전되지 않아요.</DuriKoreanText></View> : null}
+        {sessionKind === "guest" ? <View style={styles.guestNotice}><Text style={styles.guestTitle}>게스트 결과로 저장됐어요</Text><DuriKoreanText style={styles.noticeBody}>현재 초대 계정에서 확인할 수 있어요. 정식 계정으로 결과를 옮기는 기능은 아직 제공하지 않아요.</DuriKoreanText></View> : null}
+        {sessionKind !== "anonymous" && sessionUserId !== domainUserId ? <Pressable accessibilityRole="button" onPress={() => router.replace("/")}><Text style={styles.sessionWarning}>사용자 상태 다시 확인하기</Text></Pressable> : null}
+      </View> : null}
+    </View>
+
+    <View style={styles.actionSection}>
+      <Text style={styles.sectionTitle}>다음 여행 이어가기</Text>
+      {sessionKind === "member" ? <>
+        <PrimaryButton label="친구와 궁합 보기" onPress={() => router.push("/tests/compatibility")} />
+        <SecondaryButton label="홈으로 이동" onPress={() => router.replace("/(tabs)/home")} />
+      </> : sessionKind === "anonymous" ? <>
+        <PrimaryButton label="로그인하고 결과 저장하기" onPress={() => router.push("/(auth)/login")} />
+        <SecondaryButton label="회원가입" onPress={() => router.push("/(auth)/signup-choice")} />
+      </> : <PrimaryButton label="홈으로 이동" onPress={() => router.replace("/(tabs)/home")} />}
+      <Pressable accessibilityRole="button" onPress={() => setRestartVisible(true)} style={({ pressed }) => [styles.retest, pressed && styles.pressed]}>
+        <Text style={styles.retestText}>테스트 다시 하기</Text>
+      </Pressable>
+    </View>
     <PreferenceRestartModal visible={restartVisible} onRestart={restart} onCancel={() => setRestartVisible(false)} />
   </Screen>;
 }
@@ -83,9 +137,35 @@ export function PersonalResultScreen() {
 function isChoiceReached(value: PreferenceScore, selected: PreferenceScore) { return value <= selected; }
 
 const styles = StyleSheet.create({
-  detailToggle: { marginTop: spacing.md }, details: { gap: spacing.sm },
-  completed: { ...typography.caption, color: colors.textMuted, textAlign: "center", marginTop: spacing.sm },
-  sectionTitle: { ...typography.subtitle, color: colors.text, marginTop: spacing.xl, marginBottom: spacing.sm }, responses: { gap: spacing.sm }, responseCard: { gap: spacing.sm }, responseHeading: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: spacing.sm }, dimension: { ...typography.caption, color: colors.textSecondary }, choice: { ...typography.bodyStrong, color: colors.text, flex: 1, textAlign: "right" },
-  scale: { flexDirection: "row", gap: spacing.xs }, scaleSegment: { flex: 1, height: 8, borderRadius: radius.pill, backgroundColor: colors.border }, scaleSegmentActive: { backgroundColor: colors.primary },
-  actions: { gap: spacing.sm, marginTop: spacing.xl }, anonymousNotice: { borderRadius: radius.md, backgroundColor: colors.warningSoft, padding: spacing.md, marginTop: spacing.md }, anonymousTitle: { ...typography.bodyStrong, color: colors.warning }, anonymousText: { ...typography.caption, color: colors.textSecondary, marginTop: spacing.xxs }, guestNotice: { borderRadius: radius.md, backgroundColor: colors.primarySoft, padding: spacing.md, marginTop: spacing.md }, guestTitle: { ...typography.bodyStrong, color: colors.primary }, guestText: { ...typography.caption, color: colors.textSecondary, marginTop: spacing.xxs }, sessionWarning: { ...typography.caption, color: colors.danger, textAlign: "center", marginTop: spacing.sm },
+  content: { gap: spacing.xl, paddingTop: spacing.xl, paddingBottom: spacing.xxxl, backgroundColor: colors.surface },
+  sectionTitle: { fontSize: 19, lineHeight: 25, fontWeight: "800", color: "#17265F" },
+  detailSection: { gap: spacing.sm },
+  detailDisclosure: { minHeight: 74, flexDirection: "row", alignItems: "center", gap: spacing.sm, borderWidth: 1, borderColor: colors.border, borderRadius: 18, backgroundColor: colors.surface, padding: spacing.md },
+  detailIcon: { width: 38, height: 38, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: "#EAF2FF" },
+  detailIconText: { fontSize: 22, lineHeight: 24, fontWeight: "800", color: colors.primary },
+  detailCopy: { flex: 1, minWidth: 0, gap: 2 },
+  detailTitle: { fontSize: 14, lineHeight: 20, fontWeight: "800", color: "#17265F" },
+  detailMeta: { ...typography.caption, color: colors.textMuted },
+  detailAction: { ...typography.caption, color: colors.primary },
+  details: { gap: spacing.sm },
+  detailCaption: { ...typography.caption, color: colors.textSecondary, borderRadius: radius.md, backgroundColor: "#F7FAFF", padding: spacing.sm },
+  legacyCard: { overflow: "hidden", gap: 0, paddingVertical: spacing.xs },
+  responseRow: { gap: spacing.sm, paddingHorizontal: spacing.sm, paddingVertical: spacing.sm },
+  responseHeading: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: spacing.sm },
+  dimension: { ...typography.caption, color: colors.textSecondary },
+  choice: { ...typography.bodyStrong, color: "#17265F", flex: 1, textAlign: "right" },
+  scale: { flexDirection: "row", gap: spacing.xs },
+  scaleSegment: { flex: 1, height: 7, borderRadius: radius.pill, backgroundColor: colors.border },
+  scaleSegmentActive: { backgroundColor: colors.primary },
+  divider: { height: StyleSheet.hairlineWidth, marginHorizontal: spacing.sm, backgroundColor: colors.border },
+  actionSection: { gap: spacing.sm },
+  retest: { minHeight: 44, alignItems: "center", justifyContent: "center", borderRadius: radius.md },
+  retestText: { ...typography.caption, color: colors.textSecondary, textDecorationLine: "underline" },
+  anonymousNotice: { borderRadius: radius.md, backgroundColor: colors.warningSoft, padding: spacing.md },
+  anonymousTitle: { ...typography.bodyStrong, color: colors.warning },
+  guestNotice: { borderRadius: radius.md, backgroundColor: colors.primarySoft, padding: spacing.md },
+  guestTitle: { ...typography.bodyStrong, color: colors.primary },
+  noticeBody: { ...typography.caption, color: colors.textSecondary, marginTop: spacing.xxs },
+  sessionWarning: { ...typography.caption, color: colors.danger, textAlign: "center", marginTop: spacing.sm },
+  pressed: { opacity: 0.78 },
 });

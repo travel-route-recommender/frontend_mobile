@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
-import { Card, Screen, SectionHeader } from "../../../components/common";
+import { Card, Screen } from "../../../components/common";
 import { ErrorState, LoadingState } from "../../../components/feedback";
 import { queryKeys } from "../../../query/keys";
 import { colors, spacing, typography } from "../../../theme/tokens";
@@ -12,13 +12,14 @@ import { useExploreSearchStore } from "../../explore/store/useExploreSearchStore
 import { TripInviteManagerModal } from "../../invitations/components/TripInviteManagerModal";
 import { TripTodoSection } from "../../trip-todos";
 import {
-  CandidateSummaryCard,
   DuriAnalysisCard,
-  ItinerarySummaryCard,
   PreferenceSectionIntro,
   TripHomeHero,
+  TripPlanningSection,
   TripPreparationCard,
   TripQuickActions,
+  type TripHomeDuriState,
+  type TripNextAction,
 } from "../components/home";
 import { PreferenceResponseSummaryCard } from "../components/preferences";
 import { fetchApiTripDetail } from "../tripRoomApi";
@@ -44,6 +45,7 @@ export function ApiTripDetailContent({ tripId, created }: { tripId: string; crea
   if (query.error || !data) return <Screen><ErrorState message={query.error instanceof Error ? query.error.message : "여행방을 불러오지 못했어요."} onRetry={() => void query.refetch()} /></Screen>;
 
   const openWorkspace = () => router.push({ pathname: "/trips/[tripId]/workspace", params: { tripId } });
+  const openAnalysis = () => router.push({ pathname: "/trips/[tripId]/analysis", params: { tripId } });
   const explore = () => {
     startTripExplore(data.region.id);
     syncActiveTripRegion(tripId, data.region.id);
@@ -56,13 +58,26 @@ export function ApiTripDetailContent({ tripId, created }: { tripId: string; crea
     if (stepId === "itinerary" || stepId === "confirmation") openWorkspace();
   };
 
-  return <Screen testID="api-trip-home-screen">
+  const nextAction: TripNextAction = completed
+    ? { title: "여행 일정을 다시 살펴보세요", description: "완료된 여행의 일정과 기록을 확인할 수 있어요.", label: "일정 보기", onPress: openWorkspace }
+    : currentMember && currentMember.state !== "completed"
+      ? { title: "내 여행 성향을 알려주세요", description: "내 응답이 더해지면 그룹에 맞는 계획을 만들 수 있어요.", label: "내 성향 답하기", onPress: startMyTest }
+      : data.candidates.length === 0
+        ? { title: "함께 가고 싶은 장소를 모아보세요", description: "후보 장소를 모으면 일정 만들기가 더 쉬워져요.", label: "장소 모으기", onPress: explore }
+        : data.itinerary.length === 0
+          ? { title: "첫 일정을 만들어보세요", description: "모아둔 후보를 날짜와 시간에 배치해보세요.", label: "일정 만들기", onPress: openWorkspace }
+          : { title: "일정을 계속 만들어보세요", description: `${data.itinerary.length}개 일정을 바탕으로 남은 후보도 배치해보세요.`, label: "일정 계속 만들기", onPress: openWorkspace };
+  const duriState: TripHomeDuriState = data.itinerary.length
+    ? { kind: "unavailable", message: "서버 여행방의 분석 계약을 연결한 뒤 이용할 수 있어요." }
+    : { kind: "no-itinerary" };
+
+  return <Screen padded={false} testID="api-trip-home-screen"><View style={styles.page}>
     <TripHomeHero trip={data.room} region={data.region} usersById={data.usersById} currentUserId={currentUserId} onBack={() => router.back()} />
     {created ? <Pressable accessibilityRole="button" accessibilityLabel="여행방 생성 완료 안내 닫기" onPress={() => router.setParams({ created: undefined })} style={styles.successBanner}><Text style={styles.successTitle}>여행방을 만들었어요</Text><Text style={styles.successText}>서버 여행방을 불러왔어요. · 닫기</Text></Pressable> : null}
+    <TripPreparationCard preparation={data.preparation} nextAction={nextAction} onAction={handlePreparationAction} readOnly={completed} />
     <TripQuickActions completed={completed} onWorkspace={openWorkspace} onExplore={explore} onInvite={() => setInviteOpen(true)} />
-    <TripPreparationCard preparation={data.preparation} onAction={handlePreparationAction} readOnly={completed} />
 
-    <SectionBlock><PreferenceSectionIntro summary={data.preferenceSummary} /></SectionBlock>
+    <View style={styles.preferenceSection}><PreferenceSectionIntro summary={data.preferenceSummary} />
     <PreferenceResponseSummaryCard
       summary={data.preferenceSummary}
       currentUserId={currentUserId}
@@ -70,14 +85,16 @@ export function ApiTripDetailContent({ tripId, created }: { tripId: string; crea
       onViewMyResult={() => router.push("/tests/personal/result")}
       onRetakeMyTest={() => router.push({ pathname: "/tests/personal/result", params: { retest: "1" } })}
     />
-
-    <SectionBlock><SectionHeader title="우리 여행 성향" /></SectionBlock>
     <Card style={styles.contractNotice}>
       <Text style={styles.noticeTitle}>서버에 저장된 성향 결과를 반영했어요</Text>
       <Text style={styles.noticeText}>여행방 응답에는 멤버별 성향 유형 스냅샷만 포함돼요. 세부 문항 축을 임의로 복원하지 않고, 완료 여부와 유형만 표시합니다.</Text>
     </Card>
+    </View>
 
-    <SectionBlock><TripTodoSection
+    <TripPlanningSection trip={data.room} candidates={data.candidates} placesById={data.placesById} usersById={data.usersById} itinerary={data.itinerary} onExplore={explore} onWorkspace={openWorkspace} />
+    <DuriAnalysisCard state={duriState} onPress={duriState.kind === "no-itinerary" ? openWorkspace : openAnalysis} />
+
+    <View style={styles.recordsSection}><Text style={styles.sectionHeading}>여행 기록</Text><Card style={styles.recordsCard}><TripTodoSection
       tripId={tripId}
       currentUserId={currentUserId}
       members={data.preferenceSummary.members.map((member) => ({ userId: member.userId, name: member.name }))}
@@ -86,25 +103,20 @@ export function ApiTripDetailContent({ tripId, created }: { tripId: string; crea
       tripStartDate={data.room.startDate}
       tripEndDate={data.room.endDate}
       readOnly={completed}
-    /></SectionBlock>
-    <SectionBlock><CandidateSummaryCard trip={data.room} candidates={data.candidates} placesById={data.placesById} usersById={data.usersById} itinerary={data.itinerary} onExplore={explore} onWorkspace={openWorkspace} /></SectionBlock>
-    <SectionBlock><ItinerarySummaryCard trip={data.room} itinerary={data.itinerary} placesById={data.placesById} onWorkspace={openWorkspace} /></SectionBlock>
-    <SectionBlock><DuriAnalysisCard itineraryCount={data.itinerary.length} onWorkspace={openWorkspace} /></SectionBlock>
+      compact
+    /></Card></View>
 
     <TripInviteManagerModal visible={inviteOpen} trip={data.room} onClose={() => setInviteOpen(false)} />
-  </Screen>;
-}
-
-function SectionBlock({ children }: { children: React.ReactNode }) {
-  return <View style={styles.section}>{children}</View>;
+  </View></Screen>;
 }
 
 const styles = StyleSheet.create({
+  page: { flex: 1, backgroundColor: "#FFFFFF", paddingHorizontal: 20, paddingBottom: 88 },
   successBanner: { gap: spacing.xxs, padding: spacing.md, borderRadius: 16, backgroundColor: colors.successSoft, marginTop: spacing.md },
   successTitle: { ...typography.bodyStrong, color: colors.success },
   successText: { ...typography.caption, color: colors.textSecondary },
-  section: { marginTop: spacing.xl },
-  contractNotice: { gap: spacing.xs },
+  preferenceSection: { marginTop: 26 }, recordsSection: { marginTop: 26 }, sectionHeading: { color: "#17265F", fontSize: 19, lineHeight: 25, fontWeight: "800" }, recordsCard: { gap: 0, marginTop: 12, borderColor: "#DCE7F7", paddingHorizontal: 16, paddingVertical: 6 },
+  contractNotice: { gap: spacing.xs, marginTop: 10, borderColor: "#DCE7F7" },
   noticeTitle: { ...typography.bodyStrong, color: colors.text },
   noticeText: { ...typography.body, color: colors.textSecondary },
 });

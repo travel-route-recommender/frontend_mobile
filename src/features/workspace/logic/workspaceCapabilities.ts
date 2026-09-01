@@ -2,6 +2,12 @@ import type { ItineraryItem, TripCandidate, TripRoom } from "../../../domain";
 import type { SessionKind } from "../../auth/types";
 
 export type WorkspaceCapabilityDecision = { allowed: true } | { allowed: false; reason: string };
+export type WorkspaceMutationPermissions = {
+  canAddSchedule: boolean;
+  canEditSchedule: boolean;
+  canDeleteSchedule: boolean;
+  canEditTripStructure: boolean;
+};
 
 export function canEditTripWorkspace({
   sessionKind,
@@ -17,6 +23,23 @@ export function canEditTripWorkspace({
   if (!currentUserId || !trip.members.some((member) => member.userId === currentUserId)) return { allowed: false, reason: "이 여행방의 편집 권한이 없어요." };
   if (trip.status === "completed") return { allowed: false, reason: "완료된 여행방은 읽기 전용으로 볼 수 있어요." };
   return { allowed: true };
+}
+
+export function buildWorkspaceMutationPermissions(input: Parameters<typeof canEditTripWorkspace>[0]): {
+  permissions: WorkspaceMutationPermissions;
+  decision: WorkspaceCapabilityDecision;
+} {
+  const decision = canEditTripWorkspace(input);
+  const allowed = decision.allowed;
+  return {
+    decision,
+    permissions: {
+      canAddSchedule: allowed,
+      canEditSchedule: allowed,
+      canDeleteSchedule: allowed,
+      canEditTripStructure: allowed,
+    },
+  };
 }
 
 export function canEditItineraryItem(input: {

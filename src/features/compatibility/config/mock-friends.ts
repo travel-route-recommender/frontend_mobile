@@ -1,9 +1,20 @@
 import type { User } from "../../../domain";
+import { DEMO_MEMBER_ID } from "../../auth/config";
 
 export const MOCK_FRIEND_IDS = ["user-jiyoon", "user-minjae", "user-hyunho", "user-suhyeon"] as const;
 export const NEW_MOCK_FRIEND_IDS = ["user-hyunho", "user-suhyeon"] as const;
 
 export type MockFriendId = (typeof MOCK_FRIEND_IDS)[number];
+
+export const MOCK_SAVED_FRIEND_IDS_BY_USER_ID: Readonly<Record<string, readonly MockFriendId[]>> = {
+  [DEMO_MEMBER_ID]: MOCK_FRIEND_IDS,
+};
+
+const EMPTY_MOCK_FRIEND_IDS: readonly MockFriendId[] = [];
+
+export function getMockSavedFriendIds(userId: string) {
+  return MOCK_SAVED_FRIEND_IDS_BY_USER_ID[userId] ?? EMPTY_MOCK_FRIEND_IDS;
+}
 
 export const mockFriendProfiles: Record<MockFriendId, User> = {
   "user-jiyoon": { id: "user-jiyoon", name: "윤지", initial: "윤" },

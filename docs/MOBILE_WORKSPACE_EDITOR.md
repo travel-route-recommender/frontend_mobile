@@ -2,7 +2,7 @@
 
 ## 두리 분석·원자 적용 연결
 
-workspace 하단 `DuriAnalysisEntryCard`는 분석 전/중/current/stale/engine unavailable을 구분한다. CTA는 report route로 이동하며 진입만으로 분석하거나 일정을 수정하지 않는다. 적용 성공은 route parameter 기반 기존 feedback banner를 쓰고 첫 affected date를 선택한다.
+workspace 하단 `DuriAnalysisEntryCard`는 일정 없음/분석 전/current/stale/engine unavailable을 구분한다. 순수 resolver가 일정 없음이면 기존 일정 추가 흐름, 그 외에는 현재 report route를 선택한다. route 진입만으로 분석하거나 일정을 수정하지 않는다. 적용 성공은 route parameter 기반 기존 feedback banner를 쓰고 첫 affected date를 선택한다.
 
 수동 add/update/move/remove/reorder 후에는 full input fingerprint가 달라져 기존 session/suggestion이 자동 stale이 된다. 최종 일정의 유일한 기준은 계속 `itineraryByTripId`이고 candidate scheduled, TripHome 일정 수와 준비율은 기존 selector가 갱신한다.
 
@@ -22,7 +22,7 @@ workspace 하단 `DuriAnalysisEntryCard`는 분석 전/중/current/stale/engine 
 
 ## 3. scheduled 판정
 
-`buildCandidateScheduleLookup`이 itinerary의 `placeId -> date[]` lookup을 만든다. 선택 날짜에 일정이 있으면 `scheduled-on-selected-date`, 다른 날짜에만 있으면 `scheduled-on-other-date`, 없으면 `unscheduled`다. 현재 `TripCandidate`에는 scheduled 필드가 없으며, 향후 레거시 필드가 생겨도 실제 itinerary 관계를 우선한다.
+Explore·Place Detail·Saved와 Workspace는 `selectPlaceTripRelation`을 공통 원본으로 사용한다. 이 selector가 candidate 여부와 실제 itinerary 기반 `scheduledItems`, `scheduledCount`, scheduled 여부를 반환한다. Workspace는 그 결과의 날짜만 표시 상태로 투영해 선택 날짜에 일정이 있으면 `scheduled-on-selected-date`, 다른 날짜에만 있으면 `scheduled-on-other-date`, 없으면 `unscheduled`로 보여준다. 현재 `TripCandidate`에는 scheduled 필드가 없으며, 향후 레거시 필드가 생겨도 실제 itinerary 관계를 우선한다.
 
 ## 4. 여행 날짜 생성
 
@@ -42,7 +42,7 @@ workspace 하단 `DuriAnalysisEntryCard`는 분석 전/중/current/stale/engine 
 
 ## 8. 일정 추가 흐름
 
-후보 카드 또는 일정표의 일정 추가 버튼에서 미배치 후보를 선택한다. 편집 Modal에서 날짜, 시작·종료 시간, 메모와 여행방 문서함의 입장권·예약 문서를 선택한다. 마지막 DAY에는 종료 지점 이동·준비시간을 뺀 마지막 일정 종료 제한을 먼저 보여준다. 추가 예정 일정이 이 제한을 넘으면 Store transaction이 새 일정 전체를 거부하며 기존 일정을 자동으로 앞당기지 않는다. 그 밖의 여행방·멤버·후보·Place·날짜·시간·중복·충돌 검증을 통과한 뒤 item을 추가하고, 문서 링크 저장이 실패하면 일정 snapshot도 rollback한다. 같은 Place는 여행 전체 일정에 한 번만 배치한다. 문서 추가 Modal은 전체 safe-area를 높이 경계로 사용하고 긴 내용은 내부 ScrollView에서 확인한다.
+후보 카드 또는 일정표의 일정 추가 버튼에서 후보를 선택한다. 이미 배치된 후보도 기존 배치 날짜 보기 동작을 유지하면서 별도 `다른 시간에 추가` 경로로 다시 선택할 수 있다. 편집 Modal에서 날짜, 시작·종료 시간, 메모와 여행방 문서함의 입장권·예약 문서를 선택한다. 마지막 DAY에는 종료 지점 이동·준비시간을 뺀 마지막 일정 종료 제한을 먼저 보여준다. 추가 예정 일정이 이 제한을 넘으면 Store transaction이 새 일정 전체를 거부하며 기존 일정을 자동으로 앞당기지 않는다. 그 밖의 여행방·멤버·후보·Place·날짜·시간·충돌 검증을 통과한 뒤 항상 새 item ID를 추가하고, 문서 링크 저장이 실패하면 일정 snapshot도 rollback한다. 같은 Place는 여행 전체 일정에 여러 번 배치할 수 있으며 기존 item을 덮어쓰지 않는다. 문서 추가 Modal은 전체 safe-area를 높이 경계로 사용하고 긴 내용은 내부 ScrollView에서 확인한다.
 
 ## 9. 시간 저장 형식
 
@@ -74,7 +74,7 @@ Edit Modal에서 날짜, 시작·종료 시간, note와 연결 문서를 변경�
 
 ## 16. 편집 권한
 
-member와 초대 guest는 자신이 참여한 진행 여행방을 편집할 수 있다. anonymous와 비멤버는 접근할 수 없고, 완료 여행방은 읽기 전용이다. UI 비활성화뿐 아니라 모든 Store action이 trip 존재, 완료 상태, membership을 다시 검증한다.
+member와 초대 guest는 자신이 참여한 진행 여행방을 편집할 수 있다. anonymous와 비멤버는 접근할 수 없고, 완료 여행방은 읽기 전용이다. 공통 mutation permission은 Add·Duplicate Add·Drag·Resize·Edit Save·Delete·DAY·날짜·여행 조건 변경을 모두 차단하며 각 화면 handler와 Store/API draft 경계가 다시 검증한다. DAY 전환·스크롤·후보/일정 상세·기존 분석 결과 열람은 유지한다.
 
 ## 17. 데이터 모드
 
@@ -98,7 +98,7 @@ PanResponder 기반 일정 이동·resize, DAY 스와이프, 후보 보드 높�
 
 ## 21. 두리 분석·제안 연결
 
-현재 화면은 itinerary가 있으면 독립 Duri report route로 이동한다. report에서 local 분석과 제안을 명시적으로 실행하며, 제안 상세는 before/after/diff, stale fingerprint, 적용 확인과 Zustand 단일 update 기반 atomic apply를 제공한다. 분석과 제안 적용 범위는 현재 선택한 DAY에 제한되지 않고 전체 여행 일정이다. 다음 단계는 server Duri와 Schedule batch 계약, 실제 Directions 입력이다.
+`resolveDuriWorkspaceAction`은 일정 0개 → `일정 먼저 만들기`, 일정 있음·분석 없음 → `DURI 분석하기`, valid 분석 → `분석 결과 보기`, stale 분석 → `다시 분석하기` 순서로 결정한다. 일정 0개는 분석 route 대신 기존 후보 선택 흐름을 열고, 나머지는 독립 Duri report route로 이동한다. stale은 분석 snapshot의 `inputFingerprint`와 현재 전체 입력 fingerprint 비교만 사용한다. report에서 local 분석과 제안을 명시적으로 실행하며, 제안 상세는 before/after/diff, stale fingerprint, 적용 확인과 Zustand 단일 update 기반 atomic apply를 제공한다. 분석과 제안 적용 범위는 현재 선택한 DAY에 제한되지 않고 전체 여행 일정이다. 다음 단계는 server Duri와 Schedule batch 계약, 실제 Directions 입력이다.
 
 ## 22. Schedule API mapper 대기
 

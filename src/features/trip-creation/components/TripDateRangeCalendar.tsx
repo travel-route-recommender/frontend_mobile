@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
+import { createTripColors } from "../presentation/createTripTheme";
 import {
   buildCalendarMonth,
   formatCalendarMonth,
@@ -52,21 +53,21 @@ export function TripDateRangeCalendar({ startDate, endDate, disabled = false, on
 }
 
 const styles = StyleSheet.create({
-  calendar: { gap: spacing.sm, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, backgroundColor: colors.surface, padding: spacing.md },
+  calendar: { gap: spacing.xs, borderWidth: 1, borderColor: createTripColors.border, borderRadius: 18, backgroundColor: createTripColors.page, padding: spacing.sm },
   disabled: { opacity: 0.45 },
   monthHeader: { minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  monthButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center", borderRadius: radius.pill, backgroundColor: colors.primarySoft },
-  monthButtonText: { fontSize: 28, lineHeight: 30, color: colors.primary },
-  monthTitle: { ...typography.subtitle, color: colors.text },
+  monthButton: { width: 40, height: 40, alignItems: "center", justifyContent: "center", borderRadius: radius.pill, backgroundColor: createTripColors.blueSurface },
+  monthButtonText: { fontSize: 26, lineHeight: 28, color: colors.primary },
+  monthTitle: { ...typography.subtitle, color: createTripColors.text },
   weekRow: { flexDirection: "row" },
-  weekday: { width: `${100 / 7}%`, textAlign: "center", ...typography.caption, color: colors.textSecondary },
+  weekday: { width: `${100 / 7}%`, textAlign: "center", ...typography.caption, color: createTripColors.secondary },
   dayGrid: { flexDirection: "row", flexWrap: "wrap" },
-  dayCell: { width: `${100 / 7}%`, height: 42, alignItems: "center", justifyContent: "center", borderRadius: radius.sm },
+  dayCell: { width: `${100 / 7}%`, height: 38, alignItems: "center", justifyContent: "center", borderRadius: radius.sm },
   rangeDay: { backgroundColor: colors.primarySoft },
   selectedDay: { backgroundColor: colors.primary },
-  dayText: { ...typography.body, color: colors.text },
+  dayText: { fontSize: 13, lineHeight: 18, fontWeight: "600", color: createTripColors.text },
   selectedDayText: { color: colors.white, fontWeight: "800" },
   sunday: { color: colors.danger },
   pressed: { opacity: 0.75 },
-  guide: { ...typography.caption, color: colors.textSecondary, textAlign: "center" },
+  guide: { ...typography.caption, color: createTripColors.secondary, textAlign: "center" },
 });
