@@ -3,6 +3,7 @@ import type { Place } from "../../../domain";
 import type { ScheduleChangePreview, ScheduleChangeState } from "../../../duri/duri-suggestions";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import { getEndTime } from "../../../utils/schedule";
+import { DuriKoreanText } from "./DuriKoreanText";
 
 const actionLabel = { add: "추가", remove: "삭제", move: "이동", resize: "시간 변경", replace: "장소 대체" } as const;
 
@@ -16,8 +17,8 @@ function stateLabel(state: ScheduleChangeState | undefined, placesById: Record<s
 export function SuggestionChangeCard({ change, placesById }: { change: ScheduleChangePreview; placesById: Record<string, Place> }) {
   return <View accessibilityLabel={`${actionLabel[change.action]}. 변경 전 ${stateLabel(change.before, placesById)}. 변경 후 ${stateLabel(change.after, placesById)}`} style={styles.card}>
     <Text style={styles.action}>{actionLabel[change.action]}</Text>
-    <View style={styles.state}><Text style={styles.label}>변경 전</Text><Text style={styles.value}>{stateLabel(change.before, placesById)}</Text></View>
-    <View style={styles.state}><Text style={styles.label}>변경 후</Text><Text style={styles.value}>{stateLabel(change.after, placesById)}</Text></View>
+    <View style={styles.state}><Text style={styles.label}>변경 전</Text><DuriKoreanText style={styles.value}>{stateLabel(change.before, placesById)}</DuriKoreanText></View>
+    <View style={styles.state}><Text style={styles.label}>변경 후</Text><DuriKoreanText style={styles.value}>{stateLabel(change.after, placesById)}</DuriKoreanText></View>
   </View>;
 }
 

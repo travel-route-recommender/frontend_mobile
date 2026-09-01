@@ -1,5 +1,6 @@
-import { createMockTravelPreferenceResults } from "../src/features/preferences/config/mock-travel-preference-results";
+import { createMockTravelPreferenceResults, getMockTravelPreferenceResult } from "../src/features/preferences/config/mock-travel-preference-results";
 import { MOCK_FRIEND_IDS, mockFriendProfiles } from "../src/features/compatibility/config/mock-friends";
+import { DEMO_MEMBER_ID } from "../src/features/auth/config";
 import {
   calculateLegacyPreferenceProjection,
   calculateTravelPreferenceSurveyResult,
@@ -20,6 +21,16 @@ import {
   calculateFriendCompatibility,
   getCompatibilityType,
 } from "../src/features/compatibility/logic/calculate-friend-compatibility";
+import { resolveSavedFriendIds } from "../src/features/compatibility/logic/resolve-saved-friend-ids";
+import { resolvePreferencePresentation } from "../src/features/preferences/logic/resolve-preference-presentation";
+import { resolvePreferenceResultPair } from "../src/features/preferences/logic/resolve-preference-result-pair";
+import {
+  preferenceIndividualSelectionCount,
+  preferenceQuestionCount,
+  preferenceStoryQuestions,
+  resolvePreferenceScrollResetKey,
+  resolvePreferenceTestProgress,
+} from "../src/features/preferences/logic/resolve-preference-test-progress";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -37,6 +48,70 @@ assert(
     && mockFriendProfiles["user-jiyoon"].name === "윤지"
     && mockFriendProfiles["user-minjae"].name === "민석",
   "1. 윤지·민석·현호·수현의 프로필과 상세 결과가 준비되어야 한다",
+);
+const soominLegacyResult = calculateLegacyPreferenceProjection(soomin.userId, soomin.answers, soomin.completedAt);
+const canonicalPresentation = resolvePreferencePresentation(soominLegacyResult, {
+  challengeStyle: soomin.challengeStylePreference,
+  scheduleStyle: soomin.scheduleStylePreference,
+});
+assert(
+  canonicalPresentation.title === `${soomin.scheduleStylePreference.modifier} ${soomin.challengeStylePreference.label}`
+    && canonicalPresentation.traits.length === 3,
+  "1-1. My Page와 개인 결과는 상세 도전 유형 및 일정 수식어를 반영한 같은 표시 모델을 사용해야 한다",
+);
+assert(
+  canonicalPresentation.preferredTags.join(",") === soominLegacyResult.preferredTags.join(",")
+    && canonicalPresentation.keywordCount === canonicalPresentation.preferredTags.length,
+  "1-2. 취향 키워드 수와 칩은 같은 preferredTags 배열에서 파생되어야 한다",
+);
+const legacyOnlyPresentation = resolvePreferencePresentation(soominLegacyResult);
+assert(
+  legacyOnlyPresentation.title === soominLegacyResult.profileType
+    && legacyOnlyPresentation.traits.join(",") === soominLegacyResult.traits.join(","),
+  "1-3. 상세 결과가 없을 때는 기존 저장 결과의 표시 규칙을 유지해야 한다",
+);
+const coherentPairA = resolvePreferenceResultPair(soominLegacyResult, soomin, soomin.userId);
+assert(
+  coherentPairA.detailedResult === soomin
+    && coherentPairA.completedAt === soomin.completedAt
+    && coherentPairA.canonicalPresentation.title === canonicalPresentation.title,
+  "1-3a. canonical A와 detailed A는 하나의 coherent result pair로 해석되어야 한다",
+);
+const completedAtB = "2026-08-30T12:00:00.000Z";
+const detailedResultB = calculateTravelPreferenceSurveyResult(soomin.userId, {
+  ...soomin.answers,
+  challengeStyleAnswers: { i18: 1, i48: 5, i22: 1, i52: 1, i90: 1, i120: 1 },
+}, completedAtB);
+const canonicalResultB = calculateLegacyPreferenceProjection(soomin.userId, detailedResultB.answers, completedAtB);
+const coherentPairB = resolvePreferenceResultPair(canonicalResultB, [soomin, detailedResultB], soomin.userId);
+assert(
+  coherentPairB.detailedResult === detailedResultB
+    && coherentPairB.canonicalPresentation.title.includes(detailedResultB.challengeStylePreference.label),
+  "1-3b. 재검사 B 완료 후에는 canonical B와 detailed B를 선택하고 과거 detailed A를 붙이지 않아야 한다",
+);
+const fallbackPairB = resolvePreferenceResultPair(canonicalResultB, [soomin], soomin.userId);
+assert(
+  fallbackPairB.detailedResult === null
+    && fallbackPairB.canonicalPresentation.title === canonicalResultB.profileType
+    && !fallbackPairB.canonicalPresentation.title.includes(soomin.challengeStylePreference.label),
+  "1-3c. canonical B에 matching detailed B가 없으면 과거 detailed A를 버리고 legacy canonical fallback을 사용해야 한다",
+);
+assert(
+  resolvePreferenceResultPair(canonicalResultB, [{ ...detailedResultB, userId: "other-user" }], soomin.userId).detailedResult === null,
+  "1-3d. 완료 시각이 같아도 owner가 다르면 같은 result pair가 아니어야 한다",
+);
+assert(
+  resolveSavedFriendIds({}, DEMO_MEMBER_ID).join(",") === MOCK_FRIEND_IDS.join(","),
+  "1-4. 데모 친구 fixture는 정확한 데모 회원 ID에만 연결되어야 한다",
+);
+assert(
+  resolveSavedFriendIds({}, "newly-created-member").length === 0
+    && resolveSavedFriendIds({ [DEMO_MEMBER_ID]: [] }, DEMO_MEMBER_ID).length === 0,
+  "1-5. 신규 회원에게 친구를 자동 생성하지 않고 명시적으로 저장한 빈 목록도 보존해야 한다",
+);
+assert(
+  getMockTravelPreferenceResult("newly-created-member") === null,
+  "1-6. 신규 회원에게 완료하지 않은 여행 성향 결과를 fixture로 자동 생성하지 않아야 한다",
 );
 assert(
   soomin.spendingPriority.ranking.join(",") === "food,stay,activity,mobility,shopping"
@@ -264,6 +339,36 @@ assert(
     && !preferenceSteps.some((step) => step.id === "mobility" || step.id === "adventure"),
   "32. 메시지 질문은 하나로 통합되고 이동수단과 중복 도전 문항 없이 5개 단계로 이어져야 한다",
 );
+const chapterOneFirst = resolvePreferenceTestProgress({ answers: {}, chapterIndex: 0, stepId: "challengeStyle", storyQuestionIndex: 0 });
+const chapterOneFinal = resolvePreferenceTestProgress({ answers: {}, chapterIndex: 0, stepId: "challengeStyle", storyQuestionIndex: preferenceStoryQuestions.length - 1 });
+const chapterTwoSecond = resolvePreferenceTestProgress({ answers: { accommodation: { stayMeaning: 4 } }, chapterIndex: 1, stepId: "accommodation" });
+const chapterFiveFirst = resolvePreferenceTestProgress({ answers: {}, chapterIndex: 4, stepId: "discovery" });
+const chapterFiveFinal = resolvePreferenceTestProgress({ answers: { landmarkImportance: 3 }, chapterIndex: 4, stepId: "discovery" });
+assert(
+  preferenceStoryQuestions.length === 15
+    && preferenceQuestionCount === 22
+    && preferenceIndividualSelectionCount === 26
+    && chapterOneFirst.chapterLabel === "챕터 1 / 5"
+    && chapterOneFirst.innerProgressLabel === "질문 1 / 15"
+    && chapterOneFinal.innerProgressLabel === "질문 15 / 15"
+    && chapterTwoSecond.innerProgressLabel === "숙소 기준 2 / 3"
+    && chapterFiveFirst.innerProgressLabel === "선택 1 / 2"
+    && chapterFiveFinal.innerProgressLabel === "선택 2 / 2"
+    && chapterFiveFinal.isFinalAtomicItem,
+  "32-1. 상세 테스트 규모는 source에서 5개 챕터·22개 질문·26개 선택으로 계산되고 각 챕터의 atomic 진행률을 함께 표현해야 한다",
+);
+const storyFirstKey = resolvePreferenceScrollResetKey({ answers: {}, stepId: "challengeStyle", storyQuestionIndex: 0 });
+const storySecondKey = resolvePreferenceScrollResetKey({ answers: {}, stepId: "challengeStyle", storyQuestionIndex: 1 });
+assert(
+  storyFirstKey !== storySecondKey
+    && resolvePreferenceScrollResetKey({ answers: {}, stepId: "accommodation" })
+      === resolvePreferenceScrollResetKey({ answers: { accommodation: { stayMeaning: 4 } }, stepId: "accommodation" })
+    && resolvePreferenceScrollResetKey({ answers: {}, stepId: "accommodation" })
+      !== resolvePreferenceScrollResetKey({ answers: {}, stepId: "stamina" })
+    && resolvePreferenceScrollResetKey({ answers: {}, stepId: "budget" })
+      !== resolvePreferenceScrollResetKey({ answers: { budgetRanking: ["stay"] }, stepId: "budget" }),
+  "32-2. Next·Previous·chapter·예산 inner transition은 scroll key를 바꾸고 같은 화면의 단순 선택은 유지해야 한다",
+);
 const withoutLegacyAdventure = { ...soomin.answers, adventure: undefined };
 const derivedChallengeResult = calculateTravelPreferenceSurveyResult("derived-challenge", withoutLegacyAdventure, "2026-08-03T00:00:00.000Z");
 assert(
@@ -271,4 +376,4 @@ assert(
   "33. 예전 도전 문항이 없으면 6문항 모델의 탐색 점수로 호환 필드를 채워야 한다",
 );
 
-console.log("Preference and compatibility verification passed: 37 assertions");
+console.log("Preference and compatibility verification passed: 50 assertions");

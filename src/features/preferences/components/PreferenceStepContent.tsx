@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
+import { DuriKoreanText } from "../../duri/components/DuriKoreanText";
+import { getPreferenceStoryCharacter } from "../assets/preference-character-assets";
 import {
   accommodationAxes,
   accommodationScaleValues,
@@ -11,8 +13,7 @@ import {
   mobilitySections,
   staminaOptions,
 } from "../config/travel-preference-test-config";
-import { challengeStyleQuestions } from "../config/challenge-style-questions";
-import { itineraryMessageQuestions } from "../config/itinerary-message-questions";
+import { preferenceStoryQuestions } from "../logic/resolve-preference-test-progress";
 import { getBudgetRanking } from "../logic/travel-preference-survey";
 import type {
   AccommodationScaleValue,
@@ -32,14 +33,16 @@ type Props = {
   stepId: PreferenceStepId;
   answers: PersonalPreferenceDraftAnswers;
   onChange: (patch: Partial<PersonalPreferenceDraftAnswers>) => void;
-  onComplete?: () => void;
+  storyQuestionIndex: number;
 };
 
-export function PreferenceStepContent({ stepId, answers, onChange, onComplete }: Props) {
+type StepInputProps = Pick<Props, "answers" | "onChange">;
+
+export function PreferenceStepContent({ stepId, answers, onChange, storyQuestionIndex }: Props) {
   switch (stepId) {
     case "challengeStyle":
     case "itinerary":
-      return <StoryPreferenceStep answers={answers} onChange={onChange} onComplete={onComplete} />;
+      return <StoryPreferenceStep answers={answers} onChange={onChange} storyQuestionIndex={storyQuestionIndex} />;
     case "mobility": return <MobilityStep answers={answers} onChange={onChange} />;
     case "accommodation": return <AccommodationStep answers={answers} onChange={onChange} />;
     case "adventure": return <AdventureStep answers={answers} onChange={onChange} />;
@@ -49,30 +52,17 @@ export function PreferenceStepContent({ stepId, answers, onChange, onComplete }:
   }
 }
 
-const storyQuestions = [
-  ...challengeStyleQuestions.map((question) => ({ kind: "challenge" as const, question })),
-  ...itineraryMessageQuestions.map((question) => ({ kind: "itinerary" as const, question })),
-] as const;
-
-function getFirstUnansweredStoryIndex(answers: PersonalPreferenceDraftAnswers) {
-  const index = storyQuestions.findIndex((entry) => entry.kind === "challenge"
-    ? !answers.challengeStyleAnswers?.[entry.question.id]
-    : !answers.itineraryMessageAnswers?.[entry.question.id]);
-  return index < 0 ? storyQuestions.length - 1 : index;
-}
-
-function StoryPreferenceStep({ answers, onChange, onComplete }: Omit<Props, "stepId">) {
-  const [questionIndex, setQuestionIndex] = useState(() => getFirstUnansweredStoryIndex(answers));
-  const entry = storyQuestions[questionIndex];
+function StoryPreferenceStep({ answers, onChange, storyQuestionIndex }: Pick<Props, "answers" | "onChange" | "storyQuestionIndex">) {
+  const questionIndex = Math.max(0, Math.min(storyQuestionIndex, preferenceStoryQuestions.length - 1));
+  const entry = preferenceStoryQuestions[questionIndex];
   const navigationProps = {
     current: questionIndex + 1,
-    onNext: questionIndex < storyQuestions.length - 1 ? () => setQuestionIndex(questionIndex + 1) : onComplete,
-    onPrevious: questionIndex > 0 ? () => setQuestionIndex(questionIndex - 1) : undefined,
-    total: storyQuestions.length,
+    total: preferenceStoryQuestions.length,
   };
 
   if (entry.kind === "challenge") {
     const question = entry.question;
+    const character = getPreferenceStoryCharacter(question.id);
     const selectOption = (value: FivePointScaleValue) => onChange({
       challengeStyleAnswers: {
         ...answers.challengeStyleAnswers,
@@ -87,11 +77,12 @@ function StoryPreferenceStep({ answers, onChange, onComplete }: Omit<Props, "ste
       selectedOptionId: answers.challengeStyleAnswers?.[question.id],
     };
     return question.presentation.kind === "chat"
-      ? <PreferenceMessageQuestion {...questionProps} senderName={question.senderName} senderStatus={question.senderStatus} />
-      : <PreferenceSceneQuestion {...questionProps} presentation={question.presentation} />;
+      ? <PreferenceMessageQuestion {...questionProps} character={character} senderName={character.name} senderStatus={question.senderStatus} />
+      : <PreferenceSceneQuestion {...questionProps} character={character} presentation={question.presentation} />;
   }
 
   const question = entry.question;
+  const character = getPreferenceStoryCharacter(question.id);
   const selectOption = (level: ItineraryPreferenceLevel) => onChange({
     itineraryMessageAnswers: {
       ...answers.itineraryMessageAnswers,
@@ -106,11 +97,11 @@ function StoryPreferenceStep({ answers, onChange, onComplete }: Omit<Props, "ste
     selectedOptionId: answers.itineraryMessageAnswers?.[question.id],
   };
   return question.presentation.kind === "chat"
-    ? <PreferenceMessageQuestion {...questionProps} senderName={question.senderName} senderStatus={question.senderStatus} />
-    : <PreferenceSceneQuestion {...questionProps} presentation={question.presentation} />;
+    ? <PreferenceMessageQuestion {...questionProps} character={character} senderName={character.name} senderStatus={question.senderStatus} />
+    : <PreferenceSceneQuestion {...questionProps} character={character} presentation={question.presentation} />;
 }
 
-function MobilityStep({ answers, onChange }: Omit<Props, "stepId">) {
+function MobilityStep({ answers, onChange }: StepInputProps) {
   const selected = answers.mobilityModes ?? [];
   const [expandedSections, setExpandedSections] = useState<("car" | "transit")[]>(() => mobilitySections.filter((section) => section.options.some((option) => selected.includes(option.id))).map((section) => section.id));
   const toggleMode = (mode: MobilityMode) => onChange({ mobilityModes: selected.includes(mode) ? selected.filter((entry) => entry !== mode) : [...selected, mode] });
@@ -141,7 +132,7 @@ function MobilityStep({ answers, onChange }: Omit<Props, "stepId">) {
 
 function ScaleSelector({ values, value, onChange, left, right, accessibilityLabel, largeLabels = false }: { values: readonly number[]; value?: number; onChange: (value: number) => void; left: string; right: string; accessibilityLabel: string; largeLabels?: boolean }) {
   return <View accessibilityRole="radiogroup" accessibilityLabel={accessibilityLabel} style={styles.scaleWrap}>
-    <View style={styles.scaleLabels}><Text style={[styles.scaleLabel, largeLabels && styles.scaleLabelLarge]}>{left}</Text><Text style={[styles.scaleLabel, styles.scaleLabelRight, largeLabels && styles.scaleLabelLarge]}>{right}</Text></View>
+    <View style={styles.scaleLabels}><DuriKoreanText style={[styles.scaleLabel, largeLabels && styles.scaleLabelLarge]}>{left}</DuriKoreanText><DuriKoreanText style={[styles.scaleLabel, styles.scaleLabelRight, largeLabels && styles.scaleLabelLarge]}>{right}</DuriKoreanText></View>
     <View style={styles.scaleButtons}>{values.map((score) => {
       const selected = score === value;
       return <Pressable key={score} accessibilityLabel={`${accessibilityLabel} ${score}단계`} accessibilityRole="radio" accessibilityState={{ selected }} onPress={() => onChange(score)} style={({ pressed }) => [styles.scaleButton, selected && styles.scaleButtonSelected, pressed && styles.pressed]}><Text style={[styles.scaleNumber, selected && styles.scaleNumberSelected]}>{score}</Text></Pressable>;
@@ -153,39 +144,39 @@ function SceneBanner({ icon, title, description }: { icon: string; title: string
   return <View style={styles.sceneBanner}>
     <Text style={styles.sceneIcon}>{icon}</Text>
     <View style={styles.sceneCopy}>
-      <Text style={styles.sceneTitle}>{title}</Text>
-      <Text style={styles.sceneDescription}>{description}</Text>
+      <DuriKoreanText style={styles.sceneTitle}>{title}</DuriKoreanText>
+      <DuriKoreanText style={styles.sceneDescription}>{description}</DuriKoreanText>
     </View>
   </View>;
 }
 
-function AccommodationStep({ answers, onChange }: Omit<Props, "stepId">) {
+function AccommodationStep({ answers, onChange }: StepInputProps) {
   return <View style={styles.axisList}>{accommodationAxes.map((axis) => <View key={axis.id} style={styles.axisCard}>
     <SceneBanner icon={axis.icon} title={axis.sceneTitle} description={axis.helper} />
     <View style={styles.pairedCards}>
-      <View style={styles.endpointCard}><Text style={styles.endpointLabel}>A</Text><Text style={styles.endpointTitle}>{axis.left}</Text><Text style={styles.endpointNote}>{axis.leftNote}</Text></View>
-      <View style={styles.endpointCard}><Text style={styles.endpointLabel}>B</Text><Text style={styles.endpointTitle}>{axis.right}</Text><Text style={styles.endpointNote}>{axis.rightNote}</Text></View>
+      <View style={styles.endpointCard}><Text style={styles.endpointLabel}>A</Text><DuriKoreanText style={styles.endpointTitle}>{axis.left}</DuriKoreanText><DuriKoreanText style={styles.endpointNote}>{axis.leftNote}</DuriKoreanText></View>
+      <View style={styles.endpointCard}><Text style={styles.endpointLabel}>B</Text><DuriKoreanText style={styles.endpointTitle}>{axis.right}</DuriKoreanText><DuriKoreanText style={styles.endpointNote}>{axis.rightNote}</DuriKoreanText></View>
     </View>
     <Text style={styles.degreePrompt}>어느 쪽에 얼마나 가까운가요?</Text>
     <ScaleSelector accessibilityLabel={axis.helper} left="A에 가까워요" right="B에 가까워요" values={accommodationScaleValues} value={answers.accommodation?.[axis.id]} onChange={(value) => onChange({ accommodation: { ...answers.accommodation, [axis.id]: value as AccommodationScaleValue } })} />
   </View>)}</View>;
 }
 
-function AdventureStep({ answers, onChange }: Omit<Props, "stepId">) {
+function AdventureStep({ answers, onChange }: StepInputProps) {
   return <View style={styles.sectionGap}><View style={styles.illustration}><Text style={styles.illustrationIcon}>🧭</Text><Text style={styles.illustrationText}>다른 여행자의 리뷰 수를 추천에 얼마나 반영할지 정하는 기준이 될 수 있어요.</Text></View><ScaleSelector accessibilityLabel="새로운 장소 도전 성향" largeLabels left="검증된 곳이 안심돼요" right="새로운 곳이 궁금해요" values={fourPointScaleValues} value={answers.adventure} onChange={(adventure) => onChange({ adventure: adventure as FourPointScaleValue })} /><View style={styles.scaleCaption}><Text style={styles.captionText}>리뷰와 평점 중시</Text><Text style={styles.captionText}>새로움과 발견 중시</Text></View></View>;
 }
 
-function StaminaStep({ answers, onChange }: Omit<Props, "stepId">) {
+function StaminaStep({ answers, onChange }: StepInputProps) {
   return <View style={styles.sectionGap}>
     <SceneBanner icon="🌇" title="아침부터 도시를 걷고 어느새 오후 5시" description="저녁 전에 보고 싶은 장소가 하나 더 남아 있어요. 평소의 나라면 어떻게 할까요?" />
     <View accessibilityRole="radiogroup" style={styles.optionList}>{staminaOptions.map((option) => {
     const selected = answers.stamina === option.id;
-    return <Pressable key={option.id} accessibilityRole="radio" accessibilityState={{ selected }} onPress={() => onChange({ stamina: option.id })} style={({ pressed }) => [styles.staminaOption, selected && styles.multiOptionSelected, pressed && styles.pressed]}><View style={[styles.radio, selected && styles.radioSelected]}>{selected ? <View style={styles.radioDot} /> : null}</View><View style={styles.optionCopy}><Text style={[styles.optionTitle, selected && styles.selectedText]}>{option.label}</Text><Text style={styles.optionDescription}>{option.description}</Text></View></Pressable>;
+    return <Pressable key={option.id} accessibilityRole="radio" accessibilityState={{ selected }} onPress={() => onChange({ stamina: option.id })} style={({ pressed }) => [styles.staminaOption, selected && styles.multiOptionSelected, pressed && styles.pressed]}><View style={[styles.radio, selected && styles.radioSelected]}>{selected ? <View style={styles.radioDot} /> : null}</View><View style={styles.optionCopy}><DuriKoreanText style={[styles.optionTitle, selected && styles.selectedText]}>{option.label}</DuriKoreanText><DuriKoreanText style={styles.optionDescription}>{option.description}</DuriKoreanText></View></Pressable>;
     })}</View>
   </View>;
 }
 
-function BudgetStep({ answers, onChange }: Omit<Props, "stepId">) {
+function BudgetStep({ answers, onChange }: StepInputProps) {
   const ranking = getBudgetRanking(answers);
   const remainingCategories = budgetCategories.filter((category) => !ranking.includes(category.id));
   const complete = ranking.length === budgetCategories.length;
@@ -205,24 +196,9 @@ function BudgetStep({ answers, onChange }: Omit<Props, "stepId">) {
 
   return <View style={styles.sectionGap}>
     <SceneBanner icon="👛" title="여행 예산의 순서를 정해요" description="많이 쓰고 싶은 항목부터 하나씩 고르면, 선택한 항목을 제외하고 다음 순위를 이어서 물어볼게요." />
-    <View
-      accessibilityLabel={`예산 우선순위 ${budgetCategories.length}개 중 ${ranking.length}개 선택`}
-      accessibilityRole="progressbar"
-      accessibilityValue={{ min: 0, max: budgetCategories.length, now: ranking.length }}
-      style={styles.budgetProgress}
-    >
-      <View style={styles.budgetProgressCopy}>
-        <Text style={styles.budgetProgressLabel}>우선순위 정하는 중</Text>
-        <Text selectable style={styles.budgetProgressValue}>{ranking.length} / {budgetCategories.length}</Text>
-      </View>
-      <View style={styles.budgetProgressTrack}>
-        <View style={[styles.budgetProgressFill, { width: `${(ranking.length / budgetCategories.length) * 100}%` }]} />
-      </View>
-    </View>
-
     {!complete ? <View style={styles.budgetQuestion}>
       <Text style={styles.budgetQuestionRank}>{ranking.length + 1}순위 선택</Text>
-      <Text accessibilityRole="header" selectable style={styles.budgetQuestionTitle}>{rankPrompts[ranking.length]}</Text>
+      <DuriKoreanText accessibilityRole="header" selectable style={styles.budgetQuestionTitle}>{rankPrompts[ranking.length]}</DuriKoreanText>
       <View accessibilityLabel={`${ranking.length + 1}순위 예산 항목`} accessibilityRole="radiogroup" style={styles.budgetList}>
         {remainingCategories.map((category) => <Pressable
           key={category.id}
@@ -265,7 +241,7 @@ function BudgetStep({ answers, onChange }: Omit<Props, "stepId">) {
   </View>;
 }
 
-function DiscoveryStep({ answers, onChange }: Omit<Props, "stepId">) {
+function DiscoveryStep({ answers, onChange }: StepInputProps) {
   return <View style={styles.axisList}>
     <SceneBanner icon="🧳" title="여행 가방에 두 칸이 남았어요" description="명소와 로컬은 서로 반대가 아니에요. 두 장면을 각각 얼마나 담고 싶은지 골라 주세요." />
     {discoveryScenes.map((scene) => {
@@ -276,7 +252,7 @@ function DiscoveryStep({ answers, onChange }: Omit<Props, "stepId">) {
       return <View key={scene.id} style={styles.axisCard}>
         <Text style={styles.discoveryIcon}>{scene.icon}</Text>
         <Text style={styles.subsectionTitle}>{scene.sceneTitle}</Text>
-        <Text style={styles.axisHelper}>{scene.description}</Text>
+        <DuriKoreanText style={styles.axisHelper}>{scene.description}</DuriKoreanText>
         <ScaleSelector accessibilityLabel={scene.sceneTitle} left={scene.left} right={scene.right} values={fourPointScaleValues} value={value} onChange={update} />
       </View>;
     })}
@@ -284,22 +260,16 @@ function DiscoveryStep({ answers, onChange }: Omit<Props, "stepId">) {
 }
 
 const styles = StyleSheet.create({
-  sectionGap: { gap: spacing.md },
-  footnote: { ...typography.caption, color: colors.textMuted }, optionList: { gap: spacing.sm }, multiOption: { minHeight: 78, flexDirection: "row", alignItems: "center", gap: spacing.md, borderWidth: 2, borderColor: colors.border, borderRadius: radius.lg, backgroundColor: colors.surface, padding: spacing.md }, multiOptionSelected: { borderColor: colors.primary, backgroundColor: colors.primarySoft }, pressed: { opacity: 0.84, transform: [{ scale: 0.99 }] }, optionIcon: { fontSize: 30 }, optionCopy: { flex: 1, minWidth: 0 }, optionTitle: { ...typography.bodyStrong, color: colors.text }, optionDescription: { ...typography.caption, color: colors.textSecondary, marginTop: spacing.xxs }, selectedText: { color: colors.primary },
-  mobilitySection: { borderWidth: 2, borderColor: colors.border, borderRadius: radius.lg, backgroundColor: colors.surface, overflow: "hidden" }, mobilityHeader: { minHeight: 78, flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md }, disclosure: { ...typography.subtitle, color: colors.primary }, mobilityChoices: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs, borderTopWidth: 1, borderTopColor: colors.border, padding: spacing.md, paddingTop: spacing.sm }, mobilityChoice: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: spacing.xs, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.surface, paddingHorizontal: spacing.sm }, mobilityChoiceSelected: { borderColor: colors.primary, backgroundColor: colors.primarySoft }, checkbox: { width: 24, height: 24, borderRadius: radius.sm, borderWidth: 2, borderColor: colors.borderStrong, alignItems: "center", justifyContent: "center" }, checkboxSelected: { borderColor: colors.primary, backgroundColor: colors.primary }, checkmark: { color: colors.white, fontWeight: "900" },
+  sectionGap: { gap: spacing.lg },
+  footnote: { ...typography.caption, color: colors.textMuted }, optionList: { gap: spacing.sm }, multiOption: { minHeight: 72, flexDirection: "row", alignItems: "center", gap: spacing.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.surface, padding: spacing.md }, multiOptionSelected: { borderWidth: 2, borderColor: colors.primary, backgroundColor: "#F2F8FF" }, pressed: { opacity: 0.84, transform: [{ scale: 0.99 }] }, optionIcon: { fontSize: 30 }, optionCopy: { flex: 1, minWidth: 0 }, optionTitle: { ...typography.bodyStrong, color: "#17265F" }, optionDescription: { ...typography.caption, color: colors.textSecondary, marginTop: spacing.xxs }, selectedText: { color: colors.primary },
+  mobilitySection: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.surface, overflow: "hidden" }, mobilityHeader: { minHeight: 72, flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md }, disclosure: { ...typography.subtitle, color: colors.primary }, mobilityChoices: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs, borderTopWidth: 1, borderTopColor: colors.border, padding: spacing.md, paddingTop: spacing.sm }, mobilityChoice: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: spacing.xs, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.surface, paddingHorizontal: spacing.sm }, mobilityChoiceSelected: { borderColor: colors.primary, backgroundColor: colors.primarySoft }, checkbox: { width: 24, height: 24, borderRadius: radius.sm, borderWidth: 2, borderColor: colors.borderStrong, alignItems: "center", justifyContent: "center" }, checkboxSelected: { borderColor: colors.primary, backgroundColor: colors.primary }, checkmark: { color: colors.white, fontWeight: "900" },
   scaleWrap: { gap: spacing.sm }, scaleLabels: { flexDirection: "row", justifyContent: "space-between", gap: spacing.md }, scaleLabel: { ...typography.caption, color: colors.text, flex: 1 }, scaleLabelLarge: { fontSize: 16, lineHeight: 22, fontWeight: "700" }, scaleLabelRight: { textAlign: "right" }, scaleButtons: { flexDirection: "row", gap: spacing.xxs }, scaleButton: { flex: 1, minWidth: 0, minHeight: 44, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center" }, scaleButtonSelected: { borderWidth: 2, borderColor: colors.primary, backgroundColor: colors.primary }, scaleNumber: { fontSize: 13, lineHeight: 18, fontWeight: "700", color: colors.textSecondary, fontVariant: ["tabular-nums"] }, scaleNumberSelected: { color: colors.white },
-  axisList: { gap: spacing.md }, axisCard: { gap: spacing.sm, borderRadius: radius.md, backgroundColor: colors.surfaceMuted, padding: spacing.md }, axisHelper: { ...typography.caption, color: colors.textSecondary }, sceneBanner: { flexDirection: "row", alignItems: "center", gap: spacing.md, borderRadius: radius.md, backgroundColor: colors.background, padding: spacing.md }, sceneIcon: { fontSize: 34 }, sceneCopy: { flex: 1, minWidth: 0, gap: spacing.xxs }, sceneTitle: { ...typography.bodyStrong, color: colors.text }, sceneDescription: { ...typography.caption, color: colors.textSecondary }, pairedCards: { flexDirection: "row", gap: spacing.sm }, endpointCard: { flex: 1, minWidth: 0, gap: spacing.xs, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.surface, padding: spacing.sm }, endpointLabel: { ...typography.caption, color: colors.primary }, endpointTitle: { ...typography.bodyStrong, color: colors.text }, endpointNote: { ...typography.caption, color: colors.textMuted }, degreePrompt: { ...typography.caption, color: colors.textSecondary, textAlign: "center" }, illustration: { flexDirection: "row", alignItems: "center", gap: spacing.md, borderRadius: radius.md, backgroundColor: colors.background, padding: spacing.md }, illustrationIcon: { fontSize: 32 }, illustrationText: { ...typography.body, color: colors.textSecondary, flex: 1 }, scaleCaption: { flexDirection: "row", justifyContent: "space-between", gap: spacing.md }, captionText: { ...typography.caption, color: colors.textMuted }, subsectionTitle: { ...typography.bodyStrong, color: colors.text }, choiceChipText: { ...typography.bodyStrong, color: colors.textSecondary }, staminaOption: { minHeight: 72, flexDirection: "row", alignItems: "center", gap: spacing.sm, borderWidth: 2, borderColor: colors.border, borderRadius: radius.lg, padding: spacing.md }, radio: { width: 24, height: 24, borderRadius: radius.pill, borderWidth: 2, borderColor: colors.borderStrong, alignItems: "center", justifyContent: "center" }, radioSelected: { borderColor: colors.primary }, radioDot: { width: 12, height: 12, borderRadius: radius.pill, backgroundColor: colors.primary },
-  budgetProgress: { gap: spacing.sm, borderRadius: radius.md, backgroundColor: colors.primarySoft, padding: spacing.md },
-  budgetProgressCopy: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm },
-  budgetProgressLabel: { ...typography.caption, color: colors.textSecondary },
-  budgetProgressValue: { ...typography.subtitle, color: colors.primary, fontVariant: ["tabular-nums"] },
-  budgetProgressTrack: { height: 8, overflow: "hidden", borderRadius: radius.pill, backgroundColor: colors.surface },
-  budgetProgressFill: { height: "100%", borderRadius: radius.pill, backgroundColor: colors.primary },
+  axisList: { gap: spacing.md }, axisCard: { gap: spacing.md, borderWidth: 1, borderColor: colors.border, borderRadius: 18, backgroundColor: colors.surface, padding: spacing.md }, axisHelper: { ...typography.caption, color: colors.textSecondary }, sceneBanner: { flexDirection: "row", alignItems: "center", gap: spacing.md, borderWidth: 1, borderColor: "#D9D5FF", borderRadius: radius.md, backgroundColor: "#F3F1FF", padding: spacing.md }, sceneIcon: { fontSize: 30 }, sceneCopy: { flex: 1, minWidth: 0, gap: spacing.xxs }, sceneTitle: { ...typography.bodyStrong, color: "#17265F" }, sceneDescription: { ...typography.caption, color: colors.textSecondary }, pairedCards: { flexDirection: "row", gap: spacing.sm }, endpointCard: { flex: 1, minWidth: 0, gap: spacing.xs, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: "#F7FAFF", padding: spacing.sm }, endpointLabel: { ...typography.caption, color: colors.primary }, endpointTitle: { ...typography.bodyStrong, color: "#17265F" }, endpointNote: { ...typography.caption, color: colors.textMuted }, degreePrompt: { ...typography.caption, color: colors.textSecondary, textAlign: "center" }, illustration: { flexDirection: "row", alignItems: "center", gap: spacing.md, borderRadius: radius.md, backgroundColor: "#F3F1FF", padding: spacing.md }, illustrationIcon: { fontSize: 32 }, illustrationText: { ...typography.body, color: colors.textSecondary, flex: 1 }, scaleCaption: { flexDirection: "row", justifyContent: "space-between", gap: spacing.md }, captionText: { ...typography.caption, color: colors.textMuted }, subsectionTitle: { ...typography.bodyStrong, color: "#17265F" }, choiceChipText: { ...typography.bodyStrong, color: colors.textSecondary }, staminaOption: { minHeight: 72, flexDirection: "row", alignItems: "center", gap: spacing.sm, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.surface, padding: spacing.md }, radio: { width: 24, height: 24, borderRadius: radius.pill, borderWidth: 2, borderColor: colors.borderStrong, alignItems: "center", justifyContent: "center" }, radioSelected: { borderColor: colors.primary }, radioDot: { width: 12, height: 12, borderRadius: radius.pill, backgroundColor: colors.primary },
   budgetQuestion: { gap: spacing.sm },
   budgetQuestionRank: { ...typography.caption, color: colors.primary },
   budgetQuestionTitle: { ...typography.subtitle, color: colors.text },
   budgetList: { gap: spacing.xs },
-  budgetChoice: { minHeight: 70, flexDirection: "row", alignItems: "center", gap: spacing.sm, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.surfaceMuted, padding: spacing.sm },
+  budgetChoice: { minHeight: 70, flexDirection: "row", alignItems: "center", gap: spacing.sm, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.surface, padding: spacing.sm },
   budgetIcon: { fontSize: 24 },
   budgetCopy: { flex: 1, minWidth: 70 },
   budgetTitle: { ...typography.bodyStrong, color: colors.text },

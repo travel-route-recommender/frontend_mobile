@@ -2,11 +2,11 @@ import type { TripEndConditionType, TripTransport } from "../../domain";
 import type { CreateTripStep, TripCompanionType } from "./types";
 
 export const createTripSteps: readonly { id: CreateTripStep; title: string; description: string }[] = [
-  { id: 0, title: "어디로 떠날까요?", description: "함께 계획할 여행지를 선택해 주세요." },
+  { id: 0, title: "어디로 떠나볼까요?", description: "여행할 지역을 선택해 주세요." },
   { id: 1, title: "언제 떠날까요?", description: "시작일과 종료일을 차례로 선택해 주세요." },
-  { id: 2, title: "여행 조건을 알려주세요", description: "실제 이동 방식과 숙소, 마지막 날 종료 조건을 기록해요." },
-  { id: 3, title: "누구와 함께하나요?", description: "나는 방장으로 자동 포함돼요." },
-  { id: 4, title: "여행방을 확인해 주세요", description: "이름을 정하고 선택한 내용을 검토해요." },
+  { id: 2, title: "여행에 필요한 정보를 알려주세요.", description: "일정을 만들 때 참고할 실제 여행 정보를 기록해요." },
+  { id: 3, title: "누구와 함께하나요?", description: "동행 유형과 바로 함께할 친구를 선택해 주세요." },
+  { id: 4, title: "여행 정보를 확인해주세요.", description: "이대로 새로운 여행방을 만들게요." },
 ];
 
 export const transportOptions: readonly { value: TripTransport; label: string; description: string }[] = [

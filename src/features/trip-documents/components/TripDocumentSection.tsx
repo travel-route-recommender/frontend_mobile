@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from "react";
 import { Modal, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Card, SecondaryButton } from "../../../components/common";
@@ -14,19 +14,9 @@ import { TravelDocumentFactReviewModal } from "./TravelDocumentFactReviewModal";
 
 const EMPTY_DOCUMENTS: TravelDocument[] = [];
 
-export function TripDocumentSection({
-  tripId,
-  currentUserId,
-  itineraryItemIds,
-  readOnly = false,
-  isOwner = false,
-  tripStartDate,
-  tripEndDate,
-  itineraryItemLabelsById = {},
-  placeOptions = [],
-  allowCreateSchedule = true,
-  scheduleCreationUnavailableMessage,
-}: {
+export type TripDocumentSectionHandle = { openAdd(): void };
+
+type TripDocumentSectionProps = {
   tripId: string;
   currentUserId: string;
   itineraryItemIds: readonly string[];
@@ -38,11 +28,32 @@ export function TripDocumentSection({
   placeOptions?: readonly { id: string; label: string }[];
   allowCreateSchedule?: boolean;
   scheduleCreationUnavailableMessage?: string;
-}) {
+  compact?: boolean;
+  expanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
+};
+
+export const TripDocumentSection = forwardRef<TripDocumentSectionHandle, TripDocumentSectionProps>(function TripDocumentSection({
+  tripId,
+  currentUserId,
+  itineraryItemIds,
+  readOnly = false,
+  isOwner = false,
+  tripStartDate,
+  tripEndDate,
+  itineraryItemLabelsById = {},
+  placeOptions = [],
+  allowCreateSchedule = true,
+  scheduleCreationUnavailableMessage,
+  compact = false,
+  expanded: controlledExpanded,
+  onExpandedChange,
+}: TripDocumentSectionProps, ref) {
   const [addOpen, setAddOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [pendingDelete, setPendingDelete] = useState<TravelDocument>();
   const [reviewDocumentId, setReviewDocumentId] = useState<string>();
+  const [internalExpanded, setInternalExpanded] = useState(false);
   const documents = useTripDocumentStore((state) => state.documentsByTripId[tripId] ?? EMPTY_DOCUMENTS);
   const isHydrated = useTripDocumentHydrationState((state) => state.isHydrated);
   const hydrationError = useTripDocumentHydrationState((state) => state.hydrationError);
@@ -52,10 +63,24 @@ export function TripDocumentSection({
   const availableById = useTravelDocumentAvailability(documents);
   const reviewDocument = documents.find((document) => document.id === reviewDocumentId);
 
+  useImperativeHandle(ref, () => ({
+    openAdd: () => {
+      if (!isHydrated || readOnly) return;
+      setMessage("");
+      setAddOpen(true);
+    },
+  }), [isHydrated, readOnly]);
+
   useEffect(() => {
     if (!isHydrated) return;
     reconcileTripLinks(tripId, JSON.parse(validItemKey) as string[]);
   }, [isHydrated, reconcileTripLinks, tripId, validItemKey]);
+
+  const expanded = controlledExpanded ?? internalExpanded;
+  const setExpanded = (next: boolean) => {
+    setInternalExpanded(next);
+    onExpandedChange?.(next);
+  };
 
   const openDocument = async (document: TravelDocument) => {
     setMessage("");
@@ -93,11 +118,17 @@ export function TripDocumentSection({
     setPendingDelete(undefined);
   };
 
-  return <Card style={styles.card}>
-    <View style={styles.heading}>
+  const Container = compact ? View : Card;
+  return <Container style={[styles.card, compact && styles.compactRoot]}>
+    {compact ? <Pressable accessibilityRole="button" accessibilityState={{ expanded }} accessibilityLabel={`예약·티켓 문서 ${documents.length}개, ${expanded ? "상세 접기" : "상세 보기"}`} onPress={() => setExpanded(!expanded)} style={({ pressed }) => [styles.compactRow, pressed && styles.pressed]}>
+      <View style={styles.compactIcon}><Text style={styles.compactIconText}>▤</Text></View>
+      <View style={styles.compactCopy}><Text style={styles.compactTitle}>예약·티켓 문서</Text><Text style={styles.compactMeta}>{!isHydrated ? "불러오는 중" : documents.length ? `${documents.length}개 보관 중` : "아직 보관한 문서 없음"}</Text></View>
+      <Text style={styles.compactCount}>{documents.length}개</Text><Text style={styles.compactChevron}>{expanded ? "⌃" : "›"}</Text>
+    </Pressable> : <View style={styles.heading}>
       <View style={styles.headingCopy}><Text style={styles.eyebrow}>TRAVEL DOCUMENTS</Text><Text style={styles.title}>예약·티켓 문서함</Text><Text style={styles.description}>숙소 예약, 입장권, 기차·버스표를 여행방에서 바로 찾아보세요.</Text></View>
       <View style={styles.count}><Text style={styles.countValue}>{documents.length}</Text><Text style={styles.countLabel}>개</Text></View>
-    </View>
+    </View>}
+    {!compact || expanded ? <View style={compact ? styles.expandedBody : undefined}>
     <View style={styles.localNotice}><Text style={styles.localNoticeTitle}>{Platform.OS === "web" ? "브라우저 탭 임시 보관" : "기기 전용 보관"}</Text><Text style={styles.localNoticeText}>{Platform.OS === "web" ? "웹에서는 새로고침하거나 탭을 닫으면 파일이 사라져요. 다른 동행자에게도 공유되지 않습니다." : "현재 파일은 이 기기에만 저장되며 다른 동행자에게 자동 공유되지 않아요."}</Text></View>
     {!isHydrated ? <Text style={styles.empty}>저장된 문서 목록을 불러오는 중이에요.</Text> : documents.length ? <View style={styles.list}>{documents.map((document) => {
       const availability = availableById[document.id];
@@ -124,6 +155,7 @@ export function TripDocumentSection({
     {message || hydrationError ? <Text accessibilityRole="alert" style={styles.error}>{message || hydrationError}</Text> : null}
     {hydrationError ? <SecondaryButton label="문서 목록 다시 불러오기" onPress={() => { setMessage(""); void ensureTripDocumentStoreHydrated().catch(() => undefined); }} /> : null}
     <SecondaryButton label={readOnly ? "완료된 여행에서는 추가할 수 없어요" : "문서 추가"} disabled={!isHydrated || readOnly} onPress={() => { setMessage(""); setAddOpen(true); }} />
+    </View> : null}
     <TravelDocumentAddModal visible={addOpen} tripId={tripId} currentUserId={currentUserId} onClose={() => setAddOpen(false)} onAdded={(document) => setReviewDocumentId(document.id)} />
     <TravelDocumentFactReviewModal
       visible={Boolean(reviewDocument)}
@@ -156,11 +188,17 @@ export function TripDocumentSection({
         </SafeAreaView>
       </View>
     </Modal>
-  </Card>;
-}
+  </Container>;
+});
 
 const styles = StyleSheet.create({
   card: { gap: spacing.md },
+  compactRoot: { gap: 0 },
+  compactRow: { minHeight: 68, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.xs },
+  compactIcon: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderRadius: radius.sm, backgroundColor: "#DDEBFF" },
+  compactIconText: { color: "#4388FF", fontSize: 17, fontWeight: "900" },
+  compactCopy: { flex: 1, minWidth: 0, gap: 2 }, compactTitle: { color: "#17265F", fontSize: 13, lineHeight: 18, fontWeight: "800" }, compactMeta: { color: "#60719B", fontSize: 10, lineHeight: 15, fontWeight: "600" }, compactCount: { color: "#4388FF", fontSize: 11, lineHeight: 16, fontWeight: "800" }, compactChevron: { color: "#8290AE", fontSize: 18, fontWeight: "700" },
+  expandedBody: { gap: spacing.md, borderTopWidth: 1, borderTopColor: "#DCE7F7", paddingTop: spacing.md },
   heading: { flexDirection: "row", alignItems: "flex-start", gap: spacing.md },
   headingCopy: { flex: 1, gap: spacing.xxs },
   eyebrow: { ...typography.caption, color: colors.primary },

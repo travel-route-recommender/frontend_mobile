@@ -16,7 +16,7 @@ import { canAddPlaceCandidate, canSavePlace } from "../src/features/places/logic
 import { buildPlaceLocationOptions, getPlaceLocationDisplayLabel, getPlaceLocationValue, getPlaceProvinceSortOrder } from "../src/features/places/logic/placeFilterOptions";
 import { enrichPlaceClassificationTags } from "../src/features/places/logic/placeClassification";
 import { dedupePlacesForDisplay, filterPlaces, findSimilarPlaces, getPlaceDistanceProximityLabel, normalizeSearchKeyword, parsePlaceCoordinate, searchPlaces } from "../src/features/places/logic/placeSearch";
-import { buildPlaceCardViewModel, selectCandidateStateForPlace, selectResolvedSavedPlaces } from "../src/features/places/selectors/placeSelectors";
+import { buildPlaceCardViewModel, selectCandidateStateForPlace, selectPlaceTripRelation, selectResolvedSavedPlaces } from "../src/features/places/selectors/placeSelectors";
 import { buildTourSearchPath, mapTourPlaceToPlace } from "../src/features/places/services/placeApi";
 import { toggleUniqueId } from "../src/utils/entityRelations";
 
@@ -113,6 +113,19 @@ assert(buildPlaceCardViewModel(baseState, "invalid") === null, "23. 잘못된 pl
 assert(searchPlaces(places, { keyword: "", regionId: "all", category: "all", sort: "name" }, regions, new Set()).map((place) => place.id).join() === "market,cafe,oreum", "이름순은 결정적이어야 한다");
 assert(searchPlaces(places, { keyword: "", regionId: "all", category: "all", sort: "saved-first" }, regions, new Set(["market"]))[0]?.id === "market", "저장 우선 정렬이 동작해야 한다");
 assert(selectCandidateStateForPlace({ candidatesByTripId: { "trip-a": [candidate] }, itineraryByTripId: { "trip-a": [itinerary] } }, "trip-a", "cafe") === "scheduled", "일정 관계가 candidate보다 우선해야 한다");
+const noRelation = selectPlaceTripRelation({ candidatesByTripId: { "trip-a": [] }, itineraryByTripId: { "trip-a": [] } }, "trip-a", "cafe");
+assert(!noRelation.isCandidate && !noRelation.isScheduled && noRelation.scheduledCount === 0, "relation matrix: 후보도 일정도 없는 상태");
+const candidateOnlyRelation = selectPlaceTripRelation({ candidatesByTripId: { "trip-a": [candidate] }, itineraryByTripId: { "trip-a": [] } }, "trip-a", "cafe");
+assert(candidateOnlyRelation.isCandidate && !candidateOnlyRelation.isScheduled && candidateOnlyRelation.scheduledCount === 0, "relation matrix: 후보지만 미배치인 상태");
+const onceRelation = selectPlaceTripRelation({ candidatesByTripId: { "trip-a": [candidate] }, itineraryByTripId: { "trip-a": [itinerary] } }, "trip-a", "cafe");
+assert(onceRelation.isCandidate && onceRelation.isScheduled && onceRelation.scheduledCount === 1 && onceRelation.scheduledItems[0]?.id === "schedule", "relation matrix: 후보가 한 번 배치된 상태");
+const repeatedItinerary = { ...itinerary, id: "schedule-repeat", date: "2026-08-02", startTime: "12:00" };
+const multipleRelation = selectPlaceTripRelation({ candidatesByTripId: { "trip-a": [candidate] }, itineraryByTripId: { "trip-a": [itinerary, repeatedItinerary] } }, "trip-a", "cafe");
+assert(multipleRelation.isCandidate && multipleRelation.isScheduled && multipleRelation.scheduledCount === 2 && multipleRelation.scheduledItems.map((item) => item.id).join() === "schedule,schedule-repeat", "relation matrix: 후보가 여러 번 배치된 상태");
+const scheduledWithoutCandidate = selectPlaceTripRelation({ candidatesByTripId: { "trip-a": [] }, itineraryByTripId: { "trip-a": [itinerary] } }, "trip-a", "cafe");
+assert(!scheduledWithoutCandidate.isCandidate && scheduledWithoutCandidate.isScheduled && scheduledWithoutCandidate.scheduledCount === 1, "relation matrix: 후보 관계 없이 일정만 존재하는 상태");
+const canonicalCard = buildPlaceCardViewModel({ ...baseState, candidatesByTripId: { "trip-a": [candidate] }, itineraryByTripId: { "trip-a": [itinerary, repeatedItinerary] } }, "cafe");
+assert(canonicalCard?.activeTripCandidateState === "scheduled" && canonicalCard.candidateTripIds.join() === "trip-a" && canonicalCard.scheduledTripIds.join() === "trip-a", "Explore·Place Detail·Saved 카드 관계가 canonical relation을 공유해야 한다");
 
 assert(resolveTripExploreContext(undefined, undefined) === undefined, "24. 하단 탐색은 여행방 복귀 문맥을 만들지 않아야 한다");
 const roomExplore = resolveTripExploreContext("trip-a", "room");

@@ -1,211 +1,91 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import { colors, radius, spacing, typography } from "../../../theme/tokens";
-import type {
-  PreferenceMessageOption,
-  PreferenceQuestionPresentation,
-} from "../config/itinerary-message-questions";
+import { colors, radius, spacing } from "../../../theme/tokens";
+import { DuriKoreanText } from "../../duri/components/DuriKoreanText";
+import type { PreferenceCharacterPresentation } from "../assets/preference-character-assets";
+import type { PreferenceMessageOption, PreferenceQuestionPresentation } from "../config/itinerary-message-questions";
+import { PreferenceCharacterAvatar } from "./preference-character-question";
 
 type ScenePresentation = Exclude<PreferenceQuestionPresentation, { kind: "chat" }>;
 
 type Props<OptionId extends string | number> = {
   presentation: ScenePresentation;
+  character: PreferenceCharacterPresentation;
   message: string;
   options: readonly PreferenceMessageOption<OptionId>[];
   current: number;
   total: number;
   selectedOptionId?: OptionId;
   onSelect: (optionId: OptionId) => void;
-  onPrevious?: () => void;
-  onNext?: () => void;
-  completionMessage?: string;
 };
 
 export function PreferenceSceneQuestion<OptionId extends string | number>({
   presentation,
+  character,
   message,
   options,
   current,
   total,
   selectedOptionId,
   onSelect,
-  onPrevious,
-  onNext,
-  completionMessage,
 }: Props<OptionId>) {
-  const selectedOption = options.find((option) => option.id === selectedOptionId);
   const groupChoice = presentation.kind === "group-choice";
-
-  return (
-    <View style={styles.stage}>
-      <View
-        accessibilityLabel={`상황 질문 ${total}개 중 ${current}번째`}
-        accessibilityRole="progressbar"
-        accessibilityValue={{ min: 1, max: total, now: current }}
-        style={styles.progress}
-      >
-        {Array.from({ length: total }, (_, index) => (
-          <View key={index} style={[styles.progressSegment, index < current && styles.progressSegmentActive]} />
-        ))}
-      </View>
-
-      <View style={styles.sceneHeader}>
-        <Text selectable style={styles.location}>{presentation.location}</Text>
-        <Text accessibilityRole="header" selectable style={styles.title}>{presentation.title}</Text>
-        <Text selectable style={styles.description}>{presentation.description}</Text>
-        {groupChoice ? (
-          <View accessibilityLabel="친구들과 함께 선택하는 상황" style={styles.groupPresence}>
-            <View accessibilityElementsHidden style={styles.avatarRow}>
-              <View style={[styles.avatar, styles.avatarFirst]}><Text style={styles.avatarText}>친</Text></View>
-              <View style={[styles.avatar, styles.avatarSecond]}><Text style={styles.avatarText}>구</Text></View>
-              <View style={[styles.avatar, styles.avatarThird]}><Text style={styles.avatarText}>나</Text></View>
-            </View>
-            <Text style={styles.groupLabel}>친구들과 함께 고르는 중</Text>
-          </View>
-        ) : null}
-      </View>
-
-      <View style={styles.promptCard}>
-        {presentation.showPromptLabel !== false ? (
-          <Text style={styles.promptLabel}>{groupChoice ? "친구들이 당신에게 물어요" : "지금 이 장면에서"}</Text>
-        ) : null}
-        <Text selectable style={styles.prompt}>{message}</Text>
-      </View>
-
-      <View style={styles.choicePanel}>
-        <Text style={styles.choiceLabel}>{groupChoice ? "나는 이렇게 말할래" : "나는 이렇게 선택할래"}</Text>
-        <View accessibilityLabel="상황 선택지" accessibilityRole="radiogroup" style={styles.optionList}>
-          {options.map((option) => {
-            const selected = option.id === selectedOptionId;
-            return (
-              <Pressable
-                key={option.id}
-                accessibilityLabel={`${option.meaning}. ${option.label}`}
-                accessibilityRole="radio"
-                accessibilityState={{ selected }}
-                onPress={() => onSelect(option.id)}
-                style={({ pressed }) => [
-                  styles.option,
-                  selected && styles.optionSelected,
-                  pressed && styles.pressed,
-                ]}
-              >
-                <Text selectable style={[styles.optionText, selected && styles.optionTextSelected]}>{option.label}</Text>
-                <View style={[styles.radio, selected && styles.radioSelected]}>
-                  {selected ? <View style={styles.radioDot} /> : null}
-                </View>
-              </Pressable>
-            );
-          })}
-        </View>
-
-        <View style={styles.navigation}>
-          {onPrevious ? (
-            <Pressable
-              accessibilityRole="button"
-              onPress={onPrevious}
-              style={({ pressed }) => [styles.previousButton, pressed && styles.pressed]}
-            >
-              <Text style={styles.previousButtonText}>‹ 이전 질문</Text>
-            </Pressable>
-          ) : <View />}
-          {selectedOption && onNext ? (
-            <Pressable
-              accessibilityRole="button"
-              onPress={onNext}
-              style={({ pressed }) => [styles.nextButton, pressed && styles.pressed]}
-            >
-              <Text style={styles.nextButtonText}>다음</Text>
-            </Pressable>
-          ) : null}
-        </View>
-        {selectedOption && !onNext ? (
-          <Text accessibilityLiveRegion="polite" style={styles.completedHelper}>
-            {completionMessage ?? `${total}개의 장면에 모두 답했어요. 아래의 ‘다음’을 눌러 계속해 주세요.`}
-          </Text>
-        ) : null}
+  return <View accessibilityLabel={`상황 질문 ${total}개 중 ${current}번째`} style={styles.question}>
+    <View style={styles.guideRow}>
+      <PreferenceCharacterAvatar character={character} />
+      <View style={styles.guideCopy}>
+        <Text style={styles.guideName}>두리와 함께 보는 여행 장면</Text>
+        <Text style={styles.guideStatus}>{groupChoice ? "대화 속의 나를 떠올려 보세요" : "실제 여행의 나를 떠올려 보세요"}</Text>
       </View>
     </View>
-  );
+
+    <View style={styles.sceneCard}>
+      <View style={styles.locationPill}><Text style={styles.location}>{presentation.location}</Text></View>
+      <DuriKoreanText style={styles.sceneTitle}>{presentation.title}</DuriKoreanText>
+      <DuriKoreanText style={styles.sceneDescription}>{presentation.description}</DuriKoreanText>
+    </View>
+
+    <DuriKoreanText accessibilityRole="header" selectable style={styles.title}>{message}</DuriKoreanText>
+    <Text style={styles.prompt}>{groupChoice ? "내가 실제로 할 말과 가까운 답을 골라 주세요." : "지금의 나와 가장 가까운 선택을 골라 주세요."}</Text>
+
+    <View accessibilityLabel="상황 선택지" accessibilityRole="radiogroup" style={styles.optionList}>
+      {options.map((option) => {
+        const selected = option.id === selectedOptionId;
+        return <Pressable
+          key={option.id}
+          accessibilityLabel={`${option.meaning}. ${option.label}`}
+          accessibilityRole="radio"
+          accessibilityState={{ selected }}
+          onPress={() => onSelect(option.id)}
+          style={({ pressed }) => [styles.option, selected && styles.optionSelected, pressed && styles.pressed]}
+        >
+          <DuriKoreanText selectable style={[styles.optionText, selected && styles.optionTextSelected]}>{option.label}</DuriKoreanText>
+          <View style={[styles.indicator, selected && styles.indicatorSelected]}>{selected ? <Text style={styles.check}>✓</Text> : null}</View>
+        </Pressable>;
+      })}
+    </View>
+  </View>;
 }
 
 const styles = StyleSheet.create({
-  stage: {
-    overflow: "hidden",
-    gap: spacing.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.xl,
-    backgroundColor: colors.surface,
-    padding: spacing.md,
-  },
-  progress: { flexDirection: "row", gap: spacing.xxs },
-  progressSegment: { flex: 1, height: 4, borderRadius: radius.pill, backgroundColor: colors.borderStrong },
-  progressSegmentActive: { backgroundColor: colors.primary },
-  sceneHeader: { gap: spacing.xs, paddingHorizontal: spacing.xs },
-  location: { ...typography.caption, color: colors.primary },
-  title: { ...typography.title, color: colors.text },
-  description: { ...typography.body, color: colors.textSecondary },
-  groupPresence: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingTop: spacing.xs },
-  avatarRow: { width: 78, height: 32, flexDirection: "row", alignItems: "center" },
-  avatar: {
-    position: "absolute",
-    width: 32,
-    height: 32,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 2,
-    borderColor: colors.surface,
-    borderRadius: radius.pill,
-  },
-  avatarFirst: { left: 0, backgroundColor: colors.primarySoft },
-  avatarSecond: { left: 22, backgroundColor: colors.warningSoft },
-  avatarThird: { left: 44, backgroundColor: colors.successSoft },
-  avatarText: { ...typography.caption, color: colors.text },
-  groupLabel: { ...typography.caption, color: colors.textSecondary },
-  promptCard: {
-    gap: spacing.xs,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.lg,
-    backgroundColor: colors.background,
-    padding: spacing.md,
-  },
-  promptLabel: { ...typography.caption, color: colors.textMuted },
-  prompt: { ...typography.bodyStrong, color: colors.text },
-  choicePanel: { gap: spacing.sm },
-  choiceLabel: { ...typography.caption, color: colors.textSecondary },
-  optionList: { gap: spacing.xs },
-  option: {
-    minHeight: 54,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    backgroundColor: colors.surfaceMuted,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  optionSelected: { borderWidth: 2, borderColor: colors.primary, backgroundColor: colors.primarySoft },
-  optionText: { ...typography.body, flex: 1, color: colors.textSecondary },
-  optionTextSelected: { ...typography.bodyStrong, color: colors.primary },
-  radio: {
-    width: 22,
-    height: 22,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 2,
-    borderColor: colors.borderStrong,
-    borderRadius: radius.pill,
-  },
-  radioSelected: { borderColor: colors.primary },
-  radioDot: { width: 10, height: 10, borderRadius: radius.pill, backgroundColor: colors.primary },
-  navigation: { minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm },
-  previousButton: { minHeight: 44, justifyContent: "center", borderRadius: radius.md, paddingHorizontal: spacing.sm },
-  previousButtonText: { ...typography.caption, color: colors.textSecondary },
-  nextButton: { minHeight: 44, justifyContent: "center", borderRadius: radius.md, backgroundColor: colors.primary, paddingHorizontal: spacing.md },
-  nextButtonText: { ...typography.bodyStrong, color: colors.white },
-  completedHelper: { ...typography.caption, color: colors.success, textAlign: "center" },
+  question: { gap: spacing.lg },
+  guideRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  guideCopy: { flex: 1, minWidth: 0, gap: 1 },
+  guideName: { fontSize: 12, lineHeight: 18, fontWeight: "800", color: "#7569BE" },
+  guideStatus: { fontSize: 11, lineHeight: 17, fontWeight: "500", color: colors.textMuted },
+  sceneCard: { gap: spacing.xs, borderWidth: 1, borderColor: "#D9D5FF", borderRadius: 18, backgroundColor: "#F3F1FF", padding: spacing.md },
+  locationPill: { alignSelf: "flex-start", borderRadius: radius.pill, backgroundColor: colors.surface, paddingHorizontal: spacing.sm, paddingVertical: 5 },
+  location: { fontSize: 10, lineHeight: 14, fontWeight: "800", color: "#7569BE" },
+  sceneTitle: { fontSize: 16, lineHeight: 23, fontWeight: "800", color: "#17265F" },
+  sceneDescription: { fontSize: 12, lineHeight: 19, fontWeight: "500", color: colors.textSecondary },
+  title: { fontSize: 23, lineHeight: 32, fontWeight: "900", color: "#17265F" },
+  prompt: { marginTop: -spacing.sm, fontSize: 13, lineHeight: 19, fontWeight: "500", color: colors.textSecondary },
+  optionList: { gap: spacing.sm },
+  option: { minHeight: 66, flexDirection: "row", alignItems: "center", gap: spacing.sm, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.surface, paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
+  optionSelected: { borderWidth: 2, borderColor: colors.primary, backgroundColor: "#F2F8FF" },
+  optionText: { flex: 1, fontSize: 14, lineHeight: 21, fontWeight: "600", color: colors.textSecondary },
+  optionTextSelected: { fontWeight: "800", color: "#17265F" },
+  indicator: { width: 24, height: 24, alignItems: "center", justifyContent: "center", borderWidth: 1.5, borderColor: colors.borderStrong, borderRadius: radius.pill, backgroundColor: colors.surface },
+  indicatorSelected: { borderColor: colors.primary, backgroundColor: colors.primary },
+  check: { fontSize: 13, lineHeight: 16, fontWeight: "900", color: colors.white },
   pressed: { opacity: 0.84, transform: [{ scale: 0.99 }] },
 });

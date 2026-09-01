@@ -33,6 +33,9 @@ export function TripTodoSection({
   tripStartDate,
   tripEndDate,
   readOnly = false,
+  compact = false,
+  expanded: controlledExpanded,
+  onExpandedChange,
 }: {
   tripId: string;
   currentUserId: string;
@@ -42,6 +45,9 @@ export function TripTodoSection({
   tripStartDate?: string | null;
   tripEndDate?: string | null;
   readOnly?: boolean;
+  compact?: boolean;
+  expanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
 }) {
   const hydration = useTripTodoHydration();
   const documentsHydrated = useTripDocumentHydrationState((state) => state.isHydrated);
@@ -60,6 +66,7 @@ export function TripTodoSection({
   const [editingTodo, setEditingTodo] = useState<TripTodo>();
   const [editorDraft, setEditorDraft] = useState<TripTodoDraft>();
   const [pendingDelete, setPendingDelete] = useState<TripTodo>();
+  const [internalExpanded, setInternalExpanded] = useState(false);
 
   const filtered = useMemo(() => todos.filter((todo) => {
     if (filter === "active") return todo.status !== "completed" && todo.status !== "archived";
@@ -111,11 +118,23 @@ export function TripTodoSection({
     return result.ok ? { ok: true as const } : result;
   };
 
-  return <Card style={styles.card}>
-    <View style={styles.heading}>
+  const expanded = controlledExpanded ?? internalExpanded;
+  const setExpanded = (next: boolean) => {
+    setInternalExpanded(next);
+    onExpandedChange?.(next);
+  };
+
+  const Container = compact ? View : Card;
+  return <Container style={[styles.card, compact && styles.compactRoot]}>
+    {compact ? <Pressable accessibilityRole="button" accessibilityState={{ expanded }} accessibilityLabel={`여행 준비 TODO ${activeCount}개 남음, ${expanded ? "상세 접기" : "상세 보기"}`} onPress={() => setExpanded(!expanded)} style={({ pressed }) => [styles.compactRow, pressed && styles.pressed]}>
+      <View style={styles.compactIcon}><Text style={styles.compactIconText}>✓</Text></View>
+      <View style={styles.compactCopy}><Text style={styles.compactTitle}>여행 준비 TODO</Text><Text style={styles.compactMeta}>{!hydration.isHydrated ? "불러오는 중" : overdueCount ? `기한 지난 항목 ${overdueCount}개` : activeCount ? `${activeCount}개 남음` : "남은 TODO 없음"}</Text></View>
+      <Text style={styles.compactCount}>{activeCount}개</Text><Text style={styles.compactChevron}>{expanded ? "⌃" : "›"}</Text>
+    </Pressable> : <View style={styles.heading}>
       <View style={styles.headingCopy}><Text style={styles.eyebrow}>TRIP TODO</Text><Text style={styles.title}>여행 준비 TODO</Text><Text style={styles.description}>담당자, 마감, 체크리스트와 관련 일정·문서를 한곳에서 관리하세요.</Text></View>
       <View style={styles.count}><Text style={styles.countValue}>{activeCount}</Text><Text style={styles.countLabel}>남음</Text></View>
-    </View>
+    </View>}
+    {!compact || expanded ? <View style={compact ? styles.expandedBody : undefined}>
     {overdueCount ? <View style={styles.overdueNotice}><Text style={styles.overdueNoticeText}>기한이 지난 TODO가 {overdueCount}개 있어요.</Text></View> : null}
     <View style={styles.filters}>{filterOptions.map((option) => <Pressable key={option.value} accessibilityRole="tab" accessibilityState={{ selected: filter === option.value }} onPress={() => setFilter(option.value)} style={({ pressed }) => [styles.filter, filter === option.value && styles.filterSelected, pressed && styles.pressed]}><Text style={[styles.filterText, filter === option.value && styles.filterTextSelected]}>{option.label}</Text></Pressable>)}</View>
 
@@ -135,12 +154,13 @@ export function TripTodoSection({
       : <View style={styles.empty}><Text style={styles.emptyTitle}>{filter === "active" ? "남은 TODO가 없어요" : "이 목록은 비어 있어요"}</Text><Text style={styles.emptyText}>{filter === "active" ? "예약 확인, 준비물, 일정 조율을 TODO로 남겨 보세요." : "다른 상태를 선택하거나 새 TODO를 추가해 보세요."}</Text></View>}
     {documentsHydrated ? null : <Text style={styles.helper}>문서 연결 목록을 불러오는 중이에요.</Text>}
     <SecondaryButton label={readOnly ? "완료된 여행에서는 수정할 수 없어요" : "TODO 추가"} disabled={readOnly || !hydration.isHydrated} onPress={openCreate} />
+    </View> : null}
 
     {editorDraft ? <TripTodoEditorModal visible={editorOpen} initialTodo={editingTodo} initialDraft={editorDraft} members={memberOptions} itineraryOptions={itineraryOptions} documentOptions={documentOptions} suggestedDates={suggestedDates} onClose={closeEditor} onSave={save} /> : null}
     <Modal visible={Boolean(pendingDelete)} transparent animationType="fade" onRequestClose={() => setPendingDelete(undefined)}>
       <View style={styles.confirmOverlay}><Pressable accessibilityRole="button" accessibilityLabel="TODO 삭제 취소" onPress={() => setPendingDelete(undefined)} style={StyleSheet.absoluteFill} /><SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.confirmSafeArea}><View accessibilityViewIsModal style={styles.confirmCard}><Text style={styles.confirmTitle}>TODO를 삭제할까요?</Text><Text style={styles.confirmText}>{pendingDelete?.source.kind === "manual" ? "삭제한 TODO는 복구할 수 없어요." : "삭제하면 같은 분석 결과가 반복되어도 이 자동 TODO를 다시 만들지 않아요."}</Text><Pressable accessibilityRole="button" onPress={() => { if (pendingDelete) deleteTodo(tripId, pendingDelete.id); setPendingDelete(undefined); }} style={({ pressed }) => [styles.deleteConfirm, pressed && styles.pressed]}><Text style={styles.deleteConfirmText}>삭제</Text></Pressable><SecondaryButton label="취소" onPress={() => setPendingDelete(undefined)} /></View></SafeAreaView></View>
     </Modal>
-  </Card>;
+  </Container>;
 }
 
 function TodoCard({ todo, memberNames, readOnly, onEdit, onToggleComplete, onArchive, onDelete, onToggleChecklist, onSnooze }: {
@@ -164,7 +184,7 @@ function TodoCard({ todo, memberNames, readOnly, onEdit, onToggleComplete, onArc
 }
 
 const styles = StyleSheet.create({
-  card: { gap: spacing.md }, heading: { flexDirection: "row", alignItems: "flex-start", gap: spacing.md }, headingCopy: { flex: 1, gap: spacing.xxs }, eyebrow: { ...typography.caption, color: colors.primary }, title: { ...typography.subtitle, color: colors.text }, description: { ...typography.body, color: colors.textSecondary }, count: { minWidth: 54, minHeight: 48, alignItems: "center", justifyContent: "center", borderRadius: radius.pill, backgroundColor: colors.primarySoft }, countValue: { ...typography.subtitle, color: colors.primary }, countLabel: { ...typography.caption, color: colors.primary },
+  card: { gap: spacing.md }, compactRoot: { gap: 0 }, compactRow: { minHeight: 68, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.xs }, compactIcon: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderRadius: radius.sm, backgroundColor: "#EAF7EE" }, compactIconText: { color: "#2E9B66", fontSize: 17, fontWeight: "900" }, compactCopy: { flex: 1, minWidth: 0, gap: 2 }, compactTitle: { color: "#17265F", fontSize: 13, lineHeight: 18, fontWeight: "800" }, compactMeta: { color: "#60719B", fontSize: 10, lineHeight: 15, fontWeight: "600" }, compactCount: { color: "#4388FF", fontSize: 11, lineHeight: 16, fontWeight: "800" }, compactChevron: { color: "#8290AE", fontSize: 18, fontWeight: "700" }, expandedBody: { gap: spacing.md, borderTopWidth: 1, borderTopColor: "#DCE7F7", paddingTop: spacing.md }, heading: { flexDirection: "row", alignItems: "flex-start", gap: spacing.md }, headingCopy: { flex: 1, gap: spacing.xxs }, eyebrow: { ...typography.caption, color: colors.primary }, title: { ...typography.subtitle, color: colors.text }, description: { ...typography.body, color: colors.textSecondary }, count: { minWidth: 54, minHeight: 48, alignItems: "center", justifyContent: "center", borderRadius: radius.pill, backgroundColor: colors.primarySoft }, countValue: { ...typography.subtitle, color: colors.primary }, countLabel: { ...typography.caption, color: colors.primary },
   overdueNotice: { borderRadius: radius.md, backgroundColor: colors.dangerSoft, padding: spacing.sm }, overdueNoticeText: { ...typography.bodyStrong, color: colors.danger }, filters: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs }, filter: { minHeight: 38, justifyContent: "center", borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border, paddingHorizontal: spacing.sm }, filterSelected: { borderColor: colors.primary, backgroundColor: colors.primarySoft }, filterText: { ...typography.caption, color: colors.textSecondary }, filterTextSelected: { color: colors.primary }, list: { gap: spacing.sm },
   todo: { gap: spacing.sm, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceMuted, padding: spacing.sm }, todoOverdue: { borderColor: colors.danger }, todoCompleted: { opacity: 0.76 }, todoHeading: { flexDirection: "row", alignItems: "flex-start", gap: spacing.sm }, complete: { width: 38, height: 38, alignItems: "center", justifyContent: "center", borderRadius: radius.pill, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.surface }, completeSelected: { borderColor: colors.success, backgroundColor: colors.successSoft }, completeText: { ...typography.subtitle, color: colors.textMuted }, completeTextSelected: { color: colors.success }, todoCopy: { flex: 1, minWidth: 0, gap: spacing.xxs }, todoTitle: { ...typography.bodyStrong, color: colors.text }, todoDescription: { ...typography.body, color: colors.textSecondary }, completedText: { color: colors.textMuted, textDecorationLine: "line-through" }, metaRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs }, priority: { ...typography.caption, color: colors.textSecondary }, priorityHigh: { color: colors.warning }, meta: { ...typography.caption, color: colors.textMuted },
   due: { minHeight: 38, flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: spacing.xs, borderRadius: radius.sm, backgroundColor: colors.primarySoft, paddingHorizontal: spacing.sm }, dueOverdue: { backgroundColor: colors.dangerSoft }, dueText: { ...typography.caption, color: colors.primary }, dueTextOverdue: { color: colors.danger }, snooze: { ...typography.caption, color: colors.primary }, detail: { ...typography.caption, color: colors.textSecondary }, checklist: { gap: spacing.xxs }, cardCheck: { minHeight: 34, flexDirection: "row", alignItems: "center", gap: spacing.xs }, cardCheckIcon: { ...typography.bodyStrong, color: colors.primary }, cardCheckText: { ...typography.caption, color: colors.text, flex: 1 }, tagRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: spacing.xs }, tag: { borderRadius: radius.pill, backgroundColor: colors.primarySoft, paddingHorizontal: spacing.xs, paddingVertical: spacing.xxs }, tagText: { ...typography.caption, color: colors.primary }, linked: { borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border, paddingHorizontal: spacing.xs, paddingVertical: spacing.xxs }, linkedText: { ...typography.caption, color: colors.textSecondary }, actions: { flexDirection: "row", justifyContent: "flex-end", gap: spacing.md }, action: { minHeight: 34, justifyContent: "center" }, actionText: { ...typography.caption, color: colors.primary }, deleteText: { ...typography.caption, color: colors.danger },

@@ -38,6 +38,7 @@ export interface RoomPreferenceSelectorState {
   tripsById: Readonly<Record<EntityId, TripRoom>>;
   usersById: Readonly<Record<EntityId, User>>;
   preferenceResultsByUserId: Readonly<Record<EntityId, unknown>>;
+  canonicalPreferenceTitlesByUserId?: Readonly<Record<EntityId, string>>;
   currentUserId?: EntityId;
 }
 
@@ -93,11 +94,12 @@ export function selectMemberPreferenceStatus(
     const completedAt = typeof (rawResult as { completedAt?: unknown }).completedAt === "string"
       ? (rawResult as { completedAt: string }).completedAt
       : undefined;
+    const canonicalTitle = state.canonicalPreferenceTitlesByUserId?.[member.userId]?.trim();
     return {
       ...base,
       state: "completed" as const,
       ...(completedAt ? { completedAt } : {}),
-      ...(result.profileType ? { profileType: result.profileType } : {}),
+      ...(canonicalTitle || result.profileType ? { profileType: canonicalTitle || result.profileType } : {}),
     };
   });
 }

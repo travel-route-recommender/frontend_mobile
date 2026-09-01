@@ -1,28 +1,44 @@
-import { StyleSheet, Text, View } from "react-native";
+import { useState } from "react";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Card, PrimaryButton } from "../../../../components/common";
 import type { GroupPlanningDimension, GroupPreferenceDiagnosis } from "../../../../duri/group-preferences";
-import { colors, radius, spacing, typography } from "../../../../theme/tokens";
+import { preferenceDimensionLabels } from "../../../../duri/preferences";
+import { radius } from "../../../../theme/tokens";
 import { GroupDimensionCard } from "./GroupDimensionCard";
 
 const planningDimensions: GroupPlanningDimension[] = ["pace", "mobility", "activity", "mealStyle", "planningStyle"];
 
 export function GroupPreferenceDiagnosisCard({ diagnosis, memberNamesById, canStartMyTest, onStartMyTest }: { diagnosis: GroupPreferenceDiagnosis; memberNamesById: Record<string, string>; canStartMyTest: boolean; onStartMyTest?: () => void }) {
+  const [expanded, setExpanded] = useState(false);
   if (diagnosis.coverage === "insufficient") return <Card style={styles.card}>
+    <Text style={styles.eyebrow}>그룹 인사이트</Text>
     <Text style={styles.title}>그룹 진단을 위해 최소 2명의 응답이 필요해요.</Text>
-    <Text style={styles.description}>현재 {diagnosis.completedMemberCount}/{diagnosis.totalMemberCount}명이 완료했어요. 개인 결과는 유지되지만 아직 그룹 차이를 확정하지 않아요.</Text>
+    <Text style={styles.description}>현재 {diagnosis.completedMemberCount}/{diagnosis.totalMemberCount}명이 완료했어요.</Text>
     {canStartMyTest && onStartMyTest ? <PrimaryButton accessibilityLabel="그룹 진단에 참여할 여행 성향 테스트 시작" label="내 여행 성향 테스트 하기" onPress={onStartMyTest} /> : null}
   </Card>;
 
-  const coverageCopy = diagnosis.coverage === "partial"
-    ? `현재 응답한 ${diagnosis.completedMemberCount}명 기준 분석이에요. 남은 응답에 따라 결과가 바뀔 수 있어요.`
-    : `모든 멤버 ${diagnosis.completedMemberCount}명의 응답을 반영했어요.`;
+  const common = planningDimensions.find((dimension) => diagnosis.dimensions[dimension].status === "common");
+  const compatible = planningDimensions.find((dimension) => diagnosis.dimensions[dimension].status === "compatible");
+  const needsTuning = planningDimensions.find((dimension) => diagnosis.dimensions[dimension].status === "needs-tuning");
+  const insight = common
+    ? `${preferenceDimensionLabels[common]} 기준이 잘 맞아요.`
+    : compatible
+      ? `${preferenceDimensionLabels[compatible]} 선호가 가까워요.`
+      : needsTuning
+        ? `${preferenceDimensionLabels[needsTuning]}은 미리 이야기해보세요.`
+        : "응답을 바탕으로 여행 기준을 정리했어요.";
+  const coverageCopy = diagnosis.coverage === "partial" ? `현재 응답한 ${diagnosis.completedMemberCount}명 기준` : "전체 응답 반영";
   return <Card style={styles.card}>
-    <View style={styles.coverage}><Text style={styles.coverageTitle}>{diagnosis.coverage === "partial" ? "현재 응답 기준" : "전체 응답 반영"}</Text><Text style={styles.coverageText}>{coverageCopy}</Text></View>
-    {diagnosis.matchRate !== undefined ? <View accessibilityRole="summary" accessibilityLabel={`현재 응답 기준 조율 지표 ${diagnosis.matchRate}퍼센트. 여행 성공 가능성이 아니라 선호 차이의 크기를 보여주는 참고 지표`} style={styles.matchBox}><View style={styles.matchHeading}><Text style={styles.matchLabel}>현재 응답 기준 조율 지표</Text><Text style={styles.matchValue}>{diagnosis.matchRate}%</Text></View><View style={styles.matchTrack}><View style={[styles.matchFill, { width: `${diagnosis.matchRate}%` }]} /></View><Text style={styles.matchHelp}>여행 성공 가능성이 아니라 현재 응답에서 드러난 선호 차이의 크기를 보여주는 참고 지표예요.</Text></View> : null}
-    <DimensionGroup title="잘 맞는 부분" dimensions={planningDimensions.filter((dimension) => diagnosis.dimensions[dimension].status === "common")} diagnosis={diagnosis} memberNamesById={memberNamesById} empty="아직 완전히 같은 선택은 없어요." />
-    <DimensionGroup title="조금 조율하면 좋은 부분" dimensions={planningDimensions.filter((dimension) => diagnosis.dimensions[dimension].status === "compatible")} diagnosis={diagnosis} memberNamesById={memberNamesById} empty="가까운 차이로 분류된 항목은 없어요." />
-    <DimensionGroup title="미리 이야기할 부분" dimensions={planningDimensions.filter((dimension) => diagnosis.dimensions[dimension].status === "needs-tuning")} diagnosis={diagnosis} memberNamesById={memberNamesById} empty="큰 선호 차이는 발견되지 않았어요." />
-    <View style={styles.tags}><Text style={styles.groupTitle}>함께 선호하는 키워드</Text>{diagnosis.sharedPreferredTags.length ? <View style={styles.tagList}>{diagnosis.preferredTags.filter((tag) => tag.count >= 2).map((tag) => <View key={tag.tag.toLowerCase()} style={styles.tag}><Text style={styles.tagText}>#{tag.tag} · {tag.count}명</Text></View>)}</View> : <Text style={styles.empty}>2명 이상이 함께 선택한 키워드는 아직 없어요.</Text>}<Text style={styles.tagHelp}>완료한 응답자 {diagnosis.completedMemberCount}명 기준이에요.</Text></View>
+    <View style={styles.heading}><View style={styles.flex}><Text style={styles.eyebrow}>현재 우리 여행은</Text><Text style={styles.insight}>“{insight}”</Text></View>{diagnosis.matchRate !== undefined ? <View style={styles.match}><Text style={styles.matchValue}>{diagnosis.matchRate}%</Text><Text style={styles.matchLabel}>조율 지표</Text></View> : null}</View>
+    <Text style={styles.description}>{coverageCopy}{diagnosis.sharedPreferredTags.length ? ` · 함께 좋아하는 #${diagnosis.sharedPreferredTags[0]}` : ""}</Text>
+    <Pressable accessibilityRole="button" accessibilityState={{ expanded }} onPress={() => setExpanded((value) => !value)} style={({ pressed }) => [styles.disclosure, pressed && styles.pressed]}><Text style={styles.disclosureText}>{expanded ? "성향 자세히 접기" : "성향 자세히 보기"}</Text><Text style={styles.disclosureText}>{expanded ? "⌃" : "→"}</Text></Pressable>
+    {expanded ? <View style={styles.details}>
+      <View style={styles.coverage}><Text style={styles.coverageTitle}>{diagnosis.coverage === "partial" ? "현재 응답 기준" : "전체 응답 반영"}</Text><Text style={styles.coverageText}>{diagnosis.coverage === "partial" ? `남은 응답에 따라 결과가 바뀔 수 있어요.` : `모든 멤버 ${diagnosis.completedMemberCount}명의 응답을 반영했어요.`}</Text></View>
+      <DimensionGroup title="잘 맞는 부분" dimensions={planningDimensions.filter((dimension) => diagnosis.dimensions[dimension].status === "common")} diagnosis={diagnosis} memberNamesById={memberNamesById} empty="아직 완전히 같은 선택은 없어요." />
+      <DimensionGroup title="조금 조율하면 좋은 부분" dimensions={planningDimensions.filter((dimension) => diagnosis.dimensions[dimension].status === "compatible")} diagnosis={diagnosis} memberNamesById={memberNamesById} empty="가까운 차이로 분류된 항목은 없어요." />
+      <DimensionGroup title="미리 이야기할 부분" dimensions={planningDimensions.filter((dimension) => diagnosis.dimensions[dimension].status === "needs-tuning")} diagnosis={diagnosis} memberNamesById={memberNamesById} empty="큰 선호 차이는 발견되지 않았어요." />
+      <View style={styles.tags}><Text style={styles.groupTitle}>함께 선호하는 키워드</Text>{diagnosis.sharedPreferredTags.length ? <View style={styles.tagList}>{diagnosis.preferredTags.filter((tag) => tag.count >= 2).map((tag) => <View key={tag.tag.toLowerCase()} style={styles.tag}><Text style={styles.tagText}>#{tag.tag} · {tag.count}명</Text></View>)}</View> : <Text style={styles.empty}>2명 이상이 함께 선택한 키워드는 아직 없어요.</Text>}</View>
+    </View> : null}
   </Card>;
 }
 
@@ -31,25 +47,15 @@ function DimensionGroup({ title, dimensions, diagnosis, memberNamesById, empty }
 }
 
 const styles = StyleSheet.create({
-  card: { gap: spacing.md, marginTop: spacing.sm, marginBottom: spacing.xl },
-  title: { ...typography.subtitle, color: colors.text },
-  description: { ...typography.body, color: colors.textSecondary },
-  coverage: { borderRadius: radius.md, backgroundColor: colors.primarySoft, padding: spacing.sm, gap: 2 },
-  coverageTitle: { ...typography.bodyStrong, color: colors.primary },
-  coverageText: { ...typography.caption, color: colors.textSecondary },
-  matchBox: { gap: spacing.xs },
-  matchHeading: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: spacing.sm },
-  matchLabel: { ...typography.bodyStrong, color: colors.text, flex: 1 },
-  matchValue: { ...typography.title, color: colors.primary },
-  matchTrack: { height: 8, borderRadius: radius.pill, overflow: "hidden", backgroundColor: colors.border },
-  matchFill: { height: "100%", borderRadius: radius.pill, backgroundColor: colors.primary },
-  matchHelp: { ...typography.caption, color: colors.textSecondary },
-  group: { gap: spacing.xs },
-  groupTitle: { ...typography.bodyStrong, color: colors.text },
-  empty: { ...typography.caption, color: colors.textSecondary },
-  tags: { gap: spacing.xs },
-  tagList: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs },
-  tag: { borderRadius: radius.pill, backgroundColor: colors.primarySoft, paddingHorizontal: spacing.sm, paddingVertical: 6 },
-  tagText: { ...typography.caption, color: colors.primary },
-  tagHelp: { ...typography.caption, color: colors.textMuted },
+  card: { gap: 12, marginTop: 10, borderColor: "#DCE7F7", backgroundColor: "#FFFFFF", padding: 16 },
+  flex: { flex: 1 }, heading: { flexDirection: "row", alignItems: "center", gap: 12 },
+  eyebrow: { color: "#4388FF", fontSize: 10, lineHeight: 14, fontWeight: "900" },
+  title: { color: "#17265F", fontSize: 15, lineHeight: 21, fontWeight: "800" },
+  insight: { color: "#17265F", fontSize: 16, lineHeight: 23, fontWeight: "900", marginTop: 3 },
+  description: { color: "#60719B", fontSize: 11, lineHeight: 17, fontWeight: "600" },
+  match: { minWidth: 60, minHeight: 60, alignItems: "center", justifyContent: "center", borderRadius: 16, backgroundColor: "#EAF7EE" }, matchValue: { color: "#2E9B66", fontSize: 18, lineHeight: 23, fontWeight: "900" }, matchLabel: { color: "#60719B", fontSize: 9, lineHeight: 12, fontWeight: "700" },
+  disclosure: { minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderTopWidth: 1, borderTopColor: "#DCE7F7", paddingTop: 10 }, disclosureText: { color: "#4388FF", fontSize: 11, lineHeight: 16, fontWeight: "800" },
+  details: { gap: 13 }, coverage: { borderRadius: 14, backgroundColor: "#DDEBFF", padding: 11, gap: 2 }, coverageTitle: { color: "#4388FF", fontSize: 12, lineHeight: 17, fontWeight: "800" }, coverageText: { color: "#60719B", fontSize: 10, lineHeight: 15, fontWeight: "600" },
+  group: { gap: 8 }, groupTitle: { color: "#17265F", fontSize: 12, lineHeight: 17, fontWeight: "800" }, empty: { color: "#60719B", fontSize: 10, lineHeight: 15, fontWeight: "600" },
+  tags: { gap: 8 }, tagList: { flexDirection: "row", flexWrap: "wrap", gap: 8 }, tag: { borderRadius: radius.pill, backgroundColor: "#DDEBFF", paddingHorizontal: 10, paddingVertical: 6 }, tagText: { color: "#4388FF", fontSize: 10, lineHeight: 14, fontWeight: "700" }, pressed: { opacity: 0.8 },
 });

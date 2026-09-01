@@ -15,7 +15,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WORKSPACE_START_MINUTES } from "../../../data/workspaceSchedule";
 import type { ItineraryItem, TripEndConditionType, TripTransport } from "../../../domain";
-import { PrimaryButton, SecondaryButton, TextField } from "../../../components/common";
+import { PrimaryButton, RemoteImage, SecondaryButton, TextField } from "../../../components/common";
 import { colors, radius, sizes, spacing, typography } from "../../../theme/tokens";
 import { findNextAvailableSlot } from "../../../utils/schedule";
 import type {
@@ -89,11 +89,12 @@ function formatEndConditionCutoff(entry: TripEndConditionTimelineEntry) {
   return formatMinutesToTime(entry.cutoffMinutes) ?? "--:--";
 }
 
-function ModalFrame({ visible, title, subtitle, resizable = false, onClose, children }: {
+function ModalFrame({ visible, title, subtitle, resizable = false, footer, onClose, children }: {
   visible: boolean;
   title: string;
   subtitle?: string;
   resizable?: boolean;
+  footer?: ReactNode;
   onClose: () => void;
   children: React.ReactNode;
 }) {
@@ -145,7 +146,10 @@ function ModalFrame({ visible, title, subtitle, resizable = false, onClose, chil
   return <Modal visible={visible} transparent animationType="slide" navigationBarTranslucent statusBarTranslucent onRequestClose={onClose}>
     <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.overlay}>
       <Pressable accessibilityRole="button" accessibilityLabel={`${title} 닫기`} onPress={onClose} style={StyleSheet.absoluteFill} />
-      <View accessibilityViewIsModal style={[styles.sheet, resizable && styles.resizableSheet, resizable && { height: sheetHeight }, { paddingBottom: (resizable ? spacing.sm : spacing.xl) + insets.bottom, marginLeft: insets.left, marginRight: insets.right }]}>
+      <View
+        accessibilityViewIsModal
+        style={[styles.sheet, resizable && styles.resizableSheet, resizable && { height: sheetHeight }, { paddingBottom: footer ? 0 : (resizable ? spacing.sm : spacing.xl) + insets.bottom, marginLeft: insets.left, marginRight: insets.right }]}
+      >
         {resizable ? <View
           {...panHandlers}
           accessible
@@ -170,7 +174,8 @@ function ModalFrame({ visible, title, subtitle, resizable = false, onClose, chil
           testID="workspace-modal-resize-handle"
         ><View style={styles.handle} /></View> : <View style={styles.passiveHandleZone}><View style={styles.handle} /></View>}
         <View style={styles.modalHeader}><View style={styles.modalCopy}><Text style={styles.modalTitle}>{title}</Text>{subtitle ? <Text style={styles.modalSubtitle}>{subtitle}</Text> : null}</View><Pressable accessibilityRole="button" accessibilityLabel={`${title} 닫기`} onPress={onClose} style={styles.close}><Text style={styles.closeText}>닫기</Text></Pressable></View>
-        {children}
+        <View style={[styles.modalBody, footer ? styles.modalBodyWithFooter : undefined]}>{children}</View>
+        {footer ? <View style={[styles.modalFooter, { paddingBottom: Math.max(insets.bottom, spacing.sm) }]}>{footer}</View> : null}
       </View>
     </KeyboardAvoidingView>
   </Modal>;
@@ -181,6 +186,9 @@ export function ScheduleEditorModal({
   editorKey,
   mode,
   title,
+  placeImageUrl,
+  placeAddress,
+  placeCategoryLabel,
   tripId,
   currentUserId,
   dates,
@@ -191,6 +199,7 @@ export function ScheduleEditorModal({
   onClose,
   onSubmit,
   onRequestDelete,
+  readOnly = false,
   attachmentsAvailable = true,
   attachmentsUnavailableMessage,
   serverAttachmentContent,
@@ -199,6 +208,9 @@ export function ScheduleEditorModal({
   editorKey: string;
   mode: "add" | "edit";
   title: string;
+  placeImageUrl?: string;
+  placeAddress?: string;
+  placeCategoryLabel?: string;
   tripId: string;
   currentUserId: string;
   dates: readonly WorkspaceDate[];
@@ -209,6 +221,7 @@ export function ScheduleEditorModal({
   onClose: () => void;
   onSubmit: (value: ScheduleEditorValue, durationMinutes: number) => ItineraryMutationResult;
   onRequestDelete?: () => void;
+  readOnly?: boolean;
   attachmentsAvailable?: boolean;
   attachmentsUnavailableMessage?: string;
   serverAttachmentContent?: ReactNode;
@@ -218,6 +231,9 @@ export function ScheduleEditorModal({
     key={editorKey}
     mode={mode}
     title={title}
+    placeImageUrl={placeImageUrl}
+    placeAddress={placeAddress}
+    placeCategoryLabel={placeCategoryLabel}
     tripId={tripId}
     currentUserId={currentUserId}
     dates={dates}
@@ -228,6 +244,7 @@ export function ScheduleEditorModal({
     onClose={onClose}
     onSubmit={onSubmit}
     onRequestDelete={onRequestDelete}
+    readOnly={readOnly}
     attachmentsAvailable={attachmentsAvailable}
     attachmentsUnavailableMessage={attachmentsUnavailableMessage}
     serverAttachmentContent={serverAttachmentContent}
@@ -237,6 +254,9 @@ export function ScheduleEditorModal({
 function ScheduleEditorModalContent({
   mode,
   title,
+  placeImageUrl,
+  placeAddress,
+  placeCategoryLabel,
   tripId,
   currentUserId,
   dates,
@@ -247,12 +267,16 @@ function ScheduleEditorModalContent({
   onClose,
   onSubmit,
   onRequestDelete,
+  readOnly,
   attachmentsAvailable,
   attachmentsUnavailableMessage,
   serverAttachmentContent,
 }: {
   mode: "add" | "edit";
   title: string;
+  placeImageUrl?: string;
+  placeAddress?: string;
+  placeCategoryLabel?: string;
   tripId: string;
   currentUserId: string;
   dates: readonly WorkspaceDate[];
@@ -263,6 +287,7 @@ function ScheduleEditorModalContent({
   onClose: () => void;
   onSubmit: (value: ScheduleEditorValue, durationMinutes: number) => ItineraryMutationResult;
   onRequestDelete?: () => void;
+  readOnly: boolean;
   attachmentsAvailable: boolean;
   attachmentsUnavailableMessage?: string;
   serverAttachmentContent?: ReactNode;
@@ -310,8 +335,37 @@ function ScheduleEditorModalContent({
     if (result !== "success" && result !== "success-adjusted") setSubmitError(resultMessages[result] ?? "일정을 저장하지 못했어요.");
   };
 
-  return <ModalFrame visible title={mode === "add" ? "일정에 추가" : "일정 편집"} subtitle={title} onClose={onClose}>
-    <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={styles.editorContent}>
+  if (readOnly) {
+    const selectedDate = dates.find((date) => date.date === value.date);
+    return <ModalFrame visible title="일정 상세" subtitle={title} onClose={onClose}>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.editorContent}>
+        <View style={styles.readOnlyNotice}><Text style={styles.readOnlyNoticeTitle}>읽기 전용 일정</Text><Text style={styles.readOnlyNoticeText}>일정 정보는 확인할 수 있지만 변경하거나 삭제할 수 없어요.</Text></View>
+        <View style={styles.readOnlyDetails}>
+          <Text style={styles.fieldTitle}>날짜</Text>
+          <Text style={styles.readOnlyValue}>{selectedDate ? `${selectedDate.dayLabel} · ${selectedDate.monthDayLabel} ${selectedDate.weekdayLabel}` : value.date}</Text>
+          <Text style={styles.fieldTitle}>시간</Text>
+          <Text style={styles.readOnlyValue}>{value.startTime}–{value.endTime}{timeValidation.valid ? ` · ${timeValidation.durationMinutes}분` : ""}</Text>
+          <Text style={styles.fieldTitle}>메모</Text>
+          <Text style={styles.readOnlyValue}>{value.note.trim() || "메모 없음"}</Text>
+          <Text style={styles.fieldTitle}>DURI 변경</Text>
+          <Text style={styles.readOnlyValue}>{value.lockedForDuri ? "잠김" : "변경 가능"}</Text>
+        </View>
+        <SecondaryButton label="닫기" onPress={onClose} />
+      </ScrollView>
+    </ModalFrame>;
+  }
+
+  const footer = <View style={styles.stickyActions}>
+    {mode === "edit" && onRequestDelete ? <Pressable accessibilityRole="button" accessibilityLabel="일정에서 삭제" onPress={onRequestDelete} style={({ pressed }) => [styles.deleteAction, pressed && styles.pressed]}><Text style={styles.deleteActionText}>삭제</Text></Pressable> : <Pressable accessibilityRole="button" accessibilityLabel="일정 편집 취소" onPress={onClose} style={({ pressed }) => [styles.cancelAction, pressed && styles.pressed]}><Text style={styles.cancelActionText}>취소</Text></Pressable>}
+    <View style={styles.saveAction}><PrimaryButton label={mode === "add" ? "일정에 추가" : "변경 저장"} disabled={endConditionConflict} onPress={submit} /></View>
+  </View>;
+
+  return <ModalFrame visible title={mode === "add" ? "일정에 추가" : "일정 편집"} subtitle={title} footer={footer} onClose={onClose}>
+    <ScrollView style={styles.editorScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={styles.editorContent}>
+      {placeImageUrl || placeAddress || placeCategoryLabel ? <View style={styles.placeIdentity}>
+        {placeImageUrl ? <View style={styles.placeImage}><RemoteImage uri={placeImageUrl} accessibilityLabel={`${title} 이미지`} aspectRatio={1} /></View> : null}
+        <View style={styles.placeIdentityCopy}><Text numberOfLines={1} style={styles.placeName}>{title}</Text>{placeCategoryLabel ? <Text style={styles.placeCategory}>{placeCategoryLabel}</Text> : null}{placeAddress ? <Text numberOfLines={2} style={styles.placeAddress}>{placeAddress}</Text> : null}</View>
+      </View> : null}
       <Text style={styles.fieldTitle}>날짜</Text>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.dateOptions} accessibilityRole="tablist">
         {dates.map((date) => <Pressable key={date.date} accessibilityRole="tab" accessibilityState={{ selected: value.date === date.date }} onPress={() => setValue((current) => ({ ...current, date: date.date }))} style={({ pressed }) => [styles.dateOption, value.date === date.date && styles.dateOptionSelected, pressed && styles.pressed]}><Text style={[styles.dateDay, value.date === date.date && styles.dateTextSelected]}>{date.dayLabel}</Text><Text style={[styles.dateLabel, value.date === date.date && styles.dateTextSelected]}>{date.monthDayLabel} {date.weekdayLabel}</Text><Text style={[styles.dateCount, value.date === date.date && styles.dateCountSelected]}>{date.itineraryCount}개</Text></Pressable>)}
@@ -348,7 +402,6 @@ function ScheduleEditorModalContent({
       <View style={styles.existing}><Text style={styles.fieldTitle}>이 날짜의 기존 일정</Text>{itinerary.filter((item) => item.date === value.date && item.id !== editingItemId).length ? itinerary.filter((item) => item.date === value.date && item.id !== editingItemId).map((item) => <Text key={item.id} style={styles.existingText}>• {item.startTime}–{addMinutesToTime(item.startTime, item.durationMinutes) ?? "--:--"} · {item.note ?? "장소 일정"}</Text>) : <Text style={styles.existingText}>아직 일정이 없어요.</Text>}</View>
       {conflicts.length ? <View accessibilityRole="alert" style={styles.conflictBox}><Text style={styles.conflictTitle}>시간이 겹치는 일정이 있어요</Text><Text style={styles.conflictText}>겹침을 무시하고 저장하지 않습니다. 시간을 조정해 주세요.</Text>{suggestedTime ? <Pressable accessibilityRole="button" onPress={() => setValue((current) => ({ ...current, startTime: suggestedTime, endTime: addMinutesToTime(suggestedTime, timeValidation.valid ? timeValidation.durationMinutes : 60) ?? current.endTime }))} style={styles.suggestion}><Text style={styles.suggestionText}>{suggestedTime} 빈 시간 적용</Text></Pressable> : null}</View> : null}
       {submitError ? <Text accessibilityRole="alert" style={styles.submitError}>{submitError}</Text> : null}
-      <View style={styles.editorActions}><PrimaryButton label={mode === "add" ? "일정에 추가" : "변경 저장"} disabled={endConditionConflict} onPress={submit} />{mode === "edit" && onRequestDelete ? <SecondaryButton label="일정에서 삭제" onPress={onRequestDelete} /> : null}<SecondaryButton label="취소" onPress={onClose} /></View>
     </ScrollView>
   </ModalFrame>;
 }
@@ -693,12 +746,27 @@ const styles = StyleSheet.create({
   resizeHandleZone: { minHeight: 44, alignItems: "center", justifyContent: "center" },
   handle: { width: 48, height: 5, alignSelf: "center", borderRadius: radius.pill, backgroundColor: colors.borderStrong },
   modalHeader: { flexDirection: "row", alignItems: "flex-start", gap: spacing.sm, paddingHorizontal: spacing.lg, paddingBottom: spacing.md },
+  modalBody: { minHeight: 0 },
+  modalBodyWithFooter: { flexShrink: 1 },
+  modalFooter: { flexShrink: 0, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.surface, paddingHorizontal: spacing.lg, paddingTop: spacing.sm },
   modalCopy: { flex: 1, gap: 2 },
   modalTitle: { ...typography.title, color: colors.text },
   modalSubtitle: { ...typography.caption, color: colors.textSecondary },
   close: { minWidth: sizes.touch, minHeight: sizes.touch, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: colors.surfaceMuted },
   closeText: { ...typography.caption, color: colors.primary },
-  editorContent: { gap: spacing.lg, paddingHorizontal: spacing.lg, paddingBottom: spacing.xl },
+  editorScroll: { flexShrink: 1 },
+  editorContent: { gap: spacing.lg, paddingHorizontal: spacing.lg, paddingBottom: spacing.lg },
+  placeIdentity: { flexDirection: "row", alignItems: "center", gap: spacing.sm, borderRadius: radius.lg, backgroundColor: colors.surfaceMuted, padding: spacing.sm },
+  placeImage: { width: 64, overflow: "hidden", borderRadius: radius.md },
+  placeIdentityCopy: { flex: 1, minWidth: 0 },
+  placeName: { ...typography.subtitle, color: colors.text },
+  placeCategory: { ...typography.caption, color: colors.primary },
+  placeAddress: { ...typography.caption, color: colors.textSecondary },
+  readOnlyNotice: { gap: spacing.xs, borderRadius: radius.md, backgroundColor: colors.surfaceMuted, padding: spacing.md },
+  readOnlyNoticeTitle: { ...typography.bodyStrong, color: colors.text },
+  readOnlyNoticeText: { ...typography.caption, color: colors.textSecondary },
+  readOnlyDetails: { gap: spacing.xs, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: spacing.md },
+  readOnlyValue: { ...typography.body, color: colors.textSecondary, marginBottom: spacing.sm },
   fieldTitle: { ...typography.bodyStrong, color: colors.text, marginBottom: spacing.xs },
   dateOptions: { gap: spacing.xs },
   dateOption: { minWidth: 96, minHeight: 68, justifyContent: "center", borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceMuted, paddingHorizontal: spacing.sm },
@@ -733,7 +801,12 @@ const styles = StyleSheet.create({
   duriLockState: { ...typography.caption, color: colors.textSecondary },
   duriLockStateSelected: { color: colors.primary },
   submitError: { ...typography.caption, color: colors.danger },
-  editorActions: { gap: spacing.sm },
+  stickyActions: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  saveAction: { flex: 1 },
+  deleteAction: { minWidth: 92, minHeight: 52, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: colors.dangerSoft },
+  deleteActionText: { ...typography.bodyStrong, color: colors.danger },
+  cancelAction: { minWidth: 92, minHeight: 52, alignItems: "center", justifyContent: "center", borderRadius: radius.md, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.surface },
+  cancelActionText: { ...typography.bodyStrong, color: colors.textSecondary },
   selectContent: { flex: 1, minHeight: 0, gap: spacing.md, paddingHorizontal: spacing.lg },
   candidateList: { flex: 1, minHeight: 0 },
   candidateRows: { gap: spacing.xs, paddingBottom: spacing.md },

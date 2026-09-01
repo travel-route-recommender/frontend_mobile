@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Animated,
+  Modal,
   PanResponder,
   Pressable,
   ScrollView,
@@ -18,7 +19,7 @@ import {
   WORKSPACE_SLOT_COUNT,
   WORKSPACE_START_MINUTES,
 } from "../../../data/workspaceSchedule";
-import { colors, radius, shadows, spacing, typography } from "../../../theme/tokens";
+import { colors, radius, shadows, sizes, spacing, typography } from "../../../theme/tokens";
 import {
   formatMinutesToTime,
   getSnappedDurationFromTranslation,
@@ -35,6 +36,7 @@ import type { ItineraryItemViewModel, WorkspaceDate } from "../types";
 const TIME_AXIS_WIDTH = 58;
 const GRID_VIEWPORT_HEIGHT = 520;
 const MOVE_LONG_PRESS_MS = 240;
+const EMPTY_DAY_TOP = ((6 * 60 + 30 - WORKSPACE_START_MINUTES) / SLOT_MINUTES) * SLOT_HEIGHT_PX + spacing.sm;
 
 export function WorkspaceScheduleGrid({
   date,
@@ -61,6 +63,7 @@ export function WorkspaceScheduleGrid({
 }) {
   const scrollRef = useRef<ScrollView | null>(null);
   const itemsRef = useRef(items);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   useEffect(() => {
     itemsRef.current = items;
@@ -82,7 +85,16 @@ export function WorkspaceScheduleGrid({
     <View style={styles.header}>
       <View style={styles.headerCopy}>
         <Text style={styles.eyebrow}>{date.dayLabel} · {date.monthDayLabel} {date.weekdayLabel}</Text>
-        <Text style={styles.title}>일정표</Text>
+        <View style={styles.titleRow}>
+          <Text style={styles.title}>일정표</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="일정 사용법 열기"
+            hitSlop={8}
+            onPress={() => setHelpOpen(true)}
+            style={({ pressed }) => [styles.helpButton, pressed && styles.pressed]}
+          ><Text style={styles.helpButtonText}>?</Text></Pressable>
+        </View>
         <Text style={styles.guide}>00:00–24:00 · {SLOT_MINUTES}분 단위</Text>
       </View>
       {canEdit ? <Pressable
@@ -92,7 +104,6 @@ export function WorkspaceScheduleGrid({
         style={({ pressed }) => [styles.addButton, pressed && styles.pressed]}
       ><Text style={styles.addButtonText}>+ 일정 추가</Text></Pressable> : null}
     </View>
-    <Text style={styles.interactionGuide}>시간표를 좌우로 밀어 DAY를 바꾸고, 오른쪽·아래 핸들로 일정 시간과 체류시간을 조절하세요.</Text>
     {endCondition ? <View style={styles.endConditionSummary}>
       <Text style={styles.endConditionSummaryTitle}>마지막 날 복귀 조건</Text>
       <Text style={styles.endConditionSummaryText}>{formatEndConditionStart(endCondition)} → {endCondition.locationName} {endCondition.deadline}까지</Text>
@@ -119,9 +130,11 @@ export function WorkspaceScheduleGrid({
             />;
           })}
           {endCondition ? <EndConditionTimelineMarker entry={endCondition} /> : null}
-          {!items.length ? <View style={styles.empty}>
-            <Text style={styles.emptyTitle}>아직 일정이 없어요</Text>
-            <Text style={styles.emptyText}>아래 후보 장소 보드에서 장소를 일정에 추가해보세요.</Text>
+          {!items.length ? <View style={[styles.empty, { top: EMPTY_DAY_TOP }]}>
+            <View style={styles.emptyIcon}><Text style={styles.emptyIconText}>＋</Text></View>
+            <Text style={styles.emptyTitle}>이 DAY는 아직 비어 있어요</Text>
+            <Text style={styles.emptyText}>{canEdit ? "후보 장소를 골라 하루의 첫 일정을 만들어보세요." : "이 DAY에는 등록된 일정이 없어요."}</Text>
+            {canEdit ? <Pressable accessibilityRole="button" accessibilityLabel="일정 먼저 만들기" onPress={onAdd} style={({ pressed }) => [styles.emptyAction, pressed && styles.pressed]}><Text style={styles.emptyActionText}>일정 먼저 만들기</Text></Pressable> : null}
           </View> : null}
           {items.map((item) => <ScheduleGridItem
             key={`${item.id}-${item.startTime}-${item.durationMinutes}`}
@@ -135,7 +148,28 @@ export function WorkspaceScheduleGrid({
         </View>
       </View>
     </ScrollView>
+    <WorkspaceScheduleHelpModal visible={helpOpen} onClose={() => setHelpOpen(false)} />
   </View>;
+}
+
+function WorkspaceScheduleHelpModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+  return <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <View style={styles.helpOverlay}>
+      <Pressable accessibilityRole="button" accessibilityLabel="일정 사용법 닫기" onPress={onClose} style={StyleSheet.absoluteFill} />
+      <View accessibilityViewIsModal style={styles.helpCard}>
+        <View style={styles.helpHeader}>
+          <Text style={styles.helpTitle}>일정 사용법</Text>
+          <Pressable accessibilityRole="button" onPress={onClose} style={({ pressed }) => [styles.helpClose, pressed && styles.pressed]}><Text style={styles.helpCloseText}>닫기</Text></Pressable>
+        </View>
+        <View style={styles.helpList}>
+          <View style={styles.helpItem}><Text style={styles.helpBullet}>•</Text><Text style={styles.helpText}>DAY를 눌러 날짜를 전환할 수 있어요.</Text></View>
+          <View style={styles.helpItem}><Text style={styles.helpBullet}>•</Text><Text style={styles.helpText}>일정 카드를 움직여 시간을 변경할 수 있어요.</Text></View>
+          <View style={styles.helpItem}><Text style={styles.helpBullet}>•</Text><Text style={styles.helpText}>카드 아래 핸들로 체류시간을 조절할 수 있어요.</Text></View>
+          <View style={styles.helpItem}><Text style={styles.helpBullet}>•</Text><Text style={styles.helpText}>후보 장소는 아래에서 일정에 추가할 수 있어요.</Text></View>
+        </View>
+      </View>
+    </View>
+  </Modal>;
 }
 
 function TimeAxis() {
@@ -364,8 +398,8 @@ function ScheduleGridItem({
   >
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${item.placeName} 일정 편집${item.lockedForDuri ? ", 두리 변경 잠금" : ""}`}
-      accessibilityHint={micro ? "두 번 탭하여 시간과 체류시간을 편집하세요" : undefined}
+      accessibilityLabel={`${item.placeName} 일정 ${canEdit ? "편집" : "상세 보기"}${item.lockedForDuri ? ", 두리 변경 잠금" : ""}`}
+      accessibilityHint={micro ? canEdit ? "두 번 탭하여 시간과 체류시간을 편집하세요" : "두 번 탭하여 일정 상세를 확인하세요" : undefined}
       hitSlop={compact ? { top: 12, bottom: 12 } : undefined}
       onPress={onEdit}
       style={({ pressed }) => [styles.itemOpen, visualCompact && styles.itemOpenCompact, visualMicro && styles.itemOpenMicro, pressed && styles.itemPressed]}
@@ -411,15 +445,27 @@ function ScheduleGridItem({
 }
 
 const styles = StyleSheet.create({
-  card: { overflow: "hidden", borderRadius: radius.xl, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, ...shadows.card },
-  header: { minHeight: 78, flexDirection: "row", alignItems: "center", gap: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border, paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
+  card: { overflow: "hidden", borderRadius: radius.xl, borderWidth: 1, borderColor: "#E3E8F2", backgroundColor: colors.surface, ...shadows.card },
+  header: { minHeight: 70, flexDirection: "row", alignItems: "center", gap: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border, paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
   headerCopy: { flex: 1, minWidth: 0 },
   eyebrow: { ...typography.caption, color: colors.primary },
+  titleRow: { flexDirection: "row", alignItems: "center", gap: spacing.xs },
   title: { ...typography.subtitle, color: colors.text, marginTop: 1 },
+  helpButton: { width: 28, height: 28, alignItems: "center", justifyContent: "center", borderRadius: radius.pill, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.surface },
+  helpButtonText: { ...typography.caption, color: colors.primary },
   guide: { ...typography.caption, color: colors.textSecondary },
-  addButton: { minHeight: 44, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: colors.primary, paddingHorizontal: spacing.md },
+  addButton: { minHeight: 42, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: colors.primary, paddingHorizontal: spacing.md },
   addButtonText: { ...typography.caption, color: colors.white },
-  interactionGuide: { ...typography.caption, color: colors.textSecondary, backgroundColor: colors.surfaceMuted, paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
+  helpOverlay: { flex: 1, justifyContent: "flex-end", backgroundColor: colors.overlay, padding: spacing.lg },
+  helpCard: { width: "100%", maxWidth: 520, alignSelf: "center", gap: spacing.md, borderRadius: radius.xl, backgroundColor: colors.surface, padding: spacing.md },
+  helpHeader: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingLeft: spacing.xs },
+  helpTitle: { ...typography.subtitle, color: colors.text, flex: 1 },
+  helpClose: { minWidth: sizes.touch, minHeight: sizes.touch, alignItems: "center", justifyContent: "center" },
+  helpCloseText: { ...typography.caption, color: colors.primary },
+  helpList: { gap: spacing.sm, borderRadius: radius.lg, backgroundColor: colors.surfaceMuted, padding: spacing.md },
+  helpItem: { flexDirection: "row", alignItems: "flex-start", gap: spacing.xs },
+  helpBullet: { ...typography.bodyStrong, color: colors.primary },
+  helpText: { ...typography.body, color: colors.textSecondary, flex: 1 },
   endConditionSummary: { gap: spacing.xxs, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.warningSoft, paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
   endConditionSummaryTitle: { ...typography.bodyStrong, color: colors.warning },
   endConditionSummaryText: { ...typography.caption, color: colors.text },
@@ -429,7 +475,7 @@ const styles = StyleSheet.create({
   grid: { position: "relative", minHeight: WORKSPACE_GRID_HEIGHT_PX, flexDirection: "row" },
   timeAxis: { position: "relative", width: TIME_AXIS_WIDTH, height: WORKSPACE_GRID_HEIGHT_PX, borderRightWidth: 1, borderRightColor: colors.border, backgroundColor: colors.surface },
   timeLabel: { position: "absolute", right: spacing.xs, ...typography.caption, fontSize: 10, color: colors.textMuted },
-  dayColumn: { position: "relative", flex: 1, height: WORKSPACE_GRID_HEIGHT_PX, backgroundColor: colors.surfaceMuted },
+  dayColumn: { position: "relative", flex: 1, height: WORKSPACE_GRID_HEIGHT_PX, backgroundColor: colors.surface },
   endConditionWindow: { position: "absolute", left: 0, right: 0, zIndex: 1, borderLeftWidth: 3, borderLeftColor: colors.warning, backgroundColor: "rgba(255, 193, 7, 0.14)" },
   endConditionDeadlineLine: { position: "absolute", left: 0, right: 0, zIndex: 2, borderTopWidth: 2, borderTopColor: colors.warning, borderStyle: "dashed" },
   endConditionMarker: { position: "absolute", left: spacing.xs, right: spacing.xs, zIndex: 3, minHeight: 50, justifyContent: "center", borderRadius: radius.md, borderWidth: 1, borderColor: colors.warning, backgroundColor: colors.warningSoft, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
@@ -437,11 +483,15 @@ const styles = StyleSheet.create({
   endConditionMarkerTime: { ...typography.caption, fontSize: 10, lineHeight: 14, color: colors.textSecondary },
   slotLine: { position: "absolute", left: 0, right: 0, borderTopWidth: 1 },
   majorLine: { borderTopColor: colors.borderStrong },
-  minorLine: { borderTopColor: colors.border, borderStyle: "dashed" },
-  empty: { position: "absolute", top: spacing.md, left: spacing.md, right: spacing.md, zIndex: 2, gap: spacing.xs, borderRadius: radius.md, borderWidth: 1, borderStyle: "dashed", borderColor: colors.borderStrong, backgroundColor: colors.surface, padding: spacing.md },
-  emptyTitle: { ...typography.bodyStrong, color: colors.text },
-  emptyText: { ...typography.caption, color: colors.textSecondary },
-  item: { position: "absolute", left: spacing.xs, right: spacing.xs, zIndex: 5, overflow: "hidden", borderRadius: radius.md, borderWidth: 1, borderColor: "#AFCDF7", backgroundColor: "#E7F1FF", shadowColor: colors.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.14, shadowRadius: 8, elevation: 4 },
+  minorLine: { borderTopColor: "#EDF1F7", borderStyle: "dashed" },
+  empty: { position: "absolute", left: spacing.md, right: spacing.md, zIndex: 2, gap: spacing.xs, alignItems: "center", borderRadius: radius.lg, borderWidth: 1, borderStyle: "dashed", borderColor: "#CFC8EF", backgroundColor: "#FAF9FF", padding: spacing.lg },
+  emptyIcon: { width: 42, height: 42, alignItems: "center", justifyContent: "center", borderRadius: radius.pill, backgroundColor: "#E9E5FC" },
+  emptyIconText: { fontSize: 24, lineHeight: 28, color: "#7569BE" },
+  emptyTitle: { ...typography.bodyStrong, color: colors.text, textAlign: "center" },
+  emptyText: { ...typography.caption, color: colors.textSecondary, textAlign: "center" },
+  emptyAction: { minHeight: 44, alignItems: "center", justifyContent: "center", alignSelf: "stretch", borderRadius: radius.md, backgroundColor: "#7569BE", marginTop: spacing.xs },
+  emptyActionText: { ...typography.bodyStrong, color: colors.white },
+  item: { position: "absolute", left: spacing.xs, right: spacing.xs, zIndex: 5, overflow: "hidden", borderRadius: radius.md, borderWidth: 1, borderColor: "#9DD5BA", backgroundColor: "#DFF4E9", shadowColor: colors.success, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.13, shadowRadius: 8, elevation: 4 },
   itemConflict: { borderColor: colors.danger, backgroundColor: colors.dangerSoft },
   itemMoving: { zIndex: 20, opacity: 0.92, elevation: 12 },
   itemOpen: { height: "100%", paddingLeft: spacing.sm, paddingRight: 48, paddingTop: spacing.xs, paddingBottom: 18 },
@@ -451,9 +501,9 @@ const styles = StyleSheet.create({
   itemName: { ...typography.bodyStrong, fontSize: 13, lineHeight: 18, color: colors.navy },
   itemNameCompact: { fontSize: 11, lineHeight: 15 },
   itemNameMicro: { fontSize: 11, lineHeight: 13 },
-  itemTime: { ...typography.caption, fontSize: 10, lineHeight: 14, color: colors.primary },
+  itemTime: { ...typography.caption, fontSize: 10, lineHeight: 14, color: colors.success },
   itemMeta: { ...typography.caption, fontSize: 9, lineHeight: 13, color: colors.textSecondary },
-  moveHandle: { position: "absolute", top: 0, right: 0, width: 44, minHeight: 36, bottom: 18, alignItems: "center", justifyContent: "center", borderLeftWidth: 1, borderLeftColor: colors.border, backgroundColor: "rgba(255,255,255,0.76)" },
+  moveHandle: { position: "absolute", top: 0, right: 0, width: 44, minHeight: 36, bottom: 18, alignItems: "center", justifyContent: "center", borderLeftWidth: 1, borderLeftColor: "#B8DDCB", backgroundColor: "rgba(255,255,255,0.72)" },
   moveHandleCompact: { width: 40, minHeight: 0, bottom: 14 },
   moveHandleMicro: { width: 36, bottom: 0 },
   moveHandleText: { ...typography.bodyStrong, color: colors.textSecondary },
@@ -461,7 +511,7 @@ const styles = StyleSheet.create({
   resizeHandle: { position: "absolute", left: spacing.xs, right: spacing.xs, bottom: 0, height: 18, alignItems: "center", justifyContent: "center", borderTopWidth: 1, borderTopColor: colors.border },
   resizeHandleCompact: { height: 14 },
   resizeHandleMicro: { position: "absolute", left: "50%", bottom: 0, width: 56, height: "100%", transform: [{ translateX: -28 }], alignItems: "center", justifyContent: "flex-end" },
-  resizeHandleMicroIndicator: { width: 40, height: 3, marginBottom: 1, borderRadius: radius.pill, backgroundColor: colors.primary },
+  resizeHandleMicroIndicator: { width: 40, height: 3, marginBottom: 1, borderRadius: radius.pill, backgroundColor: colors.success },
   resizeHandleMicroIndicatorActive: { height: 4, backgroundColor: colors.primaryPressed },
   resizeHandleText: { ...typography.caption, fontSize: 10, lineHeight: 14, color: colors.textSecondary },
   handleActive: { backgroundColor: colors.primary },

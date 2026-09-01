@@ -209,6 +209,24 @@ const apiAdded = prepareApiWorkspaceScheduleAddition({
   value: { date: "2026-08-19", startTime: "02:00", durationMinutes: 60, note: "야경", lockedForDuri: true },
 });
 assert(apiAdded.ok && apiAdded.draft.itinerary.length === 2 && apiAdded.draft.metadataByItemId[apiAdded.itemId as string]?.placeName === "광안리", "15a. API 후보를 metadata와 함께 일정 draft로 추가");
+assert(apiAdded.ok, "15aa. 중복 일정 검증을 위한 첫 후보 일정 추가");
+const apiRepeated = prepareApiWorkspaceScheduleAddition({
+  trip: apiTrip,
+  currentUserId: "user-1",
+  snapshot: {
+    ...snapshot,
+    itinerary: apiAdded.draft.itinerary,
+    metadataByItemId: apiAdded.draft.metadataByItemId,
+  },
+  candidate: apiCandidate,
+  place: apiPlace,
+  value: { date: "2026-08-20", startTime: "03:00", durationMinutes: 45, note: "다시 방문", lockedForDuri: false },
+});
+assert(apiRepeated.ok
+  && apiRepeated.draft.itinerary.filter((item) => item.placeId === OTHER_PLACE_ID).length === 2
+  && apiRepeated.draft.itinerary.some((item) => item.id === apiAdded.itemId)
+  && apiRepeated.itemId !== apiAdded.itemId,
+"15ab. 같은 후보 장소를 다시 추가하면 첫 일정을 보존하고 별도 item ID로 생성");
 const apiOverlap = prepareApiWorkspaceScheduleAddition({
   trip: apiTrip,
   currentUserId: "user-1",
@@ -299,6 +317,18 @@ const apiEndConditionRejected = prepareApiWorkspaceScheduleUpdate({
 assert(!apiEndConditionRejected.ok && apiEndConditionRejected.status === "end-condition", "15f. 기기 복귀 조건을 침범하는 API 일정 변경 차단");
 const apiNonMember = prepareApiWorkspaceScheduleRemoval({ trip: apiTrip, currentUserId: "user-2", snapshot, itemId: "item-1" });
 assert(!apiNonMember.ok && apiNonMember.status === "not-member", "15g. 서버 방 비멤버의 일정 draft 변경 차단");
+const readOnlyTrip = { ...apiTrip, status: "completed" as const };
+const readOnlySnapshotBefore = JSON.stringify(snapshot);
+const readOnlyResults = [
+  prepareApiWorkspaceScheduleAddition({ trip: readOnlyTrip, currentUserId: "user-1", snapshot, candidate: apiCandidate, place: apiPlace, value: { date: "2026-08-20", startTime: "03:00", durationMinutes: 60, note: "", lockedForDuri: false } }),
+  prepareApiWorkspaceScheduleAddition({ trip: readOnlyTrip, currentUserId: "user-1", snapshot, candidate: { ...apiCandidate, placeId: PLACE_ID }, place: { ...apiPlace, id: PLACE_ID }, value: { date: "2026-08-20", startTime: "04:00", durationMinutes: 60, note: "", lockedForDuri: false } }),
+  prepareApiWorkspaceScheduleUpdate({ trip: readOnlyTrip, currentUserId: "user-1", snapshot, itemId: "item-1", value: { date: "2026-08-19", startTime: "03:00", durationMinutes: 90, note: "drag", lockedForDuri: true } }),
+  prepareApiWorkspaceScheduleUpdate({ trip: readOnlyTrip, currentUserId: "user-1", snapshot, itemId: "item-1", value: { date: "2026-08-19", startTime: "00:15", durationMinutes: 60, note: "resize", lockedForDuri: true } }),
+  prepareApiWorkspaceScheduleUpdate({ trip: readOnlyTrip, currentUserId: "user-1", snapshot, itemId: "item-1", value: { date: "2026-08-20", startTime: "05:00", durationMinutes: 45, note: "edit", lockedForDuri: false } }),
+  prepareApiWorkspaceScheduleRemoval({ trip: readOnlyTrip, currentUserId: "user-1", snapshot, itemId: "item-1" }),
+];
+assert(readOnlyResults.every((result) => !result.ok && result.status === "trip-not-editable"), "15h. read-only Add·Duplicate Add·Drag·Resize·Edit Save·Delete draft를 모두 차단");
+assert(JSON.stringify(snapshot) === readOnlySnapshotBefore, "15i. read-only mutation 시도 뒤 서버 일정 snapshot이 변하지 않음");
 const builtOverlays = buildApiWorkspaceOverlays([{ ...snapshot.itinerary[0] as ItineraryItem, preferredByUserIds: [ROOM_ID], lockedForDuri: true }]);
 const parsedOverlays = parseApiWorkspaceOverlays({
   version: API_WORKSPACE_OVERLAY_STORAGE_VERSION,

@@ -16,12 +16,13 @@ export const preferenceSteps: readonly {
   id: PreferenceStepId;
   title: string;
   description: string;
+  progressTitle: string;
 }[] = [
-  { id: "challengeStyle", title: "여행 메이트와 취향을 맞춰볼까요?", description: "메신저와 여행 현장에 나타나는 여러 장면에서 지금의 나와 가까운 선택을 골라 주세요." },
-  { id: "accommodation", title: "오늘 밤 머물 숙소를 골라볼까요?", description: "두 숙소 카드 사이에서 마음이 기우는 정도를 표시해 주세요." },
-  { id: "stamina", title: "아직 보고 싶은 곳이 하나 남았어요", description: "아침부터 여행한 지금, 내 실제 체력과 가장 가까운 행동을 골라 주세요." },
-  { id: "budget", title: "여행 예산의 우선순위를 정해볼까요?", description: "가장 많이 쓰고 싶은 항목부터 하나씩 골라 순서를 완성해 주세요." },
-  { id: "discovery", title: "이번 여행을 완성할 두 장면을 골라볼까요?", description: "대표 명소와 로컬 동네는 반대 선택이 아니에요. 각각 끌리는 정도를 알려 주세요." },
+  { id: "challengeStyle", title: "여행 메이트와 취향을 맞춰볼까요?", description: "메신저와 여행 현장에 나타나는 여러 장면에서 지금의 나와 가까운 선택을 골라 주세요.", progressTitle: "여행 취향과 선택" },
+  { id: "accommodation", title: "오늘 밤 머물 숙소를 골라볼까요?", description: "두 숙소 카드 사이에서 마음이 기우는 정도를 표시해 주세요.", progressTitle: "숙소 기준" },
+  { id: "stamina", title: "아직 보고 싶은 곳이 하나 남았어요", description: "아침부터 여행한 지금, 내 실제 체력과 가장 가까운 행동을 골라 주세요.", progressTitle: "여행 체력" },
+  { id: "budget", title: "여행 예산의 우선순위를 정해볼까요?", description: "가장 많이 쓰고 싶은 항목부터 하나씩 골라 순서를 완성해 주세요.", progressTitle: "예산 우선순위" },
+  { id: "discovery", title: "이번 여행을 완성할 두 장면을 골라볼까요?", description: "대표 명소와 로컬 동네는 반대 선택이 아니에요. 각각 끌리는 정도를 알려 주세요.", progressTitle: "관심 장면" },
 ];
 
 export const activityBlocks: readonly { id: ActivityTagId; icon: string; label: string; color: string; softColor: string }[] = [
