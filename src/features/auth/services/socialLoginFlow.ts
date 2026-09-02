@@ -1,47 +1,25 @@
-import type { ClientMetadata } from "../../../services/clientMetadata";
 import type { ApiClient } from "../../../services/apiClient";
-import type { SocialChallenge, SocialProvider } from "../types";
+import type { SocialProvider } from "../types";
+import { supportsBackendSocialProvider } from "./backendAuthContract";
 
 type SocialLoginFlowDependencies = {
   apiClient: ApiClient;
-  getClientMetadata: () => Promise<ClientMetadata>;
   requestKakaoAccessToken: () => Promise<string>;
-  requestProviderIdToken: (
-    provider: SocialProvider,
-    challenge: SocialChallenge,
-  ) => Promise<{ kind: "id-token"; idToken: string }>;
 };
 
 export async function requestSocialLoginSession<Session>(
   provider: SocialProvider,
   dependencies: SocialLoginFlowDependencies,
 ): Promise<Session> {
-  if (provider === "kakao") {
-    const accessToken = await dependencies.requestKakaoAccessToken();
-    return dependencies.apiClient.request<Session>({
-      path: "/auth/oauth/kakao",
-      method: "POST",
-      auth: false,
-      body: { accessToken },
-    });
+  if (!supportsBackendSocialProvider(provider)) {
+    throw new Error("현재 백엔드는 Google 로그인을 지원하지 않아요.");
   }
 
-  const metadata = await dependencies.getClientMetadata();
-  const challenge = await dependencies.apiClient.request<SocialChallenge>({
-    path: "/auth/social/challenge",
-    method: "POST",
-    auth: false,
-    body: { provider, installationId: metadata.installationId },
-  });
-  const authorization = await dependencies.requestProviderIdToken(provider, challenge);
+  const accessToken = await dependencies.requestKakaoAccessToken();
   return dependencies.apiClient.request<Session>({
-    path: `/auth/social/${provider}`,
+    path: "/auth/oauth/kakao",
     method: "POST",
     auth: false,
-    body: {
-      idToken: authorization.idToken,
-      challengeId: challenge.challengeId,
-      ...metadata,
-    },
+    body: { accessToken },
   });
 }

@@ -4,7 +4,7 @@ import { StyleSheet, Text, View } from "react-native";
 import { AppHeader, Card, PrimaryButton, Screen } from "../../../components/common";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import { AuthErrorBanner, KakaoButton } from "../../auth/components/AuthControls";
-import { authService } from "../../auth/services/authService";
+import { authCapabilities, authService } from "../../auth/services/authService";
 import { useAuthSessionStore } from "../../auth/store/useAuthSessionStore";
 
 export function SocialConnectionsScreen() {
@@ -21,6 +21,19 @@ export function SocialConnectionsScreen() {
     }
     setLinked(true);
   };
+
+  if (!authCapabilities.socialIdentityLinking) {
+    return (
+      <Screen testID="social-connections-screen">
+        <AppHeader title="로그인 수단" subtitle="계정에 연결된 로그인 방법을 확인해요" onBack={() => router.back()} />
+        <Card style={styles.providerCard}>
+          <Text style={styles.providerName}>{provider === "kakao" ? "카카오 계정으로 로그인 중이에요." : "현재 로그인 수단을 추가할 수 없어요."}</Text>
+          <Text style={styles.noticeText}>현재 백엔드는 로그인 수단 연결 API를 제공하지 않아요.</Text>
+          <PrimaryButton label="마이페이지로 돌아가기" onPress={() => router.back()} />
+        </Card>
+      </Screen>
+    );
+  }
 
   return (
     <Screen testID="social-connections-screen">

@@ -3,8 +3,9 @@ import type { SessionKind } from "../types";
 import { PrimaryButton, SecondaryButton } from "../../../components/common";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
 
-export function GuestPromptModal({ visible, sessionKind, actionLabel, onClose, onLogin, onSignup }: { visible: boolean; sessionKind: SessionKind | null; actionLabel?: string; onClose: () => void; onLogin: () => void; onSignup: () => void }) {
+export function GuestPromptModal({ visible, sessionKind, actionLabel, guestUpgradeAvailable = true, onClose, onLogin, onSignup }: { visible: boolean; sessionKind: SessionKind | null; actionLabel?: string; guestUpgradeAvailable?: boolean; onClose: () => void; onLogin: () => void; onSignup: () => void }) {
   const guest = sessionKind === "guest";
+  const canUpgradeGuest = guest && guestUpgradeAvailable;
   return <Modal animationType="fade" transparent visible={visible} onRequestClose={onClose} statusBarTranslucent>
     <View style={styles.overlay}>
       <Pressable accessibilityRole="button" accessibilityLabel="안내 닫기" style={StyleSheet.absoluteFill} onPress={onClose} />
@@ -12,8 +13,8 @@ export function GuestPromptModal({ visible, sessionKind, actionLabel, onClose, o
         <View style={styles.handle} />
         <Text style={styles.emoji}>{guest ? "🧳" : "🔐"}</Text>
         <Text style={styles.title}>{guest ? "회원 계정이 필요해요" : "로그인하고 함께 계획해요"}</Text>
-        <Text style={styles.description}>{guest ? `초대 여행은 둘러볼 수 있지만 ${actionLabel ?? "이 기능"}은 회원 가입 후 사용할 수 있어요.` : `${actionLabel ?? "이 기능"}은 로그인한 회원만 사용할 수 있어요. 지금 가입하면 저장한 여행 정보를 이어서 관리할 수 있어요.`}</Text>
-        <View style={styles.actions}><PrimaryButton label={guest ? "게스트 계정 업그레이드" : "회원가입"} onPress={onSignup} /><SecondaryButton label="로그인" onPress={onLogin} /><Pressable accessibilityRole="button" onPress={onClose} style={styles.closeButton}><Text style={styles.closeText}>나중에</Text></Pressable></View>
+        <Text style={styles.description}>{guest ? `초대 여행은 둘러볼 수 있지만 ${actionLabel ?? "이 기능"}은 회원 가입 후 사용할 수 있어요.${canUpgradeGuest ? " 현재 게스트 데이터를 유지해서 전환할 수 있어요." : " 현재 서버에서는 게스트 데이터 자동 이전을 지원하지 않아요."}` : `${actionLabel ?? "이 기능"}은 로그인한 회원만 사용할 수 있어요. 지금 가입하면 저장한 여행 정보를 이어서 관리할 수 있어요.`}</Text>
+        <View style={styles.actions}><PrimaryButton label={canUpgradeGuest ? "게스트 계정 업그레이드" : "회원가입"} onPress={onSignup} /><SecondaryButton label="로그인" onPress={onLogin} /><Pressable accessibilityRole="button" onPress={onClose} style={styles.closeButton}><Text style={styles.closeText}>나중에</Text></Pressable></View>
       </View>
     </View>
   </Modal>;

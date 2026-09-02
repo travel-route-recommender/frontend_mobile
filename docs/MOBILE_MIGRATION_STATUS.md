@@ -73,12 +73,12 @@
 - 도메인 타입과 순수 Duri 엔진 이식
 - 잘못된 placeId/tripId와 not-found 오류 상태
 - 로그인, 가입 방식 선택, 이메일 가입, 임시 약관 화면
-- mock 초대 코드 guest 참여와 데모 여행 membership
+- 백엔드 초대 코드 기반 guest 참여와 여행 membership
 - 프로필 설정, 프리셋 아바타, 온보딩 소개
 - anonymous/guest/member 세션 분리와 hydration bootstrap
 - AsyncStorage 비민감 Auth Session persist와 SecureStore clear 경계
 - 장소 저장, 후보 추가, 새 여행, 저장 탭, 마이페이지 Member Gate
-- mock/api/hybrid Auth 동작 분리와 API 계약 대기 오류
+- API 전용 Auth 동작과 미지원 계약 오류
 
 ## 부분 완료
 

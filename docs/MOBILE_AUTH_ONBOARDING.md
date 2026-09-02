@@ -1,13 +1,13 @@
 # 모바일 인증·온보딩
 
-이 문서는 `Frontend_mobile`의 프론트엔드 인증 프로토타입 범위와 서버 연결 경계를 설명한다. 현재 인증은 `EXPO_PUBLIC_DATA_SOURCE`에 따라 mock 데모 또는 Auth API 호출로 분리되며, Google/Kakao 네이티브 로그인은 development build와 외부 콘솔 설정이 필요하다.
+이 문서는 `Frontend_mobile`의 프론트엔드 인증 범위와 서버 연결 경계를 설명한다. 인증은 `EXPO_PUBLIC_DATA_SOURCE`와 관계없이 Auth API를 사용한다. 현재 Kakao 네이티브 로그인은 development build와 외부 콘솔 설정이 필요하며, Google 로그인은 백엔드 계약 추가 전까지 노출하지 않는다.
 
 ## 1. 인증 route
 
 | route | 화면 | 역할 |
 |---|---|---|
-| `/(auth)/login` | `LoginScreen` | 이메일·Google/Kakao 로그인, 익명 둘러보기 |
-| `/(auth)/signup-choice` | `SignupChoiceScreen` | 이메일 또는 Google/Kakao 시작 방식 선택 |
+| `/(auth)/login` | `LoginScreen` | 이메일·Kakao 로그인, 익명 둘러보기 |
+| `/(auth)/signup-choice` | `SignupChoiceScreen` | 이메일 또는 Kakao 시작 방식 선택 |
 | `/(auth)/signup-email` | `SignupEmailScreen` | 이메일·비밀번호와 필수 약관 동의 |
 | `/(auth)/invite` | `InviteJoinScreen` | 링크 preview, 활성 상태 검증, member 또는 guest 참여 |
 | `/(auth)/terms?type=service` | `TermsScreen` | 임시 서비스 안내 문구 |
@@ -30,8 +30,8 @@ route 파일은 `src/features/auth/screens`의 화면만 export한다. 긴 화�
 ## 3. sessionKind
 
 - `anonymous`: 로그인 없이 홈·탐색·장소 상세를 둘러보는 세션. 가짜 User를 만들지 않는다.
-- `guest`: mock 초대 링크로 특정 여행방에 바로 참여한 임시 사용자. guest → member 병합은 구현하지 않는다.
-- `member`: 이메일, Google 또는 Kakao로 시작한 회원 세션.
+- `guest`: 백엔드 초대 코드로 특정 여행방에 참여한 임시 사용자. guest → member 병합은 백엔드 계약 추가 전까지 지원하지 않는다.
+- `member`: 이메일 또는 Kakao로 시작한 회원 세션. Google은 백엔드 계약 추가 후 활성화한다.
 - `null`: 아직 시작 방법을 선택하지 않았거나 로그아웃한 상태.
 
 ## 4. 권한
@@ -73,30 +73,26 @@ route 파일은 `src/features/auth/screens`의 화면만 export한다. 긴 화�
 
 ## 7. SecureStore
 
-`nativeTokenStorage` adapter와 로그아웃 시 `clearTokens()` 호출은 유지한다. 현재는 access/refresh token을 생성하거나 저장하지 않으므로 SecureStore에 새 인증 값이 기록되지 않는다. 실제 계약이 확정되면 token만 이 adapter를 통해 저장하고 AsyncStorage에는 넣지 않는다.
+`nativeTokenStorage` adapter는 백엔드가 발급한 access/refresh token을 저장하고, 로그아웃 시 `clearTokens()`를 호출한다. 인증 토큰은 AsyncStorage에 저장하지 않는다.
 
 ## 8. Auth API와 네이티브 소셜 로그인
 
 - login/signup/join-by-invite request·response DTO는 access/refresh token과 `user` payload를 반환하는 계약을 기대한다.
-- Google/Kakao 소셜 로그인은 서버 challenge의 nonce를 네이티브 SDK에 전달하고, provider ID Token과 `challengeId`를 서버에 보낸다.
-- Google은 `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`가 ID Token audience이며, iOS는 `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID`로 URL scheme을 구성한다.
+- 현재 카카오 로그인은 네이티브 SDK의 access token을 `/auth/oauth/kakao`로 교환한다.
+- Google 로그인은 백엔드 검증·교환 API가 추가될 때까지 노출하지 않는다. 프런트 설정은 `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`와 iOS용 `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID`를 사용한다.
 - Android Google OAuth client에는 package `com.tripmatch.app.dev`와 빌드 인증서 SHA-1이 등록되어야 한다.
 - Kakao는 `EXPO_PUBLIC_KAKAO_NATIVE_APP_KEY`로 네이티브 SDK를 초기화한다.
 - guest 계정 수명, member 병합, 초대 코드 오류 코드, 이메일·비밀번호·닉네임 서버 검증 규칙, 약관 버전과 동의 이력은 운영 정책 확정이 필요하다.
 
-프런트 mock 링크 관리, OS/Kakao 공유 경계와 추후 API 계약은 `MOBILE_INVITE_LINK_FLOW.md`를 따른다.
+OS/Kakao 공유 경계와 추후 API 계약은 `MOBILE_INVITE_LINK_FLOW.md`를 따른다.
 
-## 9. mock 정보
+## 9. API 인증 원칙
 
-- 이메일: `demo@duri.app`
-- 비밀번호: `duri2026`
-- 초대 코드: `DEMO2026`
-- 데모 회원 ID: `user-soomin`
-- 데모 guest ID: `guest-demo2026`
+- 인증은 `EXPO_PUBLIC_DATA_SOURCE`와 관계없이 백엔드 API를 사용한다.
+- 앱에 고정된 데모 계정, 데모 비밀번호, 데모 초대 코드를 두지 않는다.
+- 로그인·회원가입·초대 참여 결과는 백엔드 토큰과 사용자 응답으로만 확정한다.
 
-이 값은 `src/features/auth/config.ts` 한 곳에 정의한다. 이메일 가입 ID는 정규화한 이메일로부터 안정적으로 생성하며 `Date.now()`를 사용하지 않는다.
-
-비밀번호 6자, 닉네임 2~12자, 초대 코드 8자리 규칙은 mock UI 검증 기준일 뿐 서버 규칙이 아니다. 서버 계약 확정 후 config와 순수 validation을 함께 조정한다.
+비밀번호, 닉네임, 초대 코드의 클라이언트 검증은 사용자 입력 안내용이며 서버 검증을 대체하지 않는다.
 
 ## 10. Member Gate 적용 위치
 

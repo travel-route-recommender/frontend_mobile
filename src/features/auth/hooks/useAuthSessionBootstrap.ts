@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from "react";
-import { environment } from "../../../config/environment";
 import { authService, setSessionInvalidatedHandler } from "../services/authService";
 import { activateLocalPrivateDataForUser } from "../services/localPrivateData";
 import { useAuthSessionStore } from "../store/useAuthSessionStore";
@@ -23,15 +22,6 @@ export function useAuthSessionBootstrap(enabled: boolean) {
       if (cancelled) return undefined;
       setReady(false);
       setError(null);
-      const initialState = useAuthSessionStore.getState();
-      if (environment.dataSource === "mock") {
-        if ((initialState.sessionKind === "member" || initialState.sessionKind === "guest") && initialState.currentSessionUserId) {
-          await activateLocalPrivateDataForUser(initialState.currentSessionUserId);
-        } else {
-          clearAuthStores();
-        }
-        return;
-      }
       useAuthSessionStore.getState().setAuthLoading();
       const hasStoredCredential = await authService.hasStoredSession();
       const state = useAuthSessionStore.getState();

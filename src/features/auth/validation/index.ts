@@ -1,4 +1,4 @@
-import { MOCK_INVITE_CODE_LENGTH, MOCK_NICKNAME_MAX_LENGTH, MOCK_NICKNAME_MIN_LENGTH, MOCK_PASSWORD_MIN_LENGTH } from "../config";
+import { INVITE_CODE_LENGTH, NICKNAME_MAX_LENGTH, NICKNAME_MIN_LENGTH, PASSWORD_MIN_LENGTH } from "../config";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const INVITE_PATTERN = /^[A-Z0-9]+$/;
@@ -14,7 +14,7 @@ export function validateEmail(value: string) {
 
 export function validatePassword(value: string) {
   if (!value) return "비밀번호를 입력해 주세요.";
-  return value.length >= MOCK_PASSWORD_MIN_LENGTH ? undefined : `비밀번호는 ${MOCK_PASSWORD_MIN_LENGTH}자 이상 입력해 주세요.`;
+  return value.length >= PASSWORD_MIN_LENGTH ? undefined : `비밀번호는 ${PASSWORD_MIN_LENGTH}자 이상 입력해 주세요.`;
 }
 
 export function validatePasswordConfirmation(password: string, confirmation: string) {
@@ -29,14 +29,14 @@ export function validateRequiredAgreement(checked: boolean, label: string) {
 export function validateInviteCode(value: string) {
   const normalized = normalizeInviteCode(value);
   if (!normalized) return "초대 코드를 입력해 주세요.";
-  if (normalized.length !== MOCK_INVITE_CODE_LENGTH || !INVITE_PATTERN.test(normalized)) return `영문 대문자와 숫자 ${MOCK_INVITE_CODE_LENGTH}자리로 입력해 주세요.`;
+  if (normalized.length !== INVITE_CODE_LENGTH || !INVITE_PATTERN.test(normalized)) return `영문 대문자와 숫자 ${INVITE_CODE_LENGTH}자리로 입력해 주세요.`;
   return undefined;
 }
 
 export function validateNickname(value: string) {
   const normalized = value.trim();
   if (!normalized) return "닉네임을 입력해 주세요.";
-  if (normalized.length < MOCK_NICKNAME_MIN_LENGTH) return `닉네임은 ${MOCK_NICKNAME_MIN_LENGTH}자 이상 입력해 주세요.`;
-  if (normalized.length > MOCK_NICKNAME_MAX_LENGTH) return `닉네임은 ${MOCK_NICKNAME_MAX_LENGTH}자 이하로 입력해 주세요.`;
+  if (normalized.length < NICKNAME_MIN_LENGTH) return `닉네임은 ${NICKNAME_MIN_LENGTH}자 이상 입력해 주세요.`;
+  if (normalized.length > NICKNAME_MAX_LENGTH) return `닉네임은 ${NICKNAME_MAX_LENGTH}자 이하로 입력해 주세요.`;
   return undefined;
 }

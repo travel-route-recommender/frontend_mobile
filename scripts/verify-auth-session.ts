@@ -23,6 +23,13 @@ import { requestKakaoNativeAccessToken, requestKakaoNativeIdToken } from "../src
 import { buildInviteReturnPath, inviteErrorMessage, resolveAuthReturnTo } from "../src/features/auth/services/inviteFlowPolicy";
 import { requestSocialLoginSession } from "../src/features/auth/services/socialLoginFlow";
 import {
+  createInviteJoinRequestBody,
+  createLoginRequestBody,
+  createRefreshRequestBody,
+  createSignupRequestBody,
+  supportsBackendSocialProvider,
+} from "../src/features/auth/services/backendAuthContract";
+import {
   activateLocalPrivateDataScope,
   deactivateLocalPrivateDataScope,
   inferLegacyLocalPrivateDataOwner,
@@ -278,30 +285,14 @@ function createStubApi(handler: (request: ApiRequest) => unknown): ApiClient {
 
 async function verifySocialLoginContracts() {
   type TestSession = { session: string };
-  const metadata = {
-    installationId: "installation-1",
-    platform: "ios" as const,
-    deviceName: "iPhone",
-    appVersion: "1.0.0",
-  };
 
   const kakaoCalls: ApiRequest[] = [];
-  let kakaoMetadataCalls = 0;
-  let kakaoIdTokenCalls = 0;
   const kakaoSession = await requestSocialLoginSession<TestSession>("kakao", {
     apiClient: createStubApi((request) => {
       kakaoCalls.push(request);
       return { session: "kakao" };
     }),
-    getClientMetadata: async () => {
-      kakaoMetadataCalls += 1;
-      return metadata;
-    },
     requestKakaoAccessToken: async () => "kakao-access-token",
-    requestProviderIdToken: async () => {
-      kakaoIdTokenCalls += 1;
-      return { kind: "id-token", idToken: "must-not-be-used" };
-    },
   });
   assert(kakaoSession.session === "kakao", "Kakao login must return the backend session");
   assert(kakaoCalls.length === 1, "Kakao login must make exactly one backend request");
@@ -314,55 +305,38 @@ async function verifySocialLoginContracts() {
     kakaoBody.accessToken === "kakao-access-token" && Object.keys(kakaoBody).length === 1,
     "Kakao OAuth exchange must send only the SDK accessToken accepted by the backend DTO",
   );
-  assert(kakaoMetadataCalls === 0 && kakaoIdTokenCalls === 0, "Kakao login must not call the unsupported challenge/ID-token flow");
 
   const googleCalls: ApiRequest[] = [];
-  let googleNonce: string | undefined;
   let googleKakaoTokenCalls = 0;
-  const googleSession = await requestSocialLoginSession<TestSession>("google", {
+  await requestSocialLoginSession<TestSession>("google", {
     apiClient: createStubApi((request) => {
       googleCalls.push(request);
-      if (request.path === "/auth/social/challenge") {
-        return { challengeId: "challenge-1", nonce: "google-nonce", state: "issued", expiresIn: 300 };
-      }
-      return { session: "google" };
+      return { session: "must-not-be-used" };
     }),
-    getClientMetadata: async () => metadata,
     requestKakaoAccessToken: async () => {
       googleKakaoTokenCalls += 1;
       return "must-not-be-used";
     },
-    requestProviderIdToken: async (provider, challenge) => {
-      assert(provider === "google", "Google login must request a Google provider token");
-      googleNonce = challenge.nonce;
-      return { kind: "id-token", idToken: "google-id-token" };
-    },
-  });
-  assert(googleSession.session === "google", "Google login must return the backend session");
-  assert(googleCalls.length === 2, "Google login must preserve its two-step challenge exchange");
-  assert(
-    googleCalls[0]?.path === "/auth/social/challenge" && googleCalls[0]?.method === "POST" && googleCalls[0]?.auth === false,
-    "Google login must request a challenge first",
+  }).then(
+    () => { throw new Error("unsupported Google login unexpectedly reached the backend"); },
+    (error: unknown) => assert(error instanceof Error && error.message.includes("지원하지 않아요"), "Google login must fail with a clear unsupported-provider error"),
   );
-  const googleChallengeBody = googleCalls[0]?.body as Record<string, unknown>;
-  assert(
-    googleChallengeBody.provider === "google" && googleChallengeBody.installationId === metadata.installationId && Object.keys(googleChallengeBody).length === 2,
-    "Google challenge request must retain provider and installationId",
-  );
-  assert(
-    googleCalls[1]?.path === "/auth/social/google" && googleCalls[1]?.method === "POST" && googleCalls[1]?.auth === false,
-    "Google login must preserve the ID-token exchange endpoint",
-  );
-  const googleBody = googleCalls[1]?.body as Record<string, unknown>;
-  assert(
-    googleBody.idToken === "google-id-token" &&
-      googleBody.challengeId === "challenge-1" &&
-      googleBody.installationId === metadata.installationId &&
-      googleBody.platform === metadata.platform &&
-      !("accessToken" in googleBody),
-    "Google login must send its ID token, challenge, and client metadata without a Kakao access token",
-  );
-  assert(googleNonce === "google-nonce" && googleKakaoTokenCalls === 0, "Google login must use the issued nonce and never request a Kakao token");
+  assert(googleCalls.length === 0 && googleKakaoTokenCalls === 0, "unsupported Google login must make no SDK or backend request");
+  assert(supportsBackendSocialProvider("kakao") && !supportsBackendSocialProvider("google"), "the capability list must match the backend OAuth endpoints");
+}
+
+function verifyBackendAuthRequestBodies() {
+  const login = createLoginRequestBody({ email: " USER@Example.COM ", password: "secret" });
+  assert(login.email === "user@example.com" && login.password === "secret" && Object.keys(login).length === 2, "login must send only email and password");
+
+  const signup = createSignupRequestBody({ nickname: " 여행자 ", email: " USER@Example.COM ", password: "secret" });
+  assert(signup.nickname === "여행자" && signup.email === "user@example.com" && signup.password === "secret" && Object.keys(signup).length === 3, "signup must send only nickname, email, and password");
+
+  const invite = createInviteJoinRequestBody({ code: " abcd1234 ", nickname: " 게스트 ", tripId: "client-only-trip" });
+  assert(invite.inviteCode === "ABCD1234" && invite.nickname === "게스트" && Object.keys(invite).length === 2, "invite join must omit client-only fields and metadata");
+
+  const refresh = createRefreshRequestBody("refresh-token");
+  assert(refresh.refreshToken === "refresh-token" && Object.keys(refresh).length === 1, "refresh must send only refreshToken");
 }
 
 async function verifyGoogleNativeOidc() {
@@ -426,7 +400,7 @@ function verifyLocalPrivateDataAccountScope() {
   assert(lateHydrationAfterLogout.ownerUserId === null && !lateHydrationAfterLogout.activeData["same-trip-id"], "late hydration after logout must remain deactivated");
 
   const sameAccount = activateLocalPrivateDataScope(accountAReturned, "user-a", empty);
-  assert(sameAccount === accountAReturned, "same-account session refresh must not churn or lose local demo data");
+  assert(sameAccount === accountAReturned, "same-account session refresh must not churn or lose account-scoped local data");
   const upgraded = transferLocalPrivateDataScope(accountA, "user-a", "member-a", empty);
   assert(upgraded.ownerUserId === "member-a" && upgraded.activeData["same-trip-id"] === accountA.activeData["same-trip-id"], "verified guest upgrade must retain the same person's local data");
 
@@ -461,6 +435,7 @@ async function main() {
   await verifyGoogleNativeOidc();
   await verifyKakaoNativeTokens();
   await verifySocialLoginContracts();
+  verifyBackendAuthRequestBodies();
   verifyLocalPrivateDataAccountScope();
   verifyInviteLoginReturnFlow();
   assert(isAccessTokenExpiredError({ status: 401, code: "TOKEN_EXPIRED" }), "TOKEN_EXPIRED policy must stay explicit");

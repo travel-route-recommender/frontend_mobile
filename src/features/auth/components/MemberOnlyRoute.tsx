@@ -5,6 +5,7 @@ import { PrimaryButton, Screen, SecondaryButton } from "../../../components/comm
 import { colors, spacing, typography } from "../../../theme/tokens";
 import type { RestrictedFeature } from "../services/guestAccessPolicy";
 import { restrictedFeatureMessage } from "../services/guestAccessPolicy";
+import { authCapabilities } from "../services/authService";
 import { useAuthSessionStore } from "../store/useAuthSessionStore";
 
 type MemberOnlyRouteProps = PropsWithChildren<{
@@ -32,7 +33,10 @@ export function MemberOnlyRoute({ children, feature, title = "회원 전용 화�
         <Text style={styles.title}>{title}</Text>
         <Text style={styles.description}>{restrictedFeatureMessage("guest", feature)}</Text>
         <View style={styles.actions}>
-          <PrimaryButton label="게스트 계정 업그레이드" onPress={() => router.push("/(auth)/guest-upgrade" as never)} />
+          <PrimaryButton
+            label={authCapabilities.guestUpgrade ? "게스트 계정 업그레이드" : "회원가입"}
+            onPress={() => router.push(authCapabilities.guestUpgrade ? "/(auth)/guest-upgrade" as never : "/(auth)/signup-choice")}
+          />
           <SecondaryButton label="허용된 화면으로 돌아가기" onPress={leave} />
         </View>
       </View>

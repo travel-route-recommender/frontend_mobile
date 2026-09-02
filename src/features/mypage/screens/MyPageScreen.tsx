@@ -9,7 +9,7 @@ import { useDuriStore } from "../../../store/useDuriStore";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import { AuthErrorBanner, AuthTextField, PasswordField } from "../../auth/components/AuthControls";
 import { clearAuthStores, useAuthFlow } from "../../auth/hooks/useAuthFlow";
-import { authService } from "../../auth/services/authService";
+import { authCapabilities, authService } from "../../auth/services/authService";
 import { useAuthSessionStore } from "../../auth/store/useAuthSessionStore";
 import { validateNickname } from "../../auth/validation";
 import { getMockFriendProfile } from "../../compatibility/config/mock-friends";
@@ -107,7 +107,7 @@ export function MyPageScreen() {
           : activeGuestTrip
             ? <PrimaryButton label="참여 중인 여행방으로 이동" onPress={() => router.push({ pathname: "/trips/[tripId]", params: { tripId: activeGuestTrip.id } })} />
             : <PrimaryButton label="초대 코드로 참여하기" onPress={() => router.push("/(auth)/invite")} />}
-        <SecondaryButton label="게스트 계정 업그레이드" onPress={() => router.push("/(auth)/guest-upgrade" as never)} />
+        {authCapabilities.guestUpgrade ? <SecondaryButton label="게스트 계정 업그레이드" onPress={() => router.push("/(auth)/guest-upgrade" as never)} /> : null}
       </Card>
     </>}
     {sessionKind === "member" ? <>
@@ -120,9 +120,9 @@ export function MyPageScreen() {
     </> : null}
     <SectionHeader title="계정과 참여" />
     <SecondaryButton label="프로필 수정" onPress={() => { setNickname(user?.name ?? ""); setProfileImageUrl(user?.profileImageUrl ?? ""); setError(null); setEditing(true); }} />
-    {sessionKind === "member" ? <><SecondaryButton label="로그인 수단 관리" onPress={() => router.push("/account/social-connections" as never)} /><SecondaryButton label="초대 코드로 참여하기" onPress={() => router.push("/(auth)/invite")} /><SecondaryButton label="온보딩 안내 다시 보기" onPress={() => router.push("/(onboarding)/intro")} /></> : null}
+    {sessionKind === "member" ? <>{authCapabilities.socialIdentityLinking ? <SecondaryButton label="로그인 수단 관리" onPress={() => router.push("/account/social-connections" as never)} /> : null}<SecondaryButton label="초대 코드로 참여하기" onPress={() => router.push("/(auth)/invite")} /><SecondaryButton label="온보딩 안내 다시 보기" onPress={() => router.push("/(onboarding)/intro")} /></> : null}
     <SecondaryButton label="로그아웃" onPress={async () => { try { await logout(); } finally { router.replace("/(auth)/login"); } }} />
-    <Pressable accessibilityRole="button" onPress={() => { setPassword(""); setError(null); setDeleting(true); }} style={styles.dangerButton}><Text style={styles.dangerText}>{sessionKind === "guest" ? "게스트 계정 삭제" : "회원 탈퇴"}</Text></Pressable>
+    {authCapabilities.accountDeletion ? <Pressable accessibilityRole="button" onPress={() => { setPassword(""); setError(null); setDeleting(true); }} style={styles.dangerButton}><Text style={styles.dangerText}>{sessionKind === "guest" ? "게스트 계정 삭제" : "회원 탈퇴"}</Text></Pressable> : null}
 
     <Modal visible={editing} transparent animationType="fade" onRequestClose={() => setEditing(false)}>
       <Dialog title="프로필 수정" onClose={() => setEditing(false)}>

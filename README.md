@@ -2,10 +2,10 @@
 
 함께 여행할 사람들의 장소 후보, 일정, 여행 성향을 한곳에서 조율하는 **두리**의 React Native + Expo 모바일 애플리케이션입니다.
 
-이 저장소는 웹에서 검증한 핵심 여행 계획 흐름을 Android, iOS, Web에서 실행 가능한 모바일 UI로 옮긴 프론트엔드 프로토타입입니다. 현재 기본 데이터 소스는 `mock`, 두리 분석 엔진은 `local`이며, 운영 백엔드 API·지도 SDK는 아직 계약 검증 전입니다.
+이 저장소는 웹에서 검증한 핵심 여행 계획 흐름을 Android, iOS, Web에서 실행 가능한 모바일 UI로 옮긴 프론트엔드 프로토타입입니다. 인증은 백엔드 API를 사용하고, 여행·장소 데이터와 두리 분석 엔진은 환경 변수로 구현 단계를 선택합니다.
 
 > **현재 상태**
-> 로그인부터 장소 탐색, 여행방 생성, 후보 수집, 일정 편집, 개인·그룹 성향 진단, 두리 일정 분석과 제안 적용까지 로컬 데모 흐름으로 실행할 수 있습니다. `api`, `hybrid`, `server` 모드는 계약이 확정되지 않은 기능을 mock 데이터로 몰래 대체하지 않고 명시적인 연결 대기 상태를 보여줍니다.
+> 인증 성공은 실제 백엔드 응답으로만 확정합니다. 여행·장소 기능의 `mock`, `api`, `hybrid`, `server` 모드는 계약이 확정되지 않은 기능을 다른 데이터로 몰래 대체하지 않고 명시적인 연결 대기 상태를 보여줍니다.
 
 ## 목차
 
@@ -14,7 +14,7 @@
 - [기술 스택](#기술-스택)
 - [빠른 시작](#빠른-시작)
 - [환경 변수](#환경-변수)
-- [데모 계정](#데모-계정)
+- [인증 개발 환경](#인증-개발-환경)
 - [주요 화면과 라우트](#주요-화면과-라우트)
 - [프로젝트 구조](#프로젝트-구조)
 - [상태와 데이터 흐름](#상태와-데이터-흐름)
@@ -30,7 +30,7 @@
 
 ### 인증과 온보딩
 
-- 이메일·Google/Kakao 로그인, 이메일 가입 UI
+- 이메일·Kakao 로그인과 이메일 가입 UI, Google 백엔드 계약 대기 상태
 - 익명 둘러보기, 초대 코드 기반 guest 참여
 - `anonymous`, `guest`, `member` 세션과 기능 권한 분리
 - 닉네임·프리셋 아바타 설정 및 온보딩 소개
@@ -237,7 +237,7 @@ npm run web
 기본 예시:
 
 ```dotenv
-EXPO_PUBLIC_DATA_SOURCE=mock
+EXPO_PUBLIC_DATA_SOURCE=api
 EXPO_PUBLIC_API_BASE_URL=http://localhost:3000/api/v1
 EXPO_PUBLIC_DURI_ENGINE=local
 EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID=
@@ -251,19 +251,9 @@ EXPO_PUBLIC_KAKAO_MAP_BASE_URL=http://localhost:3000
 
 Google/Kakao 네이티브 로그인은 Expo Go에서 실행되지 않으므로 Android/iOS development build에서 확인합니다. Google은 Web, Android, iOS OAuth client를 같은 Google Cloud project에 만들고, 앱에서 ID Token을 요청할 때 Web OAuth client ID를 `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`에 사용합니다. Android OAuth client에는 package name `com.tripmatch.app.dev`와 빌드 인증서 SHA-1을 등록하고, iOS OAuth client에는 bundle ID `com.tripmatch.app.dev`를 등록합니다. 백엔드의 `GOOGLE_OIDC_AUDIENCES`에도 같은 Web client ID를 허용해야 합니다.
 
-## 데모 계정
+## 인증 개발 환경
 
-`mock` 모드에서 아래 값을 사용할 수 있습니다.
-
-| 항목 | 값 |
-| --- | --- |
-| 이메일 | `demo@duri.app` |
-| 비밀번호 | `duri2026` |
-| 초대 코드 | `DEMO2026` |
-| 데모 회원 ID | `user-soomin` |
-| 데모 guest ID | `guest-demo2026` |
-
-이 값은 실제 계정이나 운영 서버에 전송되지 않습니다. 이메일 가입, 비밀번호 길이, 닉네임 길이, 초대 코드 규칙도 현재 mock UI 검증용 정책입니다.
+인증은 `EXPO_PUBLIC_DATA_SOURCE`와 관계없이 백엔드 API를 사용합니다. 앱에 내장된 데모 계정이나 고정 초대 코드는 없으며, 로그인·회원가입·초대 참여는 실제 백엔드 데이터로 확인해야 합니다.
 
 ## 주요 화면과 라우트
 

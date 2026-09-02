@@ -1,5 +1,4 @@
 import type { EntityId, TripRoom } from "../../../domain";
-import { DEMO_INVITED_TRIP_ID, DEMO_INVITE_CODE } from "../../auth/config";
 import type { TripInviteLinkRecord, TripInviteResolution, TripInviteRouteInput } from "../types";
 
 const INVITE_CODE_LENGTH = 8;
@@ -25,7 +24,6 @@ function hashSeed(value: string) {
 }
 
 export function createMockTripInviteCode(tripId: EntityId, revision: number) {
-  if (tripId === DEMO_INVITED_TRIP_ID && revision === 1) return DEMO_INVITE_CODE;
   let state = hashSeed(`${tripId}:${revision}`);
   let code = "";
   for (let index = 0; index < INVITE_CODE_LENGTH; index += 1) {

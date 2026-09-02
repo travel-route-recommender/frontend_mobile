@@ -1,12 +1,9 @@
 import type { User } from "../../../domain";
-import { environment, type DataSourceMode } from "../../../config/environment";
 import { ApiError, ApiNetworkError, apiClient, configureApiAuth } from "../../../services/apiClient";
-import { createRequestId, getClientMetadata } from "../../../services/clientMetadata";
+import { createRequestId } from "../../../services/clientMetadata";
 import { nativeTokenStorage } from "../../../services/tokenStorage";
-import { DEMO_GUEST_USER_ID, DEMO_INVITED_TRIP_ID, DEMO_INVITE_CODE, DEMO_MEMBER_EMAIL, DEMO_MEMBER_ID, DEMO_MEMBER_PASSWORD } from "../config";
-import type { AuthFailure, AuthProvider, AuthResult, AuthSuccess, GuestUpgradeInput, InviteJoinInput, InvitePreview, LoginInput, SignupInput, SocialChallenge, SocialLinkResult, SocialProvider } from "../types";
-import { createStableMockUserId } from "../utils/stableUserId";
-import { normalizeEmail, normalizeInviteCode } from "../validation";
+import type { AuthFailure, AuthProvider, AuthResult, AuthSuccess, GuestUpgradeInput, InviteJoinInput, InvitePreview, LoginInput, SignupInput, SocialLinkResult, SocialProvider } from "../types";
+import { normalizeInviteCode } from "../validation";
 import {
   isRetryableRefreshStatus,
   isTerminalRefreshError,
@@ -17,7 +14,15 @@ import {
   shouldRefreshAccessToken,
   SingleFlight,
 } from "./authTokenState";
-import { requestKakaoAccessToken, requestProviderIdToken } from "./socialAuth";
+import {
+  backendAuthCapabilities,
+  createInviteJoinRequestBody,
+  createLoginRequestBody,
+  createRefreshRequestBody,
+  createSignupRequestBody,
+  supportsBackendSocialProvider,
+} from "./backendAuthContract";
+import { requestKakaoAccessToken } from "./socialAuth";
 import { requestSocialLoginSession } from "./socialLoginFlow";
 
 type BackendUser = {
@@ -64,6 +69,16 @@ export interface AuthService {
 }
 
 let sessionInvalidatedHandler: (() => void) | undefined;
+
+const usingNativePlatform = process.env.EXPO_OS === "android" || process.env.EXPO_OS === "ios";
+
+export const authCapabilities = {
+  googleLogin: supportsBackendSocialProvider("google") && usingNativePlatform,
+  kakaoLogin: supportsBackendSocialProvider("kakao") && usingNativePlatform,
+  socialIdentityLinking: backendAuthCapabilities.socialIdentityLinking,
+  guestUpgrade: backendAuthCapabilities.guestUpgrade,
+  accountDeletion: backendAuthCapabilities.accountDeletion,
+} as const;
 
 export function setSessionInvalidatedHandler(handler: (() => void) | undefined) {
   sessionInvalidatedHandler = handler;
@@ -210,13 +225,11 @@ class ApiAuthService implements AuthService {
   private readonly refreshFlight = new SingleFlight<BackendSession>();
   private refreshAbortController: AbortController | undefined;
   private sessionGeneration = 0;
-  private lastProvider: AuthProvider = "email";
 
   async login(input: LoginInput): Promise<AuthResult> {
     try {
       this.cancelInFlightRefresh();
-      const session = await apiClient.request<BackendSession>({ path: "/auth/login", method: "POST", auth: false, body: { email: normalizeEmail(input.email), password: input.password, ...(await getClientMetadata()) } });
-      this.lastProvider = "email";
+      const session = await apiClient.request<BackendSession>({ path: "/auth/login", method: "POST", auth: false, body: createLoginRequestBody(input) });
       await persistSession(session);
       return mapSession(session, "email");
     } catch (error) { return failure(error); }
@@ -229,13 +242,8 @@ class ApiAuthService implements AuthService {
         path: "/auth/signup",
         method: "POST",
         auth: false,
-        body: {
-          nickname: input.nickname.trim(),
-          email: normalizeEmail(input.email),
-          password: input.password,
-        },
+        body: createSignupRequestBody(input),
       });
-      this.lastProvider = "email";
       await persistSession(session);
       return mapSession(session, "email");
     } catch (error) { return failure(error); }
@@ -251,8 +259,7 @@ class ApiAuthService implements AuthService {
   async joinByInvite(input: InviteJoinInput): Promise<AuthResult> {
     try {
       this.cancelInFlightRefresh();
-      const session = await apiClient.request<BackendGuestSession>({ path: "/auth/join-by-invite", method: "POST", auth: false, body: { inviteCode: normalizeInviteCode(input.code), nickname: input.nickname.trim(), ...(await getClientMetadata()) } });
-      this.lastProvider = "guest";
+      const session = await apiClient.request<BackendGuestSession>({ path: "/auth/join-by-invite", method: "POST", auth: false, body: createInviteJoinRequestBody(input) });
       await persistSession(session);
       return { ...mapSession(session, "guest"), invitedTripId: session.roomId };
     } catch (error) { return failure(error); }
@@ -264,43 +271,26 @@ class ApiAuthService implements AuthService {
   }
 
   async loginWithSocial(provider: SocialProvider): Promise<AuthResult> {
+    if (!supportsBackendSocialProvider(provider)) {
+      return { status: "error", code: "provider-unavailable", message: "현재 백엔드는 Google 로그인을 지원하지 않아요." };
+    }
     try {
       this.cancelInFlightRefresh();
       const session = await requestSocialLoginSession<BackendSession>(provider, {
         apiClient,
-        getClientMetadata,
         requestKakaoAccessToken,
-        requestProviderIdToken,
       });
-      this.lastProvider = provider;
       await persistSession(session);
       return mapSession(session, provider);
     } catch (error) { return failure(error); }
   }
 
   async linkSocialIdentity(provider: SocialProvider): Promise<SocialLinkResult> {
-    try {
-      const metadata = await getClientMetadata();
-      const challenge = await apiClient.request<SocialChallenge>({ path: "/auth/social/challenge", method: "POST", auth: false, body: { provider, installationId: metadata.installationId } });
-      const authorization = await requestProviderIdToken(provider, challenge);
-      const result = await apiClient.request<{ linked?: boolean }>({ path: `/auth/identities/link/${provider}`, method: "POST", body: { idToken: authorization.idToken, challengeId: challenge.challengeId, ...metadata } });
-      if (result.linked !== true) throw new Error("로그인 수단 연결 결과를 확인하지 못했어요.");
-      return { status: "success", provider, linked: true };
-    } catch (error) { return failure(error); }
+    return { status: "error", code: "contract-unavailable", message: "현재 백엔드는 로그인 수단 연결을 지원하지 않아요." };
   }
 
-  async upgradeGuestWithPassword(input: GuestUpgradeInput): Promise<AuthResult> {
-    try {
-      this.cancelInFlightRefresh();
-      const session = await apiClient.request<BackendSession>({
-        path: "/auth/guest/upgrade/password",
-        method: "POST",
-        body: { email: normalizeEmail(input.email), password: input.password, ...(await getClientMetadata()) },
-      });
-      this.lastProvider = "email";
-      await persistSession(session);
-      return mapSession(session, "email");
-    } catch (error) { return failure(error); }
+  async upgradeGuestWithPassword(_input: GuestUpgradeInput): Promise<AuthResult> {
+    return { status: "error", code: "contract-unavailable", message: "현재 백엔드는 게스트 계정 업그레이드를 지원하지 않아요." };
   }
 
   async hasStoredSession() {
@@ -322,9 +312,8 @@ class ApiAuthService implements AuthService {
   }
 
   async deleteAccount(password?: string) {
-    await apiClient.request({ path: "/auth/account", method: "DELETE", body: { confirmation: "DELETE", ...(password ? { password } : {}) } });
-    this.cancelInFlightRefresh();
-    await nativeTokenStorage.clearTokens();
+    void password;
+    throw new Error("현재 백엔드는 계정 삭제를 지원하지 않아요.");
   }
 
   async logout() {
@@ -378,8 +367,6 @@ class ApiAuthService implements AuthService {
     const pending = await nativeTokenStorage.getOrCreatePendingRefresh(createRequestId(), Date.now());
     if (!pending) throw new ApiError("저장된 로그인 정보가 없어요.", { status: 401, code: "REFRESH_TOKEN_MISSING" });
 
-    const metadata = await getClientMetadata();
-
     for (let attempt = 0; attempt < MAX_REFRESH_ATTEMPTS; attempt += 1) {
       const timeoutMs = refreshRequestTimeoutMs(pending, Date.now());
       if (timeoutMs === null) {
@@ -394,8 +381,7 @@ class ApiAuthService implements AuthService {
           auth: false,
           retryUnauthorized: false,
           signal: attemptSignal.signal,
-          headers: { "Idempotency-Key": pending.operationId },
-          body: { refreshToken: pending.refreshToken, requestId: pending.operationId, ...metadata },
+          body: createRefreshRequestBody(pending.refreshToken),
         });
         if (signal.aborted || generation !== this.sessionGeneration) throw createAbortError();
         // R1과 pending 제거를 한 SecureStore 값으로 기록한 다음 A1을 메모리에 활성화한다.
@@ -427,50 +413,6 @@ class ApiAuthService implements AuthService {
   }
 }
 
-class MockAuthService implements AuthService {
-  async login(input: LoginInput): Promise<AuthResult> {
-    if (normalizeEmail(input.email) !== DEMO_MEMBER_EMAIL || input.password !== DEMO_MEMBER_PASSWORD) return { status: "error", code: "invalid-credentials", message: "데모 이메일 또는 비밀번호가 올바르지 않아요." };
-    return this.demoMember();
-  }
-  async signup(input: SignupInput): Promise<AuthResult> {
-    const user: User = { id: createStableMockUserId(input.email), name: input.nickname.trim(), initial: initial(input.nickname) };
-    return { status: "success", sessionKind: "member", provider: "email", user, profileCompleted: true, onboardingIntroSeen: false, preferenceTestCompleted: false };
-  }
-  async previewInvite(code: string): Promise<InvitePreview> {
-    if (normalizeInviteCode(code) !== DEMO_INVITE_CODE) throw new ApiError("Invalid invite", { status: 401, code: "INVALID_INVITE_CODE" });
-    return { roomId: DEMO_INVITED_TRIP_ID, title: "부산 맛집 여행", destination: "부산", memberCount: 3 };
-  }
-  async joinByInvite(input: InviteJoinInput): Promise<AuthResult> {
-    const code = normalizeInviteCode(input.code);
-    const tripId = input.tripId ?? (code === DEMO_INVITE_CODE ? DEMO_INVITED_TRIP_ID : undefined);
-    if (!/^[A-Z0-9]{8}$/.test(code) || !tripId) {
-      return { status: "error", code: "invalid-invite", message: "사용할 수 없는 초대 코드예요." };
-    }
-    const isDemoGuest = code === DEMO_INVITE_CODE && tripId === DEMO_INVITED_TRIP_ID;
-    const stableGuestSuffix = createStableMockUserId(`${tripId}.${code}@invite.duri`).replace("mock-member-", "");
-    const name = input.nickname.trim() || (isDemoGuest ? "게스트 여행자" : "초대 게스트");
-    const user: User = {
-      id: isDemoGuest ? DEMO_GUEST_USER_ID : `guest-invite-${stableGuestSuffix}`,
-      name,
-      initial: initial(name),
-    };
-    return { status: "success", sessionKind: "guest", provider: "guest", user, profileCompleted: true, onboardingIntroSeen: true, preferenceTestCompleted: false, invitedTripId: tripId };
-  }
-  async acceptInvite() { return DEMO_INVITED_TRIP_ID; }
-  async loginWithSocial(provider: SocialProvider) { return { ...this.demoMember(), provider } as AuthSuccess; }
-  async linkSocialIdentity(provider: SocialProvider): Promise<SocialLinkResult> { return { status: "success", provider, linked: true }; }
-  async upgradeGuestWithPassword(input: GuestUpgradeInput): Promise<AuthResult> {
-    return { status: "success", sessionKind: "member", provider: "email", user: { id: DEMO_GUEST_USER_ID, name: input.nickname.trim() || "여행자", initial: initial(input.nickname) }, profileCompleted: true, onboardingIntroSeen: true, preferenceTestCompleted: false };
-  }
-  async hasStoredSession() { return false; }
-  async clearLocalCredentials() { await nativeTokenStorage.clearTokens(); }
-  async updateProfile(input: ProfileUpdateInput) { return { id: DEMO_MEMBER_ID, name: input.nickname.trim(), initial: initial(input.nickname), ...(input.profileImageUrl ? { profileImageUrl: input.profileImageUrl } : {}) }; }
-  async completeOnboarding() {}
-  async deleteAccount() { await nativeTokenStorage.clearTokens(); }
-  async logout() { await nativeTokenStorage.clearTokens(); }
-  private demoMember(): AuthSuccess { return { status: "success", sessionKind: "member", provider: "email", user: { id: DEMO_MEMBER_ID, name: "수민", initial: "수" }, profileCompleted: true, onboardingIntroSeen: true, preferenceTestCompleted: true }; }
-}
-
 const apiAuthService = new ApiAuthService();
 configureApiAuth({
   getAccessToken: () => apiAuthService.getValidAccessTokenForApiClient(),
@@ -478,8 +420,4 @@ configureApiAuth({
   onSessionInvalidated: () => apiAuthService.invalidateLocalSession(),
 });
 
-export function createAuthService(mode: DataSourceMode): AuthService {
-  return mode === "mock" ? new MockAuthService() : apiAuthService;
-}
-
-export const authService = createAuthService(environment.dataSource);
+export const authService: AuthService = apiAuthService;
