@@ -31,6 +31,9 @@ expo-env.d.ts
 .trip-documents-verification/
 .schedule-api-verification/
 .trip-todos-verification/
+.preference-auto-fill-verification/
+.room-preferences-verification/
+.workspace-planning-dates-verification/
 
 # debug
 npm-debug.*

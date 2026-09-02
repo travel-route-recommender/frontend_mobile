@@ -1,14 +1,17 @@
 import type { Place, PreferenceDimension, UserPreferenceResult } from "../../../domain";
 import {
-  calculateMinimaxPreferenceCompromise,
-  deriveConsensusRanking,
+  calculateFairPreferenceCompromise,
+  deriveKemenyConsensus,
   deriveMobilityConsensus,
+  isSupportedPreferenceResult,
   normalizedKendallDistance,
+  solveIntervalPreferenceConsensus,
 } from "../../../duri/group-preferences";
-import { getTripDates } from "../../../utils/schedule";
+import { getTripDates, timeStringToMinutes } from "../../../utils/schedule";
 import type { DuriAnalysisSnapshot, DuriReportIssue } from "../types";
 import { buildScheduledRouteLegs } from "./routeEvidence";
 import { findUsableRouteEstimateForLeg } from "./scheduleConstraintAnalysis";
+import { findSharedCandidateSignalConflicts, getSharedAxisObservations, getUsableSharedPreferenceEvidence } from "./sharedPreferenceEvidence";
 
 const dimensionLabels: Record<PreferenceDimension, string> = {
   pace: "일정 밀도",
@@ -36,6 +39,12 @@ const mobilityModeLabels: Record<string, string> = {
   subway: "지하철",
   train: "기차",
   walk: "도보",
+};
+
+const mobilityConstraintLabels: Record<string, string> = {
+  STAIRS: "계단 이동이 어려움",
+  STEEP_SLOPE: "급경사 이동이 어려움",
+  LONG_WALK: "긴 도보 이동이 어려움",
 };
 
 const budgetLabels: Record<string, string> = {
@@ -89,9 +98,45 @@ function memberName(snapshot: DuriAnalysisSnapshot, userId: string) {
   return snapshot.members.find((member) => member.id === userId)?.name ?? "참여자";
 }
 
+function tripMemberIds(snapshot: DuriAnalysisSnapshot) {
+  return [...new Set(snapshot.trip.members.map((member) => member.userId).filter(Boolean))];
+}
+
+function observationConfidence(observedCount: number, totalCount: number): "medium" | "low" {
+  return observedCount === totalCount ? "medium" : "low";
+}
+
 function detailedResults(snapshot: DuriAnalysisSnapshot) {
   return Object.values(snapshot.preferenceResults)
-    .filter((result): result is UserPreferenceResult & { detailedSignals: NonNullable<UserPreferenceResult["detailedSignals"]> } => Boolean(result.detailedSignals));
+    .filter((result): result is UserPreferenceResult & { detailedSignals: NonNullable<UserPreferenceResult["detailedSignals"]> } => (
+      Boolean(result.detailedSignals)
+      && isSupportedPreferenceResult(result, result.userId)
+      && result.detailedSignals?.surveyVersion === 9
+      && (result.detailedSignals?.algorithmVersion === 7
+        || result.detailedSignals?.algorithmVersion === 8
+        || result.detailedSignals?.algorithmVersion === 9)
+    ));
+}
+
+type DetailedPreferenceResult = ReturnType<typeof detailedResults>[number];
+
+function dailyPreferenceResolution(result: DetailedPreferenceResult) {
+  return result.detailedSignals.algorithmVersion >= 8
+    ? result.detailedSignals.preferredDailyScheduledResolutionMinutes
+    : result.detailedSignals.schedulePreferenceResolutionMinutes;
+}
+
+function averageActivityBlockPreference(result: DetailedPreferenceResult) {
+  const signals = result.detailedSignals;
+  if (signals.algorithmVersion >= 8 && signals.preferredAverageActivityBlockMinutes !== undefined) {
+    return {
+      value: signals.preferredAverageActivityBlockMinutes,
+      resolution: signals.preferredAverageActivityBlockResolutionMinutes,
+    };
+  }
+  return signals.algorithmVersion === 7
+    ? { value: signals.preferredAverageStayMinutes, resolution: signals.schedulePreferenceResolutionMinutes }
+    : { value: undefined, resolution: undefined };
 }
 
 function analyzeExplicitPreferenceDifferences(snapshot: DuriAnalysisSnapshot): DuriReportIssue[] {
@@ -100,7 +145,7 @@ function analyzeExplicitPreferenceDifferences(snapshot: DuriAnalysisSnapshot): D
     if (diagnosis.spread !== 2) return [];
     const low = diagnosis.responses.filter((entry) => entry.score === 0).map((entry) => entry.userId);
     const high = diagnosis.responses.filter((entry) => entry.score === 2).map((entry) => entry.userId);
-    const compromise = calculateMinimaxPreferenceCompromise(diagnosis.responses);
+    const compromise = calculateFairPreferenceCompromise(diagnosis.responses);
     const compromiseLabel = compromise.recommendedScore === undefined
       ? "동행자 확인 필요"
       : dimensionValueLabels[dimension][compromise.recommendedScore];
@@ -109,7 +154,7 @@ function analyzeExplicitPreferenceDifferences(snapshot: DuriAnalysisSnapshot): D
       category: "preference" as const,
       severity: "medium" as const,
       title: `${dimensionLabels[dimension]} 선호 차이가 커요`,
-      summary: `${low.map((id) => memberName(snapshot, id)).join(", ")}님과 ${high.map((id) => memberName(snapshot, id)).join(", ")}님의 직접 응답이 양 끝으로 달라요. 최소최대 후회 기준에서는 '${compromiseLabel}'가 조율 출발점이에요. 이 계산은 모든 응답자의 가중치와 0·1·2 단계 사이의 거리를 같다고 가정하며 자동 변경하지 않아요.`,
+      summary: `${low.map((id) => memberName(snapshot, id)).join(", ")}님과 ${high.map((id) => memberName(snapshot, id)).join(", ")}님의 직접 응답이 양 끝으로 달라요. Pareto 효율 대안 중 최저 만족도와 Nash 후생을 순서대로 최대화하면 '${compromiseLabel}'가 세 선택지 안의 정확한 공동 조율점이에요. 자동 변경하지는 않아요.`,
       affectedItemIds: [],
       affectedPlaceIds: [],
       affectedMemberIds: [...low, ...high].sort(),
@@ -118,17 +163,17 @@ function analyzeExplicitPreferenceDifferences(snapshot: DuriAnalysisSnapshot): D
         value: `${dimensionValueLabels[dimension][response.score]} · 직접 응답 ${response.score}/2`,
         memberIds: [response.userId],
       })).concat({
-        label: "최소최대 후회 조율안",
-        value: `${compromiseLabel} · 가장 불리한 참여자의 정규화 후회 ${(compromise.maximumRegret * 100).toFixed(0)}%`,
+        label: "공정 최적 조율안",
+        value: `${compromiseLabel} · 최저 만족도 ${(compromise.minimumSatisfaction * 100).toFixed(0)}% · Nash 후생 ${(compromise.nashWelfare * 100).toFixed(0)}%`,
         memberIds: compromise.mostAffectedMemberIds,
       }).concat({
-        label: "계산 가정",
-        value: "응답자 동일 가중치 · 인접 선택지 간 거리 동일",
+        label: "최적성·계산 가정",
+        value: `3개 대안 완전탐색 · Pareto 효율 ${compromise.paretoEfficient ? "충족" : "미확인"} · 응답자 동일 가중치 · 인접 단계 등거리`,
         memberIds: [],
       }),
       suggestionSupported: false,
       constraintType: "soft" as const,
-      confidence: snapshot.groupPreferenceDiagnosis.coverage === "complete" ? "high" as const : "medium" as const,
+      confidence: observationConfidence(diagnosis.responses.length, tripMemberIds(snapshot).length),
       source: "mobile-context" as const,
     }];
   });
@@ -161,16 +206,74 @@ function analyzeMobilityConsensus(snapshot: DuriAnalysisSnapshot): DuriReportIss
     })),
     suggestionSupported: false,
     constraintType: "soft",
-    confidence: snapshot.groupPreferenceDiagnosis.coverage === "complete" ? "high" : "medium",
+    confidence: observationConfidence(responses.length, tripMemberIds(snapshot).length),
     source: "mobile-context",
   }];
+}
+
+function analyzeContinuousScheduleConsensus(snapshot: DuriAnalysisSnapshot): DuriReportIssue[] {
+  const definitions = [
+    {
+      id: "daily-load",
+      title: "동행자별 희망 하루 일정량이 달라요",
+      valueLabel: "희망 하루 일정량",
+      read: (result: DetailedPreferenceResult) => ({
+        value: result.detailedSignals.preferredDailyScheduledMinutes,
+        resolution: dailyPreferenceResolution(result),
+      }),
+    },
+    {
+      id: "activity-block",
+      title: "동행자별 희망 활동 블록 길이가 달라요",
+      valueLabel: "희망 비휴식 활동 블록",
+      read: averageActivityBlockPreference,
+    },
+  ] as const;
+  return definitions.flatMap((definition) => {
+    const observations = detailedResults(snapshot).flatMap((result) => {
+      const { value, resolution } = definition.read(result);
+      return value !== undefined && value > 0 && resolution !== undefined
+        ? [{ userId: result.userId, value, resolution, minimum: 0 }]
+        : [];
+    });
+    if (observations.length < 2) return [];
+    const consensus = solveIntervalPreferenceConsensus(observations);
+    if (!consensus.measurableConflict || consensus.recommendedValue === undefined) return [];
+    const totalMemberCount = tripMemberIds(snapshot).length;
+    return [{
+      id: `preference-continuous-${definition.id}-${observations.map((entry) => entry.userId).sort().join("-")}`,
+      category: "preference" as const,
+      severity: "low" as const,
+      title: definition.title,
+      summary: `응답한 참여자 ${observations.length}/${totalMemberCount}명의 설문값 시간칸 구간이 서로 겹치지 않아요. 응답한 구간까지의 최대 거리를 최소화하는 조율점은 ${consensus.recommendedValue.toFixed(1)}분이고, 가장 불리한 사람의 구간 밖 차이는 ${consensus.maximumIntervalRegret.toFixed(1)}분이에요. 시간칸을 잠재 선호 구간으로 보는 모델이므로 자동 변경하지 않아요.`,
+      affectedItemIds: [],
+      affectedPlaceIds: [],
+      affectedMemberIds: observations.map((entry) => entry.userId).sort(),
+      evidence: [
+        ...consensus.observations.map((entry) => ({
+          label: memberName(snapshot, entry.userId),
+          value: `${definition.valueLabel} ${entry.value}분 · 측정 구간 ${entry.lower.toFixed(1)}~${entry.upper.toFixed(1)}분`,
+          memberIds: [entry.userId],
+        })),
+        {
+          label: "폐구간 minimax 조율",
+          value: `${consensus.recommendedValue.toFixed(1)}분 · 최대 구간 후회 ${consensus.maximumIntervalRegret.toFixed(1)}분`,
+          memberIds: consensus.mostAffectedMemberIds,
+        },
+      ],
+      suggestionSupported: false,
+      constraintType: "soft" as const,
+      confidence: observationConfidence(observations.length, totalMemberCount),
+      source: "mobile-context" as const,
+    }];
+  });
 }
 
 function analyzeBudgetPriorityDifferences(snapshot: DuriAnalysisSnapshot): DuriReportIssue[] {
   const rankings = detailedResults(snapshot)
     .filter((result) => result.detailedSignals.budgetRanking.length > 0)
     .map((result) => ({ userId: result.userId, ranking: result.detailedSignals.budgetRanking }));
-  if (rankings.length < 2 || new Set(rankings.map((entry) => entry.ranking[0])).size < 2) return [];
+  if (rankings.length < 2) return [];
   const distances: { left: string; right: string; distance: number }[] = [];
   for (let left = 0; left < rankings.length - 1; left += 1) {
     for (let right = left + 1; right < rankings.length; right += 1) {
@@ -179,13 +282,25 @@ function analyzeBudgetPriorityDifferences(snapshot: DuriAnalysisSnapshot): DuriR
     }
   }
   const furthest = distances.sort((left, right) => right.distance - left.distance)[0];
-  const consensus = deriveConsensusRanking(rankings).slice(0, 3);
+  const kemeny = deriveKemenyConsensus(rankings);
+  const disagreement = kemeny.normalizedPairwiseDisagreement;
+  if (disagreement === undefined || disagreement === 0) return [];
+  const consensus = kemeny.ranking.slice(0, 3);
+  const exact = kemeny.exact;
+  const optimumDescription = kemeny.allOptimalRankingsEnumerated
+    ? kemeny.equallyOptimalRankings.length > 1
+      ? `${kemeny.equallyOptimalRankings.length}개 정확 공동 최적 순위 중 결정론적으로 고른 한 가지`
+      : "전수탐색으로 확인한 유일 최적 순위"
+    : exact
+      ? "정확한 최소 불일치 순위 한 가지(동률 전체는 열거하지 않음)"
+      : "결정론적 국소 탐색으로 찾은 근사 순위";
+  const totalMemberCount = tripMemberIds(snapshot).length;
   return [{
     id: `preference-budget-priority-${rankings.map((entry) => entry.userId).sort().join("-")}`,
     category: "preference",
     severity: "low",
     title: "여행비를 우선 쓰고 싶은 항목이 달라요",
-    summary: `각자의 직접 순위를 Borda 평균 순위로 합치면 ${consensus.map((entry) => labelFor(budgetLabels, entry.item)).join(" → ")} 순서예요. 결제 한도나 실제 가격 데이터가 없어 자동 예산 배분에는 사용하지 않아요.`,
+    summary: `응답한 참여자 ${rankings.length}/${totalMemberCount}명의 순위에서 Kemeny 불일치를 줄인 결과는 ${consensus.map((item) => labelFor(budgetLabels, item)).join(" → ")} 순서예요. ${optimumDescription}이며, 결제 한도나 실제 가격 데이터가 없어 자동 예산 배분에는 사용하지 않아요.`,
     affectedItemIds: [],
     affectedPlaceIds: [],
     affectedMemberIds: rankings.map((entry) => entry.userId).sort(),
@@ -200,10 +315,15 @@ function analyzeBudgetPriorityDifferences(snapshot: DuriAnalysisSnapshot): DuriR
         value: `${memberName(snapshot, furthest.left)}님 ↔ ${memberName(snapshot, furthest.right)}님 · 역전 비율 ${(furthest.distance * 100).toFixed(0)}%`,
         memberIds: [furthest.left, furthest.right],
       }] : []),
+      {
+        label: "Kemeny 합의 품질",
+        value: `${optimumDescription} · 전체 비교쌍 불일치 ${(disagreement * 100).toFixed(0)}%`,
+        memberIds: rankings.map((entry) => entry.userId),
+      },
     ],
     suggestionSupported: false,
     constraintType: "soft",
-    confidence: snapshot.groupPreferenceDiagnosis.coverage === "complete" ? "high" : "medium",
+    confidence: exact ? observationConfidence(rankings.length, totalMemberCount) : "low",
     source: "mobile-context",
   }];
 }
@@ -245,12 +365,15 @@ function analyzeScheduleRepresentation(snapshot: DuriAnalysisSnapshot): DuriRepo
 }
 
 function analyzeMobilityChoices(snapshot: DuriAnalysisSnapshot): DuriReportIssue[] {
+  if (snapshot.localPlanningFactsStatus && snapshot.localPlanningFactsStatus !== "loaded") return [];
   const compatible = snapshot.trip.transport === "car"
-    ? new Set(["ownCar", "rentalCar", "taxi"])
+    ? new Set(["ownCar", "rentalCar"])
     : new Set(["bus", "subway", "train", "walk"]);
   return detailedResults(snapshot).flatMap((result) => {
     const selected = result.detailedSignals.mobilityModes;
-    if (!selected.length || selected.some((mode) => compatible.has(mode))) return [];
+    // Backend planning에는 taxi 모드가 없어서 car/public 중 어느 쪽과도 불일치로
+    // 확정하지 않는다. false positive보다 사용자 확인 누락이 안전하다.
+    if (!selected.length || selected.includes("taxi") || selected.some((mode) => compatible.has(mode))) return [];
     const name = memberName(snapshot, result.userId);
     return [{
       id: `preference-mobility-mode-${result.userId}-${snapshot.trip.transport}`,
@@ -273,26 +396,92 @@ function analyzeMobilityChoices(snapshot: DuriAnalysisSnapshot): DuriReportIssue
   });
 }
 
-function committedMinutesByDate(snapshot: DuriAnalysisSnapshot, analyzedAt: string) {
-  const scheduled = Object.fromEntries(getTripDates(snapshot.trip.startDate, snapshot.trip.endDate).map((date) => [
-    date,
-    snapshot.itinerary.filter((item) => item.date === date).reduce((total, item) => total + item.durationMinutes, 0),
-  ]));
-  for (const leg of buildScheduledRouteLegs(snapshot)) {
-    const estimate = findUsableRouteEstimateForLeg(snapshot.routeLegEstimates ?? [], leg, snapshot.trip.transport, analyzedAt);
-    if (estimate) scheduled[leg.date] = (scheduled[leg.date] ?? 0) + Math.ceil(estimate.durationSeconds / 60);
-  }
-  return scheduled;
+function analyzeSharedMobilityRequirements(snapshot: DuriAnalysisSnapshot): DuriReportIssue[] {
+  const currentMemberIds = new Set(tripMemberIds(snapshot));
+  const members = (getUsableSharedPreferenceEvidence(snapshot)?.members ?? []).flatMap((member) => {
+    if (!currentMemberIds.has(member.userId) || member.mobilityConstraints.status !== "present") return [];
+    const known = [...new Set(member.mobilityConstraints.values)]
+      .filter((value) => mobilityConstraintLabels[value])
+      .sort();
+    const unknown = [...new Set(member.mobilityConstraints.values)]
+      .filter((value) => !mobilityConstraintLabels[value])
+      .sort();
+    return known.length || unknown.length ? [{ member, known, unknown }] : [];
+  });
+  if (!members.length) return [];
+  return [{
+    id: `shared-mobility-requirements-${members.map(({ member }) => member.userId).sort().join("-")}`,
+    category: "preference",
+    severity: "low",
+    title: "동행자의 이동 접근 조건을 확인해 주세요",
+    summary: `동행자 ${members.length}명이 이동 불편 조건을 등록했어요. 요구가 있다는 사실은 신뢰할 수 있지만, 현재 장소·경로 데이터에는 계단·경사·개인별 최대 도보 허용치가 없어 위반 여부를 계산하거나 후보를 자동 제외하지 않아요. 방문 전 접근 경로를 확인해 주세요.`,
+    affectedItemIds: [],
+    affectedPlaceIds: [],
+    affectedMemberIds: members.map(({ member }) => member.userId).sort(),
+    evidence: members.map(({ member, known, unknown }) => ({
+      label: memberName(snapshot, member.userId),
+      value: [
+        ...known.map((value) => mobilityConstraintLabels[value]),
+        ...unknown.map((value) => `지원하지 않는 새 코드 ${value}`),
+      ].join(", "),
+      memberIds: [member.userId],
+    })),
+    suggestionSupported: false,
+    constraintType: "soft",
+    confidence: "high",
+    source: "external-evidence",
+  }];
 }
 
-function analyzePreferredDailyLoad(snapshot: DuriAnalysisSnapshot, analyzedAt: string): DuriReportIssue[] {
+function committedMinutesByDate(snapshot: DuriAnalysisSnapshot, analyzedAt: string) {
+  const intervalsByDate = Object.fromEntries(getTripDates(snapshot.trip.startDate, snapshot.trip.endDate)
+    .map((date) => [date, [] as { start: number; end: number }[]]));
+  snapshot.itinerary.forEach((item) => {
+    const start = timeStringToMinutes(item.startTime);
+    if (!Number.isFinite(start) || item.durationMinutes <= 0) return;
+    intervalsByDate[item.date]?.push({ start, end: start + item.durationMinutes });
+  });
+  const canUseTransportFacts = !snapshot.localPlanningFactsStatus || snapshot.localPlanningFactsStatus === "loaded";
+  for (const leg of canUseTransportFacts ? buildScheduledRouteLegs(snapshot) : []) {
+    const estimate = findUsableRouteEstimateForLeg(snapshot.routeLegEstimates ?? [], leg, snapshot.trip.transport, analyzedAt);
+    const start = timeStringToMinutes(leg.departureTime);
+    if (estimate && Number.isFinite(start)) intervalsByDate[leg.date]?.push({
+      start,
+      end: start + Math.ceil(estimate.durationSeconds / 60),
+    });
+  }
+  return Object.fromEntries(Object.entries(intervalsByDate).map(([date, intervals]) => {
+    const sorted = intervals.sort((left, right) => left.start - right.start || left.end - right.end);
+    let total = 0;
+    let currentStart: number | undefined;
+    let currentEnd: number | undefined;
+    sorted.forEach((interval) => {
+      if (currentStart === undefined || currentEnd === undefined) {
+        currentStart = interval.start;
+        currentEnd = interval.end;
+      } else if (interval.start <= currentEnd) {
+        currentEnd = Math.max(currentEnd, interval.end);
+      } else {
+        total += currentEnd - currentStart;
+        currentStart = interval.start;
+        currentEnd = interval.end;
+      }
+    });
+    if (currentStart !== undefined && currentEnd !== undefined) total += currentEnd - currentStart;
+    return [date, total];
+  }));
+}
+
+export function analyzePreferredDailyLoad(snapshot: DuriAnalysisSnapshot, analyzedAt: string): DuriReportIssue[] {
   const committed = committedMinutesByDate(snapshot, analyzedAt);
   return detailedResults(snapshot).flatMap((result) => {
     const preferred = result.detailedSignals.preferredDailyScheduledMinutes;
-    if (preferred <= 0) return [];
+    const resolution = dailyPreferenceResolution(result);
+    if (preferred === undefined || preferred <= 0 || resolution === undefined) return [];
+    const measurementTolerance = resolution / 2;
     const worst = Object.entries(committed)
       .map(([date, minutes]) => ({ date, minutes, excess: minutes - preferred }))
-      .filter((entry) => entry.excess >= 15)
+      .filter((entry) => entry.excess > measurementTolerance)
       .sort((left, right) => right.excess - left.excess || left.date.localeCompare(right.date))[0];
     if (!worst) return [];
     const name = memberName(snapshot, result.userId);
@@ -302,14 +491,15 @@ function analyzePreferredDailyLoad(snapshot: DuriAnalysisSnapshot, analyzedAt: s
       category: "preference" as const,
       severity: result.detailedSignals.staminaScore === 0 ? "medium" as const : "low" as const,
       title: `${name}님의 희망 일정량보다 긴 날이 있어요`,
-      summary: `${name}님이 설문에서 직접 구성한 하루 평균은 ${preferred}분이고, ${worst.date} 일정은 조회된 이동시간을 포함해 최소 ${worst.minutes}분이에요. ${worst.excess}분 차이를 Soft 제약으로 확인해 주세요.`,
+      summary: `${name}님이 설문에서 직접 구성한 하루 평균은 ${preferred.toFixed(1)}분이고, ${worst.date} 일정은 조회된 이동시간을 포함해 최소 ${worst.minutes}분이에요. 설문 양자화 오차를 제외해도 최소 ${(worst.excess - measurementTolerance).toFixed(1)}분 긴 Soft 제약이에요.`,
       date: worst.date,
       affectedItemIds: affected.map((item) => item.id),
       affectedPlaceIds: affected.flatMap((item) => item.placeId ? [item.placeId] : []),
       affectedMemberIds: [result.userId],
       evidence: [
-        { label: "설문에서 구성한 하루 평균", value: `${preferred}분`, memberIds: [result.userId] },
+        { label: "설문에서 구성한 하루 평균", value: `${preferred.toFixed(1)}분`, memberIds: [result.userId] },
         { label: "현재 일정 최소 점유", value: `${worst.minutes}분 · 조회 실패 이동구간 제외`, itemIds: affected.map((item) => item.id) },
+        { label: "설문 시간 해상도", value: `±${measurementTolerance}분 범위 밖일 때만 차이로 판정`, memberIds: [result.userId] },
         { label: "체력 응답 점수", value: `${result.detailedSignals.staminaScore}/100`, memberIds: [result.userId] },
       ],
       suggestionSupported: false,
@@ -320,10 +510,48 @@ function analyzePreferredDailyLoad(snapshot: DuriAnalysisSnapshot, analyzedAt: s
   });
 }
 
+export function analyzePreferredAverageStay(snapshot: DuriAnalysisSnapshot): DuriReportIssue[] {
+  const activityItems = snapshot.itinerary.filter((item) => item.itemType === "place" || item.itemType === "meal");
+  if (!activityItems.length) return [];
+  const actualAverage = activityItems.reduce((total, item) => total + item.durationMinutes, 0) / activityItems.length;
+  return detailedResults(snapshot).flatMap((result) => {
+    const { value: preferred, resolution } = averageActivityBlockPreference(result);
+    if (preferred === undefined || preferred <= 0 || resolution === undefined) return [];
+    const tolerance = resolution / 2;
+    const difference = actualAverage - preferred;
+    if (Math.abs(difference) <= tolerance) return [];
+    const name = memberName(snapshot, result.userId);
+    return [{
+      id: `preference-average-stay-${result.userId}`,
+      category: "preference" as const,
+      severity: "low" as const,
+      title: `${name}님의 활동 블록 길이와 차이가 있어요`,
+      summary: `${name}님이 직접 만든 설문의 비휴식 활동 블록 평균은 ${preferred.toFixed(1)}분이고, 현재 방문·식사 일정 평균은 ${actualAverage.toFixed(1)}분이에요. 분류 오차 가능성이 있어 설문 양자화 오차를 제외한 ${Math.max(0, Math.abs(difference) - tolerance).toFixed(1)}분 차이를 참고용으로만 보여줘요.`,
+      affectedItemIds: activityItems.map((item) => item.id),
+      affectedPlaceIds: activityItems.flatMap((item) => item.placeId ? [item.placeId] : []),
+      affectedMemberIds: [result.userId],
+      evidence: [
+        { label: "설문 비휴식 활동 블록 평균", value: `${preferred.toFixed(1)}분`, memberIds: [result.userId] },
+        { label: "현재 방문·식사 일정 평균", value: `${actualAverage.toFixed(1)}분`, itemIds: activityItems.map((item) => item.id) },
+        { label: "측정 허용 범위", value: `±${tolerance}분`, memberIds: [result.userId] },
+      ],
+      suggestionSupported: false,
+      constraintType: "soft" as const,
+      confidence: "low" as const,
+      source: "mobile-context" as const,
+    }];
+  });
+}
+
 function analyzeDetailedCategoryCoverage(snapshot: DuriAnalysisSnapshot): DuriReportIssue[] {
   return detailedResults(snapshot).flatMap((result) => {
-    const liked = Object.entries(result.detailedSignals.categoryScores)
-      .flatMap(([category, score]) => isSupportedCategory(category) && score >= 100 ? [category] : []);
+    const explicitLevels = result.detailedSignals.categoryPreferenceLevels;
+    const liked = explicitLevels
+      ? Object.entries(explicitLevels).flatMap(([category, level]) => (
+        isSupportedCategory(category) && level === "like" ? [category] : []
+      ))
+      : Object.entries(result.detailedSignals.categoryScores)
+        .flatMap(([category, score]) => isSupportedCategory(category) && score >= 100 ? [category] : []);
     if (!liked.length) return [];
     const missing = liked.filter((category) => !snapshot.itinerary.some((item) => {
       const place = item.placeId ? snapshot.placesById[item.placeId] : undefined;
@@ -340,8 +568,12 @@ function analyzeDetailedCategoryCoverage(snapshot: DuriAnalysisSnapshot): DuriRe
       id: `preference-category-coverage-${result.userId}-${missing.sort().join("-")}`,
       category: "preference" as const,
       severity: "low" as const,
-      title: `${name}님이 좋아한다고 답한 활동이 아직 없어요`,
-      summary: `직접 ‘좋아요’로 답한 ${missingLabels.join(", ")} 유형을 현재 장소 분류·태그에서 찾지 못했어요. 분류가 부정확할 수 있어 Soft 제약으로만 안내해요.`,
+      title: explicitLevels
+        ? `${name}님이 좋아한다고 답한 활동이 아직 없어요`
+        : `${name}님이 높은 비중을 둔 활동이 아직 없어요`,
+      summary: explicitLevels
+        ? `직접 ‘좋아요’로 답한 ${missingLabels.join(", ")} 유형을 현재 장소 분류·태그에서 찾지 못했어요. 분류가 부정확할 수 있어 Soft 제약으로만 안내해요.`
+        : `이전 설문에서 상대적으로 높은 시간을 배분한 ${missingLabels.join(", ")} 유형을 현재 장소 분류·태그에서 찾지 못했어요. 직접 ‘좋아요’ 응답으로 해석하지 않고 Soft 참고로만 보여줘요.`,
       affectedItemIds: [],
       affectedPlaceIds: [...new Set(candidatePlaceIds)],
       affectedMemberIds: [result.userId],
@@ -357,14 +589,104 @@ function analyzeDetailedCategoryCoverage(snapshot: DuriAnalysisSnapshot): DuriRe
   });
 }
 
-export function analyzePreferenceConstraints(snapshot: DuriAnalysisSnapshot, analyzedAt: string): DuriReportIssue[] {
+function analyzeSharedCandidateSignalConflicts(snapshot: DuriAnalysisSnapshot): DuriReportIssue[] {
+  return findSharedCandidateSignalConflicts(snapshot).map((conflict) => {
+    const place = snapshot.placesById[conflict.placeId];
+    const mustNames = conflict.mustVisitMemberIds.map((memberId) => memberName(snapshot, memberId));
+    const avoidNames = conflict.avoidMemberIds.map((memberId) => memberName(snapshot, memberId));
+    const selfConflictNames = conflict.internallyContradictoryMemberIds.map((memberId) => memberName(snapshot, memberId));
+    return {
+      id: `shared-candidate-signal-conflict-${conflict.placeId}-${conflict.mustVisitMemberIds.join("-")}-${conflict.avoidMemberIds.join("-")}`,
+      category: "preference" as const,
+      severity: "high" as const,
+      title: `${place?.name ?? "후보 장소"}의 필수·제외 의견이 충돌해요`,
+      summary: `${mustNames.join(", ")}님은 반드시 방문으로, ${avoidNames.join(", ")}님은 피할 장소로 명시했어요.${selfConflictNames.length ? ` ${selfConflictNames.join(", ")}님에게는 두 신호가 동시에 저장되어 있어 먼저 정정해야 해요.` : ""} 이 충돌은 수치 평균으로 없애지 않고 해당 후보만 자동 초안에서 보류해요. 초안 자체는 충돌 없는 후보로 계속 만들 수 있어요.`,
+      affectedItemIds: snapshot.itinerary.filter((item) => item.placeId === conflict.placeId).map((item) => item.id),
+      affectedPlaceIds: [conflict.placeId],
+      affectedMemberIds: [...new Set([...conflict.mustVisitMemberIds, ...conflict.avoidMemberIds])].sort(),
+      evidence: [
+        { label: "반드시 방문", value: mustNames.join(", "), memberIds: conflict.mustVisitMemberIds, placeIds: [conflict.placeId] },
+        { label: "피하고 싶음", value: avoidNames.join(", "), memberIds: conflict.avoidMemberIds, placeIds: [conflict.placeId] },
+        ...(selfConflictNames.length ? [{
+          label: "한 사람 안의 모순 신호",
+          value: selfConflictNames.join(", "),
+          memberIds: conflict.internallyContradictoryMemberIds,
+          placeIds: [conflict.placeId],
+        }] : []),
+        { label: "판정 근거", value: "같은 placeId의 mustVisit=true와 avoid=true가 동시에 존재", placeIds: [conflict.placeId] },
+      ],
+      suggestionSupported: false,
+      constraintType: "hard" as const,
+      confidence: "high" as const,
+      source: "external-evidence" as const,
+    };
+  });
+}
+
+const sharedAxisDefinitions = [
+  { id: "scheduleDensity", label: "일정 밀도 파생 축" },
+  { id: "landmarkNecessity", label: "대표 명소 배분 파생 축" },
+  { id: "localInterest", label: "로컬 장소 배분 파생 축" },
+  { id: "challenging", label: "새롭고 검증이 적은 선택 파생 축" },
+] as const;
+
+function analyzeSharedDerivedAxisDifferences(snapshot: DuriAnalysisSnapshot): DuriReportIssue[] {
+  const totalMemberCount = tripMemberIds(snapshot).length;
+  return sharedAxisDefinitions.flatMap((definition) => {
+    const observations = getSharedAxisObservations(snapshot, definition.id).map(({ userId, axis }) => ({
+      userId,
+      value: axis.value,
+      resolution: axis.resolution,
+      minimum: axis.range[0],
+      maximum: axis.range[1],
+      method: axis.method,
+    }));
+    if (observations.length < 2) return [];
+    const consensus = solveIntervalPreferenceConsensus(observations);
+    if (!consensus.measurableConflict || consensus.recommendedValue === undefined) return [];
+    return [{
+      id: `shared-derived-axis-${definition.id}-${observations.map((entry) => entry.userId).sort().join("-")}`,
+      category: "preference" as const,
+      severity: "low" as const,
+      title: `${definition.label}이 서로 달라요`,
+      summary: `응답한 ${observations.length}/${totalMemberCount}명의 서버 파생 점수를 미응답자 0점 없이 비교했어요. 각 값의 명시된 해상도 구간이 겹치지 않으며, 구간 밖 최대 차이를 최소화하는 조율점은 ${consensus.recommendedValue.toFixed(1)}점이에요. 원본 응답이 아닌 파생 축이므로 자동 변경 근거 하나로 쓰지는 않아요.`,
+      affectedItemIds: [],
+      affectedPlaceIds: [],
+      affectedMemberIds: observations.map((entry) => entry.userId).sort(),
+      evidence: [
+        ...consensus.observations.map((entry) => ({
+          label: memberName(snapshot, entry.userId),
+          value: `${entry.value}점 · 측정 구간 ${entry.lower.toFixed(1)}~${entry.upper.toFixed(1)} · rule-based-4axis`,
+          memberIds: [entry.userId],
+        })),
+        {
+          label: "폐구간 minimax 조율",
+          value: `${consensus.recommendedValue.toFixed(1)}점 · 최대 구간 후회 ${consensus.maximumIntervalRegret.toFixed(1)}점`,
+          memberIds: consensus.mostAffectedMemberIds,
+        },
+      ],
+      suggestionSupported: false,
+      constraintType: "soft" as const,
+      confidence: observationConfidence(observations.length, totalMemberCount),
+      source: "external-evidence" as const,
+    }];
+  });
+}
+
+export function analyzePreferenceConstraints(snapshot: DuriAnalysisSnapshot, _analyzedAt: string): DuriReportIssue[] {
+  const hasScheduleOverlay = snapshot.scheduleOverlayStatus !== "unavailable";
   return [
     ...analyzeExplicitPreferenceDifferences(snapshot),
+    ...analyzeContinuousScheduleConsensus(snapshot),
     ...analyzeMobilityConsensus(snapshot),
+    ...analyzeSharedMobilityRequirements(snapshot),
     ...analyzeBudgetPriorityDifferences(snapshot),
     ...analyzeMobilityChoices(snapshot),
-    ...analyzePreferredDailyLoad(snapshot, analyzedAt),
+    // 하루 일정량과 연속 활동은 robustDensityAnalyzer가 같은 설문 해상도 구간,
+    // 일정 겹침 제거, 조회 성공 이동시간을 한 번에 계산한다. 중복 경고를 만들지 않는다.
     ...analyzeDetailedCategoryCoverage(snapshot),
-    ...analyzeScheduleRepresentation(snapshot),
+    ...analyzeSharedCandidateSignalConflicts(snapshot),
+    ...analyzeSharedDerivedAxisDifferences(snapshot),
+    ...(hasScheduleOverlay ? analyzeScheduleRepresentation(snapshot) : []),
   ];
 }

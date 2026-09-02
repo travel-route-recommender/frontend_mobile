@@ -1,9 +1,5 @@
-import {
-  DEFAULT_PLACE_DURATION_MINUTES,
-  MIN_DURATION_MINUTES,
-  SLOT_MINUTES,
-} from "../../data/workspaceSchedule";
-import type { EntityId, ItineraryItem, Place, TripCandidate } from "../../domain";
+import { MIN_DURATION_MINUTES, SLOT_MINUTES } from "../../data/workspaceSchedule";
+import type { ItineraryItem, Place, TripCandidate } from "../../domain";
 import { DURI_ANALYSIS_CONFIG, extractStableArea, isMealPlace } from "../duri-analysis";
 import { normalizeTrait } from "../duri-analysis/shared";
 import type { AnalysisIssue } from "../duri-analysis";
@@ -376,92 +372,6 @@ function buildDensitySuggestions(input: DuriSuggestionInput, issue: AnalysisIssu
     .slice(0, 2);
 }
 
-function getMatchedPreferredTags(place: Place, memberId: EntityId, input: DuriSuggestionInput) {
-  const placeTags = new Set(place.tags.map(normalizeTrait));
-  return (input.preferenceResults[memberId]?.preferredTags ?? [])
-    .filter((tag) => placeTags.has(normalizeTrait(tag)));
-}
-
-function findPreferenceCandidates(input: DuriSuggestionInput, memberId: EntityId) {
-  const scheduledPlaceIds = new Set(input.itinerary.flatMap((item) => item.placeId ? [item.placeId] : []));
-  return [...input.candidates]
-    .filter((candidate) => !scheduledPlaceIds.has(candidate.placeId) && input.placesById[candidate.placeId]?.regionId === input.trip.regionId)
-    .map((candidate) => {
-      const place = input.placesById[candidate.placeId];
-      const addedByMember = candidate.addedByUserIds.includes(memberId);
-      const matchedTags = getMatchedPreferredTags(place, memberId, input);
-      return { candidate, place, addedByMember, matchedTags, score: addedByMember ? 100 + matchedTags.length : matchedTags.length };
-    })
-    .filter((entry) => entry.score > 0)
-    .sort((left, right) => right.score - left.score || left.place.id.localeCompare(right.place.id));
-}
-
-export function findPreferenceCandidate(input: DuriSuggestionInput, memberId: EntityId) {
-  return findPreferenceCandidates(input, memberId)[0];
-}
-
-function buildPreferenceSuggestion(input: DuriSuggestionInput, issue: AnalysisIssue): DuriSuggestion | undefined {
-  const memberId = issue.affectedMemberIds.length === 1 ? issue.affectedMemberIds[0] : undefined;
-  if (!memberId || !input.trip.members.some((member) => member.userId === memberId) || issue.severity === "info") return undefined;
-  const preferenceCandidates = findPreferenceCandidates(input, memberId);
-  const selected = preferenceCandidates[0];
-  if (!selected) return undefined;
-  const memberName = input.members.find((member) => member.id === memberId)?.name ?? "참여자";
-  const preferenceReason = selected.addedByMember
-    ? `${memberName}님이 직접 담은 후보를 우선했어요.`
-    : selected.matchedTags.length
-      ? `${memberName}님의 성향과 이 장소의 ${selected.matchedTags.map((tag) => `#${tag}`).join(" · ")} 태그가 잘 맞아요.`
-      : `${memberName}님의 선호 근거를 고려했어요.`;
-  const tripDates = getTripDates(input.trip.startDate, input.trip.endDate);
-  const durationMinutes = DEFAULT_PLACE_DURATION_MINUTES;
-  const slot = tripDates
-    .map((date) => ({
-      date,
-      placeCount: input.itinerary.filter((item) => item.date === date && item.itemType === "place").length,
-      startTime: findNextAvailableSlot({ items: input.itinerary, date, durationMinutes }),
-    }))
-    .filter((entry) => entry.placeCount < DURI_ANALYSIS_CONFIG.density.densePlaceCount && entry.startTime)
-    .sort((left, right) => left.placeCount - right.placeCount || left.date.localeCompare(right.date))[0];
-  if (slot?.startTime) {
-    const itemId = createAddedItemId("add-preference-place", slot.date, slot.startTime, selected.place.id, new Set(input.itinerary.map((item) => item.id)));
-    return createSuggestion(input, {
-      sourceIssueIds: [issue.id],
-      type: "add-preference-place",
-      priority: issuePriority(issue),
-      title: `${memberName}님이 선호한 ${selected.place.name} 추가`,
-      summary: `${slot.date} ${slot.startTime} 빈 시간에 후보 장소를 반영할 수 있어요.`,
-      reason: `${issue.title} ${preferenceReason}`,
-      affectedItemIds: [itemId],
-      affectedPlaceIds: [selected.place.id],
-      changes: [{ itemId, placeId: selected.place.id, action: "add", after: { date: slot.date, startTime: slot.startTime, durationMinutes, placeId: selected.place.id, itemType: "place", preferredByUserIds: [...new Set([...selected.candidate.addedByUserIds, memberId])] } }],
-    });
-  }
-
-  const replacement = preferenceCandidates.flatMap((candidateEntry) => {
-    const category = normalizeTrait(candidateEntry.place.category);
-    const sameCategory = input.itinerary.filter((item) => !item.lockedForDuri && item.placeId && input.placesById[item.placeId] && normalizeTrait(input.placesById[item.placeId].category) === category);
-    const target = sameCategory.length >= 2
-      ? sameCategory.find((item) => !item.preferredByUserIds.includes(memberId))
-      : undefined;
-    return target ? [{ selected: candidateEntry, target }] : [];
-  })[0];
-  if (!replacement) return undefined;
-  const replacementSelected = replacement.selected;
-  const replaceTarget = replacement.target;
-  const previousPlace = replaceTarget.placeId ? input.placesById[replaceTarget.placeId] : undefined;
-  return createSuggestion(input, {
-    sourceIssueIds: [issue.id],
-    type: "replace-place",
-    priority: issuePriority(issue),
-    title: `${previousPlace?.name ?? "기존 장소"} 대신 ${replacementSelected.place.name}`,
-    summary: "날짜와 시간, 체류시간은 유지하고 같은 카테고리의 후보 장소로 바꿔요.",
-    reason: `${memberName}님의 선호를 반영하면서 일정 밀도를 늘리지 않는 선택지예요. ${replacementSelected.addedByMember ? "직접 담은 후보를 우선했어요." : replacementSelected.matchedTags.map((tag) => `#${tag}`).join(" · ") + " 태그를 보조 근거로 사용했어요."}`,
-    affectedItemIds: [replaceTarget.id],
-    affectedPlaceIds: [replaceTarget.placeId, replacementSelected.place.id].filter((id): id is string => Boolean(id)),
-    changes: [{ itemId: replaceTarget.id, placeId: replacementSelected.place.id, action: "replace", before: itemState(replaceTarget), after: { ...itemState(replaceTarget), placeId: replacementSelected.place.id, preferredByUserIds: [...new Set([...replacementSelected.candidate.addedByUserIds, memberId])] } }],
-  });
-}
-
 function dedupeSuggestions(suggestions: DuriSuggestion[]) {
   const seen = new Set<string>();
   return suggestions.filter((suggestion) => {
@@ -477,13 +387,11 @@ export function generateDuriSuggestions(input: DuriSuggestionInput): DuriSuggest
     meal: input.analysis.meal.issues.filter((issue) => issue.severity !== "info"),
     density: input.analysis.density.issues.filter((issue) => issue.severity !== "info"),
     route: input.analysis.route.issues.filter((issue) => issue.severity !== "info"),
-    preference: input.analysis.preference.issues.filter((issue) => issue.severity !== "info"),
   };
   const suggestions = [
     ...actionable.meal.flatMap((issue) => buildMealSuggestions(input, issue)),
     ...actionable.density.flatMap((issue) => buildDensitySuggestions(input, issue)),
     ...actionable.route.flatMap((issue) => buildRouteReorderSuggestion(input, issue) ?? []),
-    ...actionable.preference.flatMap((issue) => buildPreferenceSuggestion(input, issue) ?? []),
   ];
   const priorityRank: Record<SuggestionPriority, number> = { high: 0, medium: 1, low: 2 };
   return dedupeSuggestions(suggestions).sort((left, right) =>

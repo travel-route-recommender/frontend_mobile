@@ -16,6 +16,7 @@ import type { PlaceActionFeedback } from "../types";
 export function usePlaceActions() {
   const queryClient = useQueryClient();
   const sessionKind = useAuthSessionStore((state) => state.sessionKind);
+  const sessionUserId = useAuthSessionStore((state) => state.currentSessionUserId) ?? "";
   const apiTripContext = useExploreSearchStore((state) => state.activeTripRegionContext);
   const { requireMember, memberGatePrompt } = useMemberGate();
   const source = useDuriStore(useShallow((state) => ({
@@ -119,7 +120,7 @@ export function usePlaceActions() {
         if (!Array.isArray(payload)) throw new Error("후보 추가 응답 형식이 올바르지 않아요.");
         setFeedback({ message: "여행방 후보에 담았어요.", tripId });
         void queryClient.invalidateQueries({ queryKey: queryKeys.trips.all });
-        void queryClient.invalidateQueries({ queryKey: queryKeys.trips.detail(tripId) });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.trips.detail(tripId, sessionUserId) });
       }).catch((reason: unknown) => {
         const message = reason instanceof ApiError && reason.status === 401
           ? "로그인 정보가 만료됐어요. 다시 로그인해 주세요."

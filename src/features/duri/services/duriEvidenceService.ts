@@ -345,6 +345,83 @@ function scheduledTourPlaces(input: DuriAnalysisInput) {
   return [...places.values()];
 }
 
+function unscheduledCandidateTourPlaces(input: DuriAnalysisInput) {
+  const scheduledPlaceIds = new Set(input.itinerary.flatMap((item) => item.placeId ? [item.placeId] : []));
+  const places = new Map<string, Place>();
+  input.candidates.forEach((candidate) => {
+    if (scheduledPlaceIds.has(candidate.placeId)) return;
+    const place = input.placesById[candidate.placeId];
+    const legacyTourId = place && /^\d+$/.test(place.id) && place.contentTypeId && TOUR_CONTENT_TYPE_IDS.has(place.contentTypeId);
+    if (place && (directTourContentId(place.id) || legacyTourId || isMongoObjectId(place.id))) places.set(place.id, place);
+  });
+  return [...places.values()].sort((left, right) => left.id.localeCompare(right.id));
+}
+
+type CandidateTourFact = { placeId: string; facts: TourConstraintFacts };
+
+async function collectUnscheduledCandidatePlaceFacts(
+  input: DuriAnalysisInput,
+  dependencies: DuriEvidenceDependencies,
+  options: DuriEvidenceRequestOptions,
+  completed: CandidateTourFact[],
+) {
+  const places = unscheduledCandidateTourPlaces(input);
+  const settled = await mapWithBoundedConcurrency(places, TOUR_REQUEST_CONCURRENCY, async (place) => {
+    const resolution = await resolveTourContentId(place, dependencies.requestPlaceReference, options);
+    if (resolution.status !== "resolved") return undefined;
+    try {
+      const detail = await requestWithDeadline(
+        (signal) => dependencies.requestTourDetail(resolution.contentId, signal),
+        options,
+      );
+      const facts = mapTourConstraintFacts(detail);
+      if (!hasUsableTourFacts(facts)) return undefined;
+      const entry = { placeId: place.id, facts };
+      completed.push(entry);
+      return entry;
+    } catch {
+      return undefined;
+    }
+  });
+  return settled.filter((entry): entry is CandidateTourFact => Boolean(entry));
+}
+
+/**
+ * 자동 일정 생성 직전에 미배치 후보의 TourAPI 원문만 보조 근거로 수집한다.
+ *
+ * - 후보 조회 전체가 하나의 deadline 안에서 끝나며 공급자별 요청도 같은 AbortSignal을 받는다.
+ * - 한 장소 또는 전체 조회가 실패하면 기존 입력으로 돌아가므로 리포트/일정 편집을 중단하지 않는다.
+ * - 분석 실행의 coverage는 이미 배치된 일정만 설명해야 하므로 evidenceCollection은 건드리지 않는다.
+ */
+export async function enrichPreferenceAutoFillCandidateEvidence(
+  input: DuriAnalysisInput,
+  fetchedAt = new Date().toISOString(),
+  dependencies: DuriEvidenceDependencies = defaultDependencies,
+  options: DuriEvidenceRequestOptions = {},
+): Promise<DuriAnalysisInput> {
+  const collected: CandidateTourFact[] = [];
+  try {
+    await requestWithDeadline(
+      (signal) => collectUnscheduledCandidatePlaceFacts(input, dependencies, { ...options, signal }, collected),
+      options,
+    );
+  } catch {
+    // 전체 deadline 전에 끝난 후보 근거는 보존하고, 끝나지 않은 후보만 건너뛴다.
+  }
+  if (!collected.length) return input;
+  const mergedByPlaceId = new Map((input.placeConstraintEvidence ?? []).map((evidence) => [evidence.placeId, evidence]));
+  collected.forEach(({ placeId, facts }) => mergedByPlaceId.set(placeId, {
+    ...facts,
+    placeId,
+    provider: "tour-api",
+    fetchedAt,
+  }));
+  return {
+    ...input,
+    placeConstraintEvidence: [...mergedByPlaceId.values()].sort((left, right) => left.placeId.localeCompare(right.placeId)),
+  };
+}
+
 function scheduledPlaceCount(input: DuriAnalysisInput) {
   return new Set(input.itinerary.flatMap((item) => item.placeId ? [item.placeId] : [])).size;
 }

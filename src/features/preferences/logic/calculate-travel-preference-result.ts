@@ -26,7 +26,7 @@ import {
 import { classifyChallengeStyle } from "./classify-challenge-style";
 import { deriveScheduleStylePreference } from "./derive-schedule-style";
 
-export const TRAVEL_PREFERENCE_ALGORITHM_VERSION = 6;
+export const TRAVEL_PREFERENCE_ALGORITHM_VERSION = 9;
 
 const budgetPriorityWeights = [33, 27, 20, 13, 7] as const;
 
@@ -90,6 +90,12 @@ export function calculateTravelPreferenceSurveyResult(
   const restMinutes = restBlocks.reduce((total, block) => total + block.durationHours * 60, 0);
   const activityMinutes = Math.max(0, scheduledMinutes - restMinutes);
   const scheduleSpanMinutes = days.length * itineraryHourSlots.length * 60;
+  const observedDayWindows = days.flatMap((day) => {
+    if (!day.blocks.length) return [];
+    const starts = day.blocks.map((block) => Number(block.startSlot.slice(0, 2)) * 60);
+    const ends = day.blocks.map((block) => Number(block.startSlot.slice(0, 2)) * 60 + block.durationHours * 60);
+    return [{ startMinutes: Math.min(...starts), endMinutes: Math.max(...ends) }];
+  });
   const legacyDensityScore = scheduleSpanMinutes ? clampScore((scheduledMinutes / scheduleSpanMinutes) * 100) : 0;
   const itineraryMessagePreference = buildItineraryMessagePreference(answers, blocks, legacyDensityScore);
   const landmarkBlocks = blocks.filter((block) => block.activityId === "attraction");
@@ -127,8 +133,13 @@ export function calculateTravelPreferenceSurveyResult(
       freeTimeMinutes: Math.max(0, scheduleSpanMinutes - scheduledMinutes),
       blockCount: blocks.length,
       restBlockCount: restBlocks.length,
-      averageStayMinutes: blocks.length ? Math.round(scheduledMinutes / blocks.length) : 0,
-      averageDailyScheduledMinutes: days.length ? Math.round(scheduledMinutes / days.length) : 0,
+      averageStayMinutes: placeBlocks.length ? activityMinutes / placeBlocks.length : 0,
+      averageDailyScheduledMinutes: days.length ? scheduledMinutes / days.length : 0,
+      observedScheduleDayCount: observedDayWindows.length,
+      ...(observedDayWindows.length ? {
+        averageDayStartMinutes: observedDayWindows.reduce((sum, day) => sum + day.startMinutes, 0) / observedDayWindows.length,
+        averageDayEndMinutes: observedDayWindows.reduce((sum, day) => sum + day.endMinutes, 0) / observedDayWindows.length,
+      } : {}),
       densityScore: itineraryMessagePreference.densityScore,
     },
     placeFeatures: {
@@ -169,16 +180,39 @@ export function calculateLegacyPreferenceProjection(
 }
 
 export function buildDuriPreferenceSignals(result: TravelPreferenceSurveyResult) {
+  const categoryPreferenceLevels = Object.fromEntries(Object.entries(result.answers.itineraryMessageAnswers ?? {})
+    .filter(([categoryId]) => categoryId !== "density"));
   return {
     surveyVersion: result.surveyVersion,
     algorithmVersion: result.algorithmVersion,
     staminaScore: result.staminaPreference.score,
     densityScore: result.itineraryMessagePreference.densityScore,
     scheduleStyle: result.scheduleStylePreference.type,
-    preferredDailyScheduledMinutes: result.scheduleFeatures.averageDailyScheduledMinutes,
-    preferredAverageStayMinutes: result.scheduleFeatures.averageStayMinutes,
+    ...(result.scheduleFeatures.dayCount > 0 && result.scheduleFeatures.averageDailyScheduledMinutes > 0
+      ? {
+        preferredDailyScheduledMinutes: result.scheduleFeatures.averageDailyScheduledMinutes,
+        preferredDailyScheduledResolutionMinutes: 60 / result.scheduleFeatures.dayCount,
+      }
+      : {}),
+    ...(result.scheduleFeatures.averageStayMinutes > 0
+      ? {
+        preferredAverageActivityBlockMinutes: result.scheduleFeatures.averageStayMinutes,
+        preferredAverageActivityBlockResolutionMinutes: 60 / result.placeFeatures.selectedPlaceCount,
+      }
+      : {}),
+    ...(result.scheduleFeatures.observedScheduleDayCount > 0
+      && result.scheduleFeatures.averageDayStartMinutes !== undefined
+      && result.scheduleFeatures.averageDayEndMinutes !== undefined
+      ? {
+        preferredDayStartMinutes: result.scheduleFeatures.averageDayStartMinutes,
+        preferredDayStartResolutionMinutes: 60 / result.scheduleFeatures.observedScheduleDayCount,
+        preferredDayEndMinutes: result.scheduleFeatures.averageDayEndMinutes,
+        preferredDayEndResolutionMinutes: 60 / result.scheduleFeatures.observedScheduleDayCount,
+      }
+      : {}),
     mobilityModes: [...(result.answers.mobilityModes ?? [])],
     categoryScores: { ...result.itineraryMessagePreference.categoryScores },
+    ...(Object.keys(categoryPreferenceLevels).length ? { categoryPreferenceLevels } : {}),
     budgetRanking: [...result.spendingPriority.ranking],
     landmarkImportance: result.discoveryPreference.landmarkImportance,
     localInterest: result.discoveryPreference.localInterest,

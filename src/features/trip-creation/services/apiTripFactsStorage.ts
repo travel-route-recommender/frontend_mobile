@@ -10,13 +10,92 @@ export type ApiTripLocalFacts = {
   savedAt: string;
 };
 
-function storageKey(userId: string, roomId: string) {
+export type ApiTripLocalFactsScope = {
+  roomId: string;
+  startDate: string | null;
+  endDate: string | null;
+};
+
+export type ApiTripLocalFactsLoadResult =
+  | { status: "loaded"; value: ApiTripLocalFacts }
+  | { status: "missing" | "unavailable"; value: null };
+
+type ApiLocalStorageReader = Pick<typeof AsyncStorage, "getItem">;
+type ApiLocalStorageRemover = Pick<typeof AsyncStorage, "removeItem">;
+type ApiLocalStorageWriter = Pick<typeof AsyncStorage, "setItem">;
+
+const API_TRIP_FACTS_STORAGE_VERSION = 3 as const;
+const LEGACY_API_TRIP_FACTS_STORAGE_VERSIONS = [2, 1] as const;
+const pendingWritesByStorageKey = new Map<string, Promise<void>>();
+
+type StoredApiTripLocalFacts = {
+  version: typeof API_TRIP_FACTS_STORAGE_VERSION;
+  scope: ApiTripLocalFactsScope;
+  facts: ApiTripLocalFacts;
+};
+
+function storageIdentity(userId: string, roomId: string) {
   const normalizedUserId = userId.trim();
   const normalizedRoomId = roomId.trim();
   if (!/^[a-f\d]{24}$/i.test(normalizedUserId) || !/^[a-f\d]{24}$/i.test(normalizedRoomId)) {
     throw new Error("서버 사용자 또는 여행방 ID 형식이 올바르지 않아요.");
   }
-  return `duri:api-trip-facts:v1:${normalizedUserId}:${normalizedRoomId}`;
+  return { normalizedUserId, normalizedRoomId };
+}
+
+function isValidDateOnly(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function isValidScope(scope: ApiTripLocalFactsScope) {
+  if (!/^[a-f\d]{24}$/i.test(scope.roomId)) return false;
+  if (scope.startDate === null || scope.endDate === null) {
+    return scope.startDate === null && scope.endDate === null;
+  }
+  return isValidDateOnly(scope.startDate)
+    && isValidDateOnly(scope.endDate)
+    && scope.startDate <= scope.endDate;
+}
+
+function storageKey(
+  userId: string,
+  roomId: string,
+  scope: Pick<ApiTripLocalFactsScope, "startDate" | "endDate">,
+) {
+  const { normalizedUserId, normalizedRoomId } = storageIdentity(userId, roomId);
+  const normalizedScope: ApiTripLocalFactsScope = {
+    roomId: normalizedRoomId,
+    startDate: scope.startDate,
+    endDate: scope.endDate,
+  };
+  if (!isValidScope(normalizedScope)) throw new Error("여행 날짜 범위가 올바르지 않아요.");
+  const startDate = normalizedScope.startDate ?? "date-undecided";
+  const endDate = normalizedScope.endDate ?? "date-undecided";
+  return `duri:api-trip-facts:v${API_TRIP_FACTS_STORAGE_VERSION}:${normalizedUserId}:${normalizedRoomId}:${startDate}:${endDate}`;
+}
+
+function legacyStorageKey(userId: string, roomId: string, version: number) {
+  const { normalizedUserId, normalizedRoomId } = storageIdentity(userId, roomId);
+  return `duri:api-trip-facts:v${version}:${normalizedUserId}:${normalizedRoomId}`;
+}
+
+async function enqueueStorageWrite(key: string, write: () => Promise<void>) {
+  const previous = pendingWritesByStorageKey.get(key) ?? Promise.resolve();
+  const current = previous.catch(() => undefined).then(write);
+  pendingWritesByStorageKey.set(key, current);
+  try {
+    await current;
+  } finally {
+    if (pendingWritesByStorageKey.get(key) === current) pendingWritesByStorageKey.delete(key);
+  }
+}
+
+function sameScope(left: ApiTripLocalFactsScope, right: ApiTripLocalFactsScope) {
+  return left.roomId === right.roomId
+    && left.startDate === right.startDate
+    && left.endDate === right.endDate;
 }
 
 function parseLocation(value: unknown): TripLocation | null {
@@ -106,22 +185,102 @@ export function parseApiTripLocalFacts(value: unknown): ApiTripLocalFacts | null
 export async function saveApiTripLocalFacts(
   userId: string,
   roomId: string,
+  scope: Pick<ApiTripLocalFactsScope, "startDate" | "endDate">,
   facts: Omit<ApiTripLocalFacts, "savedAt">,
+  storage: ApiLocalStorageWriter = AsyncStorage,
 ) {
+  const normalizedScope: ApiTripLocalFactsScope = {
+    roomId: roomId.trim(),
+    startDate: scope.startDate,
+    endDate: scope.endDate,
+  };
+  if (!isValidScope(normalizedScope)) throw new Error("여행 날짜 범위가 올바르지 않아 기기에 저장하지 않았어요.");
   const normalized = parseApiTripLocalFacts({
     ...facts,
     savedAt: new Date().toISOString(),
   } satisfies ApiTripLocalFacts);
   if (!normalized) throw new Error("여행 사실 형식이 올바르지 않아 기기에 저장하지 않았어요.");
-  await AsyncStorage.setItem(storageKey(userId, roomId), JSON.stringify(normalized));
+  const stored: StoredApiTripLocalFacts = {
+    version: API_TRIP_FACTS_STORAGE_VERSION,
+    scope: normalizedScope,
+    facts: normalized,
+  };
+  const key = storageKey(userId, roomId, normalizedScope);
+  await enqueueStorageWrite(key, () => storage.setItem(key, JSON.stringify(stored)));
 }
 
-export async function loadApiTripLocalFacts(userId: string, roomId: string): Promise<ApiTripLocalFacts | null> {
-  const raw = await AsyncStorage.getItem(storageKey(userId, roomId));
-  if (!raw) return null;
+/** null storage entry만 미설정이며, 존재하지만 읽을 수 없는 값은 손상으로 격리한다. */
+export function parseStoredApiTripLocalFacts(
+  raw: string | null,
+  expectedScope: ApiTripLocalFactsScope,
+): ApiTripLocalFactsLoadResult {
+  if (raw === null) return { status: "missing", value: null };
   try {
-    return parseApiTripLocalFacts(JSON.parse(raw));
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { status: "unavailable", value: null };
+    }
+    const stored = parsed as Partial<StoredApiTripLocalFacts>;
+    if (stored.version !== API_TRIP_FACTS_STORAGE_VERSION
+      || !stored.scope
+      || typeof stored.scope !== "object"
+      || Array.isArray(stored.scope)
+      || !isValidScope(stored.scope as ApiTripLocalFactsScope)
+      || !isValidScope(expectedScope)
+      || !sameScope(stored.scope as ApiTripLocalFactsScope, expectedScope)) {
+      return { status: "unavailable", value: null };
+    }
+    const facts = parseApiTripLocalFacts(stored.facts);
+    return facts ? { status: "loaded", value: facts } : { status: "unavailable", value: null };
   } catch {
-    return null;
+    return { status: "unavailable", value: null };
   }
+}
+
+export async function loadApiTripLocalFactsWithStatus(
+  userId: string,
+  roomId: string,
+  scope: Pick<ApiTripLocalFactsScope, "startDate" | "endDate">,
+  storage: ApiLocalStorageReader = AsyncStorage,
+): Promise<ApiTripLocalFactsLoadResult> {
+  const expectedScope: ApiTripLocalFactsScope = { roomId: roomId.trim(), ...scope };
+  try {
+    const current = await storage.getItem(storageKey(userId, roomId, expectedScope));
+    if (current !== null) return parseStoredApiTripLocalFacts(current, expectedScope);
+    // v1/v2에는 날짜가 storage key에 없어 느린 과거 범위 저장이 새 범위 값을
+    // 덮어쓸 수 있다. 남은 값은 자동 이관하지 않고 명시적 초기화를 요구한다.
+    const legacy = await Promise.all(LEGACY_API_TRIP_FACTS_STORAGE_VERSIONS.map((version) => (
+      storage.getItem(legacyStorageKey(userId, roomId, version))
+    )));
+    return legacy.every((value) => value === null)
+      ? { status: "missing", value: null }
+      : { status: "unavailable", value: null };
+  } catch {
+    return { status: "unavailable", value: null };
+  }
+}
+
+export async function loadApiTripLocalFacts(
+  userId: string,
+  roomId: string,
+  scope: Pick<ApiTripLocalFactsScope, "startDate" | "endDate">,
+  storage: ApiLocalStorageReader = AsyncStorage,
+): Promise<ApiTripLocalFacts | null> {
+  return (await loadApiTripLocalFactsWithStatus(userId, roomId, scope, storage)).value;
+}
+
+/** 사용자가 복구를 확인한 경우에만 현재 계정·여행방의 로컬 사실 키를 제거한다. */
+export async function clearApiTripLocalFacts(
+  userId: string,
+  roomId: string,
+  scope: Pick<ApiTripLocalFactsScope, "startDate" | "endDate">,
+  storage: ApiLocalStorageRemover = AsyncStorage,
+) {
+  const currentKey = storageKey(userId, roomId, scope);
+  await Promise.all([
+    enqueueStorageWrite(currentKey, () => storage.removeItem(currentKey)),
+    ...LEGACY_API_TRIP_FACTS_STORAGE_VERSIONS.map((version) => (
+      storage.removeItem(legacyStorageKey(userId, roomId, version))
+    )),
+  ]);
 }

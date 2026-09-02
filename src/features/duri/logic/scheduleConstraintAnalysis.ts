@@ -198,6 +198,7 @@ function wonLabel(value: number) {
  * 채우거나 실제 교통수단이 택시라고 가정하지 않는다.
  */
 export function analyzeRouteCostEvidence(snapshot: DuriAnalysisSnapshot, analyzedAt: string): DuriReportIssue[] {
+  if (snapshot.localPlanningFactsStatus && snapshot.localPlanningFactsStatus !== "loaded") return [];
   if (snapshot.trip.transport !== "car") return [];
   const budgetSensitiveMemberIds = Object.values(snapshot.preferenceResults)
     .filter((result) => result.answers.budget === 0)
@@ -249,6 +250,7 @@ export function analyzeRouteCostEvidence(snapshot: DuriAnalysisSnapshot, analyze
 }
 
 export function analyzeRouteTimeConstraints(snapshot: DuriAnalysisSnapshot, analyzedAt: string): DuriReportIssue[] {
+  if (snapshot.localPlanningFactsStatus && snapshot.localPlanningFactsStatus !== "loaded") return [];
   const estimates = snapshot.routeLegEstimates ?? [];
   return buildScheduledRouteLegs(snapshot).flatMap((leg) => {
     const estimate = findUsableRouteEstimateForLeg(estimates, leg, snapshot.trip.transport, analyzedAt);
@@ -263,12 +265,13 @@ export function analyzeRouteTimeConstraints(snapshot: DuriAnalysisSnapshot, anal
         ? "분석 시점 자동차 교통"
         : "출발시각을 반영하지 않는 대중교통 경로";
     const isDepartureSpecific = estimate.timingBasis === "future-departure";
+    const summary = `${fromPlace?.name ?? "이전 장소"}에서 ${toPlace?.name ?? "다음 장소"}까지 조회된 예상 이동시간은 ${secondsLabel(estimate.durationSeconds)}지만, 연속해서 사용할 수 있는 시간은 ${secondsLabel(leg.availableSeconds)}예요. 약 ${secondsLabel(shortageSeconds)}을 더 확보해 주세요.`;
     return [{
       id: `route-time-${leg.date}-${leg.from.id}-${leg.to.id}`,
       category: "route" as const,
       severity: isDepartureSpecific ? "high" as const : "medium" as const,
       title: "다음 장소까지 이동시간이 부족해요",
-      summary: `${fromPlace?.name ?? "이전 장소"}에서 ${toPlace?.name ?? "다음 장소"}까지 조회된 예상 이동시간은 ${secondsLabel(estimate.durationSeconds)}지만, 연속해서 사용할 수 있는 시간은 ${secondsLabel(leg.availableSeconds)}예요. 약 ${secondsLabel(shortageSeconds)}을 더 확보해 주세요.`,
+      summary,
       date: leg.date,
       affectedItemIds: [leg.from.id, leg.to.id],
       affectedPlaceIds,
@@ -283,11 +286,33 @@ export function analyzeRouteTimeConstraints(snapshot: DuriAnalysisSnapshot, anal
       constraintType: isDepartureSpecific ? "hard" as const : "soft" as const,
       confidence: isDepartureSpecific ? "high" as const : "medium" as const,
       source: "external-evidence" as const,
+      technicalDetails: {
+        model: "연속 일정 사이 이동시간 실행 가능성 검사",
+        formulaLatex: String.raw`A_{ij}=s_j-e_i,\quad \Delta_{ij}=\max(0,T_{ij}-A_{ij}),\quad feasible_{ij}=\mathbf{1}[\Delta_{ij}=0]`,
+        substitutedLatex: String.raw`\Delta_{ij}=\max(0,${estimate.durationSeconds}-${leg.availableSeconds})=${shortageSeconds}\;\mathrm{s}`,
+        variables: [
+          { symbol: "T_{ij}", label: "경로 공급자가 반환한 예상 이동시간", value: estimate.durationSeconds, formattedValue: secondsLabel(estimate.durationSeconds), unit: "초", source: `${estimate.provider} · ${estimate.fetchedAt}` },
+          { symbol: "A_{ij}", label: "앞 일정 종료부터 다음 일정 시작까지 사용 가능한 시간", value: leg.availableSeconds, formattedValue: secondsLabel(leg.availableSeconds), unit: "초", source: "일정표" },
+          { symbol: "\\Delta_{ij}", label: "부족한 이동시간", value: shortageSeconds, formattedValue: secondsLabel(shortageSeconds), unit: "초", source: "이동 예상시간과 일정 간격의 차이" },
+        ],
+        steps: [
+          `앞 일정 종료 뒤 다음 일정 전까지 ${secondsLabel(leg.availableSeconds)}을 사용할 수 있습니다.`,
+          `${timingDescription}으로 같은 구간의 이동시간 ${secondsLabel(estimate.durationSeconds)}을 확인했습니다.`,
+          `예상 이동시간에서 사용 가능 시간을 빼 ${secondsLabel(shortageSeconds)} 부족으로 판정했습니다.`,
+        ],
+        result: summary,
+        complexity: "일정 구간 l개와 수집 경로 e개를 현재 구현에서 대조하므로 최악 O(l·e)",
+        caveats: [
+          isDepartureSpecific ? "예정 출발시각을 반영한 경로입니다." : "예정 출발시각 자체의 교통 예측이 아니므로 실제 소요시간은 달라질 수 있습니다.",
+          "길찾기 API가 반환하지 않은 주차·승강장 이동·대기시간은 임의로 더하지 않았습니다.",
+        ],
+      },
     }];
   });
 }
 
 export function analyzeTransitRouteDetails(snapshot: DuriAnalysisSnapshot, analyzedAt: string): DuriReportIssue[] {
+  if (snapshot.localPlanningFactsStatus && snapshot.localPlanningFactsStatus !== "loaded") return [];
   if (snapshot.trip.transport !== "public") return [];
   const estimates = snapshot.routeLegEstimates ?? [];
   return buildScheduledRouteLegs(snapshot).flatMap((leg) => {
@@ -355,6 +380,9 @@ function alternativeRouteSlotsRemainFeasible(
 }
 
 export function analyzeRouteOptimization(snapshot: DuriAnalysisSnapshot): DuriReportIssue[] {
+  if ((snapshot.localPlanningFactsStatus && snapshot.localPlanningFactsStatus !== "loaded")
+    || snapshot.scheduleOverlayStatus === "unavailable"
+    || snapshot.documentCollectionStatus === "unavailable") return [];
   return (snapshot.routeOrderEvaluations ?? []).flatMap((evaluation) => {
     const currentItemIds = sortItineraryItemsByDateAndTime(snapshot.itinerary
       .filter((item) => item.date === evaluation.date && item.placeId))
@@ -388,12 +416,13 @@ export function analyzeRouteOptimization(snapshot: DuriAnalysisSnapshot): DuriRe
       || changesTerminalPlace) return [];
     const leftName = left.placeId ? snapshot.placesById[left.placeId]?.name : undefined;
     const rightName = right.placeId ? snapshot.placesById[right.placeId]?.name : undefined;
+    const summary = `현재 확인된 잠금·예약·종료조건을 건드리지 않는 인접 교환에서, 조회된 경로 합계가 분석 시점 기준 ${secondsLabel(improvement)} 짧았어요. 두 장소의 운영시간 충족은 확인하지 못했으므로 경로 전용 후보로만 보여주고 자동 적용하지 않아요.`;
     return [{
       id: `route-optimization-${evaluation.date}-${leftId}-${rightId}`,
       category: "route-optimization" as const,
       severity: "medium" as const,
-      title: `${leftName ?? "앞 일정"}과 ${rightName ?? "뒤 일정"}의 순서를 검토해 보세요`,
-      summary: `예약·운영시간·종료조건으로 고정되지 않은 인접 장소를 바꾼 경로가 분석 시점 기준 약 ${secondsLabel(improvement)} 짧았어요. 전역 최적해가 아니라 현재 순서를 최대한 유지하는 국소 개선 후보예요.`,
+      title: `경로만 보면 ${leftName ?? "앞 일정"}과 ${rightName ?? "뒤 일정"} 순서를 검토할 수 있어요`,
+      summary,
       date: evaluation.date,
       affectedItemIds: [leftId, rightId],
       affectedPlaceIds: [left.placeId, right.placeId].filter((id): id is string => Boolean(id)),
@@ -401,12 +430,33 @@ export function analyzeRouteOptimization(snapshot: DuriAnalysisSnapshot): DuriRe
       evidence: [
         { label: "현재 순서 이동시간", value: secondsLabel(evaluation.currentDurationSeconds), source: evaluation.provider, observedAt: evaluation.fetchedAt },
         { label: "인접 교환 후 이동시간", value: secondsLabel(evaluation.alternativeDurationSeconds), source: evaluation.provider, observedAt: evaluation.fetchedAt },
+        { label: "운영시간 검증", value: "미완료 · 순서 변경 전 별도 확인 필요" },
         { label: "탐색 방식", value: "모든 인접 교환을 O(n)개 비교하고 변경된 방향 간선만 조회" },
       ],
       suggestionSupported: false,
       constraintType: "soft" as const,
-      confidence: evaluation.timingBasis === "future-departure" ? "high" as const : "medium" as const,
+      // 이동시간 자체가 출발시각 기준이어도 운영시간까지 확인된 일정 변경안은 아니다.
+      confidence: "low" as const,
       source: "external-evidence" as const,
+      technicalDetails: {
+        model: "보호 제약을 보존하는 최적 인접 교환 탐색",
+        formulaLatex: String.raw`\Delta_k=C(\pi)-C(\pi\circ(k\;k{+}1)),\quad k^*=\arg\max_{k\in F}\Delta_k`,
+        substitutedLatex: String.raw`\Delta_{k^*}=${evaluation.currentDurationSeconds}-${evaluation.alternativeDurationSeconds}=${improvement}\;\mathrm{s}`,
+        variables: [
+          { symbol: "C(\\pi)", label: "현재 순서의 확인된 이동시간 합", value: evaluation.currentDurationSeconds, formattedValue: secondsLabel(evaluation.currentDurationSeconds), unit: "초", source: `${evaluation.provider} · ${evaluation.fetchedAt}` },
+          { symbol: "C(\\pi')", label: "인접 두 일정을 바꾼 순서의 이동시간 합", value: evaluation.alternativeDurationSeconds, formattedValue: secondsLabel(evaluation.alternativeDurationSeconds), unit: "초", source: `${evaluation.provider} · ${evaluation.fetchedAt}` },
+          { symbol: "\\Delta_{k^*}", label: "가장 큰 확인 절감시간", value: improvement, formattedValue: secondsLabel(improvement), unit: "초", source: "실행 가능한 인접 교환 비교" },
+          { symbol: "F", label: "잠금·확정 예약·티켓·종료조건·시간충돌을 통과한 교환", value: `${leftName ?? leftId} ↔ ${rightName ?? rightId}`, formattedValue: `${leftName ?? leftId} ↔ ${rightName ?? rightId}`, source: "일정 보호 규칙" },
+        ],
+        steps: [
+          "현재 순서에서 인접한 두 장소를 바꾸는 후보만 만들었습니다.",
+          "두리 잠금, 확정 예약, 티켓 연결, 마지막 날 종료 지점, 변경 후 시간 충돌을 하나라도 위반한 후보는 제외했습니다.",
+          `남은 후보의 바뀐 방향 간선을 다시 조회해 현재 ${secondsLabel(evaluation.currentDurationSeconds)}, 대안 ${secondsLabel(evaluation.alternativeDurationSeconds)}을 비교했습니다.`,
+        ],
+        result: summary,
+        complexity: "하루 장소 n개에 대해 인접 후보 O(n), 변경 간선은 후보당 최대 3개; 경로 조회도 O(n)",
+        caveats: ["이 증명은 인접 교환 이웃 안의 최선이며 전체 순열의 전역 최적해를 보장하지 않습니다.", "대안 장소의 운영시간이 확인되지 않아 실제 적용 후보로 승격하지 않았습니다."],
+      },
     }];
   });
 }

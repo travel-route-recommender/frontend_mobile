@@ -2,7 +2,8 @@ import { useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { Card, PrimaryButton, Screen, SecondaryButton } from "../../../components/common";
-import { EmptyState } from "../../../components/feedback";
+import { EmptyState, ErrorState, LoadingState } from "../../../components/feedback";
+import { environment } from "../../../config/environment";
 import type { PreferenceScore } from "../../../domain";
 import { personalTestQuestions, preferenceDimensionLabels } from "../../../duri/preferences";
 import { useDuriStore } from "../../../store/useDuriStore";
@@ -14,7 +15,9 @@ import { PreferenceFlowHeader } from "../components/PreferenceFlowChrome";
 import { PreferenceRestartModal } from "../components/PreferenceModals";
 import { PreferenceResultSummary } from "../components/PreferenceResultSummary";
 import { PreferenceSurveyResultDetails } from "../components/PreferenceSurveyResultDetails";
+import { useApiPreferenceProfile } from "../hooks/useApiPreferenceProfile";
 import { useTravelPreferenceSurveyResult } from "../hooks/useTravelPreferenceSurveyResult";
+import type { ApiPreferenceProfile } from "../logic/apiPreferenceProfile";
 import { calculateLegacyPreferenceProjection } from "../logic/calculate-travel-preference-result";
 import { formatPreferenceCompletedAt } from "../logic/formatPreferenceResult";
 import { resolvePreferenceResultPair } from "../logic/resolve-preference-result-pair";
@@ -37,6 +40,8 @@ export function PersonalResultScreen() {
   const startTest = usePersonalPreferenceDraftStore((state) => state.startTest);
   const owner = useMemo(() => getOwner(sessionKind, sessionUserId), [sessionKind, sessionUserId]);
   const detailedResult = useTravelPreferenceSurveyResult(owner);
+  const apiMode = environment.dataSource !== "mock" && sessionKind !== "anonymous";
+  const apiPreferenceProfile = useApiPreferenceProfile(sessionUserId, apiMode);
   const [restartVisible, setRestartVisible] = useState(params.retest === "1");
   const [detailsVisible, setDetailsVisible] = useState(false);
   const anonymousPreview = useMemo(() => {
@@ -54,6 +59,14 @@ export function PersonalResultScreen() {
     detailedResult,
     owner?.kind === "user" ? owner.userId : detailedResult?.userId,
   ) : null, [detailedResult, owner, result]);
+  const serverProfile = apiMode ? apiPreferenceProfile.data : undefined;
+  const presentation = apiMode
+    ? serverProfile?.completed ? serverProfile.presentation : null
+    : resultPair?.canonicalPresentation ?? null;
+  const localResultMatchesServer = Boolean(
+    result
+      && (!apiMode || (serverProfile?.completedAt && result.completedAt === serverProfile.completedAt)),
+  );
 
   const backDestination = sessionKind === "anonymous" ? "/(tabs)/home" : "/(tabs)/mypage";
   const restart = () => {
@@ -63,7 +76,11 @@ export function PersonalResultScreen() {
     router.replace({ pathname: "/tests/personal", params: { restart: "1" } });
   };
 
-  if (!result) return <Screen
+  if (apiMode && !sessionUserId) return <Screen><ErrorState message="현재 로그인 사용자를 확인할 수 없어요." onRetry={() => router.replace("/(auth)/login")} /></Screen>;
+  if (apiMode && apiPreferenceProfile.isPending) return <Screen><LoadingState label="서버에 저장된 여행 성향을 확인하고 있어요" /></Screen>;
+  if (apiMode && apiPreferenceProfile.isError) return <Screen><ErrorState message="여행 성향을 불러오지 못했어요. 완료 상태를 임의로 바꾸지 않았습니다." onRetry={() => { void apiPreferenceProfile.refetch(); }} /></Screen>;
+
+  if (!presentation) return <Screen
     backgroundColor={colors.surface}
     header={<PreferenceFlowHeader onBack={() => router.back()} />}
   >
@@ -76,7 +93,7 @@ export function PersonalResultScreen() {
     header={<PreferenceFlowHeader onBack={() => router.replace(backDestination)} />}
     testID="personal-preference-result"
   >
-    <PreferenceResultSummary presentation={resultPair!.canonicalPresentation} userName={sessionKind === "anonymous" ? undefined : user?.name} />
+    <PreferenceResultSummary presentation={presentation} userName={sessionKind === "anonymous" ? undefined : user?.name} />
 
     <View style={styles.detailSection}>
       <Text style={styles.sectionTitle}>성향 상세</Text>
@@ -89,14 +106,18 @@ export function PersonalResultScreen() {
       >
         <View style={styles.detailIcon}><Text style={styles.detailIconText}>≡</Text></View>
         <View style={styles.detailCopy}>
-          <Text style={styles.detailTitle}>내가 선택한 여행 기준</Text>
-          <Text style={styles.detailMeta}>{formatPreferenceCompletedAt(result.completedAt)}</Text>
+          <Text style={styles.detailTitle}>{apiMode ? "서버에 저장된 여행 기준" : "내가 선택한 여행 기준"}</Text>
+          <Text style={styles.detailMeta}>{serverProfile?.completedAt
+            ? formatPreferenceCompletedAt(serverProfile.completedAt)
+            : result?.completedAt ? formatPreferenceCompletedAt(result.completedAt) : "서버의 최신 결과"}</Text>
         </View>
         <Text style={styles.detailAction}>{detailsVisible ? "닫기" : "전체 보기"} ›</Text>
       </Pressable>
 
       {detailsVisible ? <View style={styles.details}>
-        {resultPair?.detailedResult ? <PreferenceSurveyResultDetails result={resultPair.detailedResult} /> : <>
+        {apiMode && !localResultMatchesServer
+          ? <ServerPreferenceDetails profile={serverProfile!} />
+          : resultPair?.detailedResult ? <PreferenceSurveyResultDetails result={resultPair.detailedResult} /> : result ? <>
           <Text style={styles.detailCaption}>현재 저장된 결과와 일치하는 상세 응답이 없어, 같은 결과의 기본 여행 기준만 보여드려요.</Text>
           <Card style={styles.legacyCard}>{personalTestQuestions.map((question, index) => {
             const score = result.answers[question.dimension];
@@ -110,7 +131,7 @@ export function PersonalResultScreen() {
               {index < personalTestQuestions.length - 1 ? <View style={styles.divider} /> : null}
             </View>;
           })}</Card>
-        </>}
+        </> : <ServerPreferenceDetails profile={serverProfile!} />}
         {sessionKind === "anonymous" ? <View style={styles.anonymousNotice}><Text style={styles.anonymousTitle}>체험 결과는 영구 저장되지 않아요</Text><DuriKoreanText style={styles.noticeBody}>로그인하거나 가입한 뒤 테스트를 완료하면 새 결과를 여행방의 동행자 성향 비교에 활용할 수 있어요. 현재 체험 결과는 자동 이전되지 않아요.</DuriKoreanText></View> : null}
         {sessionKind === "guest" ? <View style={styles.guestNotice}><Text style={styles.guestTitle}>게스트 결과로 저장됐어요</Text><DuriKoreanText style={styles.noticeBody}>현재 초대 계정에서 확인할 수 있어요. 정식 계정으로 결과를 옮기는 기능은 아직 제공하지 않아요.</DuriKoreanText></View> : null}
         {sessionKind !== "anonymous" && sessionUserId !== domainUserId ? <Pressable accessibilityRole="button" onPress={() => router.replace("/")}><Text style={styles.sessionWarning}>사용자 상태 다시 확인하기</Text></Pressable> : null}
@@ -136,6 +157,27 @@ export function PersonalResultScreen() {
 
 function isChoiceReached(value: PreferenceScore, selected: PreferenceScore) { return value <= selected; }
 
+function ServerPreferenceDetails({ profile }: { profile: ApiPreferenceProfile }) {
+  const rows = profile.axes ? [
+    { key: "density", label: "일정 밀도", value: profile.axes.scheduleDensity },
+    { key: "landmark", label: "대표 명소 중요도", value: profile.axes.landmarkNecessity },
+    { key: "local", label: "로컬 장소 관심도", value: profile.axes.localInterest },
+    { key: "challenge", label: "새로운 경험 선호도", value: profile.axes.challenging },
+  ] : [];
+  return <>
+    <Text style={styles.detailCaption}>서버가 보관한 최신 결과를 표시해요. 다른 기기에서 완료한 설문의 개별 선택지는 내려오지 않아, 서버가 계산한 성향 축과 유형만 보여드려요.</Text>
+    {rows.length ? <Card style={styles.serverAxesCard}>{rows.map((row, index) => <View key={row.key}>
+      <View style={styles.serverAxisRow}>
+        <View style={styles.serverAxisHeading}><Text style={styles.dimension}>{row.label}</Text><Text style={styles.serverAxisValue}>{Math.round(row.value)} / 100</Text></View>
+        <View accessibilityRole="progressbar" accessibilityLabel={`${row.label} ${Math.round(row.value)}점`} accessibilityValue={{ min: 0, max: 100, now: Math.round(row.value) }} style={styles.serverAxisTrack}>
+          <View style={[styles.serverAxisFill, { width: `${row.value}%` }]} />
+        </View>
+      </View>
+      {index < rows.length - 1 ? <View style={styles.divider} /> : null}
+    </View>)}</Card> : <Card><Text style={styles.detailCaption}>서버에 유형과 태그는 저장되어 있지만 세부 성향 축은 제공되지 않았어요.</Text></Card>}
+  </>;
+}
+
 const styles = StyleSheet.create({
   content: { gap: spacing.xl, paddingTop: spacing.xl, paddingBottom: spacing.xxxl, backgroundColor: colors.surface },
   sectionTitle: { fontSize: 19, lineHeight: 25, fontWeight: "800", color: "#17265F" },
@@ -150,6 +192,12 @@ const styles = StyleSheet.create({
   details: { gap: spacing.sm },
   detailCaption: { ...typography.caption, color: colors.textSecondary, borderRadius: radius.md, backgroundColor: "#F7FAFF", padding: spacing.sm },
   legacyCard: { overflow: "hidden", gap: 0, paddingVertical: spacing.xs },
+  serverAxesCard: { overflow: "hidden", gap: 0, paddingVertical: spacing.xs },
+  serverAxisRow: { gap: spacing.sm, paddingHorizontal: spacing.sm, paddingVertical: spacing.sm },
+  serverAxisHeading: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm },
+  serverAxisValue: { ...typography.bodyStrong, color: colors.primary },
+  serverAxisTrack: { height: 8, overflow: "hidden", borderRadius: radius.pill, backgroundColor: colors.border },
+  serverAxisFill: { height: "100%", borderRadius: radius.pill, backgroundColor: colors.primary },
   responseRow: { gap: spacing.sm, paddingHorizontal: spacing.sm, paddingVertical: spacing.sm },
   responseHeading: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: spacing.sm },
   dimension: { ...typography.caption, color: colors.textSecondary },

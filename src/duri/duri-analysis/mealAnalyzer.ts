@@ -75,6 +75,12 @@ export function analyzeMeals(input: DuriAnalysisInput): CategoryAnalysisResult {
           { label: "식사 후보 장소", value: `${mealCandidateCount}곳`, placeIds: input.candidates.flatMap((candidate) => (input.placesById[candidate.placeId] && isMealPlace(input.placesById[candidate.placeId]) ? [candidate.placeId] : [])) },
           ...groupEvidence,
         ],
+        // 식사 시간대와 체류시간은 현재 직접 응답이나 구조화 예약으로
+        // 확정된 값이 아니다. 이 낮은 신뢰도의 확인 항목을 근거로 60/90분
+        // 블록을 자동 삽입하지 않고 사용자가 검토할 정보로만 남긴다.
+        suggestionSupported: false,
+        constraintType: "soft",
+        confidence: "low",
       });
     }
   }
@@ -92,6 +98,9 @@ export function analyzeMeals(input: DuriAnalysisInput): CategoryAnalysisResult {
       affectedPlaceIds: input.itinerary.flatMap((item) => (item.placeId && isMealItem(item, input.placesById) ? [item.placeId] : [])),
       affectedMemberIds: [],
       evidence: [{ label: "검사한 식사 시간대", value: `${checkedWindowCount}개` }, ...groupEvidence],
+      suggestionSupported: false,
+      constraintType: "informational",
+      confidence: "low",
     });
   }
   const status = categoryStatusFromIssues(issues);

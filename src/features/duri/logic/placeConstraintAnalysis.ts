@@ -2,10 +2,15 @@ import { timeStringToMinutes } from "../../../utils/schedule";
 import type { PlaceCongestionEvidence, PlaceConstraintEvidence } from "../../../duri/duri-analysis";
 import type { DuriAnalysisSnapshot, DuriReportIssue } from "../types";
 
-type OperatingWindow = { startMinutes: number; endMinutes: number };
+export type OperatingWindow = { startMinutes: number; endMinutes: number };
 type ParsedOperatingWindows =
   | { status: "parsed"; windows: OperatingWindow[] }
   | { status: "unknown"; windows: [] };
+
+export type PlaceOperatingAvailability =
+  | { status: "closed"; reason: "event-period" | "weekly-closure" }
+  | { status: "windowed"; windows: OperatingWindow[] }
+  | { status: "unknown" };
 
 const dayNames = ["일", "월", "화", "수", "목", "금", "토"] as const;
 const ambiguousOperatingText = /문의|변동|상이|시즌|계절|동절기|하절기|성수기|비수기|일몰|날씨|탄력|현지\s*사정|전화\s*확인/i;
@@ -132,6 +137,29 @@ function parseExplicitWeeklyClosure(value: string, date: string) {
 function isExplicitWeeklyClosure(value: string, date: string) {
   const parsed = parseExplicitWeeklyClosure(value, date);
   return parsed.status === "parsed" && parsed.closed;
+}
+
+/**
+ * 자동 배치에서도 리포트와 동일한 보수적 운영 사실을 재사용한다. 행사 기간
+ * 밖이거나 명시적 정기휴무인 날만 closed로 확정하고, 문구를 해석하지 못한
+ * 경우에는 임의 영업시간을 만들지 않는다.
+ */
+export function placeOperatingAvailabilityForDate(
+  evidence: Pick<PlaceConstraintEvidence, "operatingHoursText" | "restDateText" | "eventStartDate" | "eventEndDate">,
+  date: string,
+): PlaceOperatingAvailability {
+  if ((evidence.eventStartDate && date < evidence.eventStartDate)
+    || (evidence.eventEndDate && date > evidence.eventEndDate)) {
+    return { status: "closed", reason: "event-period" };
+  }
+  if (evidence.restDateText && isExplicitWeeklyClosure(evidence.restDateText, date)) {
+    return { status: "closed", reason: "weekly-closure" };
+  }
+  if (evidence.operatingHoursText) {
+    const parsed = parseOperatingWindows(evidence.operatingHoursText, date);
+    if (parsed.status === "parsed") return { status: "windowed", windows: parsed.windows };
+  }
+  return { status: "unknown" };
 }
 
 /** 해당 방문일에 실제 판정 가능한 운영 사실이 하나라도 있는지 보수적으로 확인한다. */
@@ -405,7 +433,8 @@ export function analyzePlacePracticalConstraints(snapshot: DuriAnalysisSnapshot,
       source: "external-evidence" as const,
     };
 
-    if (snapshot.trip.transport === "car"
+    if ((!snapshot.localPlanningFactsStatus || snapshot.localPlanningFactsStatus === "loaded")
+      && snapshot.trip.transport === "car"
       && evidence.parkingText
       && parseExplicitParkingAvailability(evidence.parkingText) === "unavailable") {
       issues.push({

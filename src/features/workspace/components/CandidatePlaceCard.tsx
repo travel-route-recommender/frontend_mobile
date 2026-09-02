@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Chip, RemoteImage } from "../../../components/common";
 import { colors, radius, shadows, spacing, typography } from "../../../theme/tokens";
@@ -19,6 +20,7 @@ export function CandidatePlaceCard({
   onPrimaryAction,
   onAddAnother,
   onRemove,
+  extra,
 }: {
   candidate: CandidatePlaceViewModel;
   canEdit: boolean;
@@ -27,6 +29,7 @@ export function CandidatePlaceCard({
   onPrimaryAction: () => void;
   onAddAnother: () => void;
   onRemove: () => void;
+  extra?: ReactNode;
 }) {
   const scheduled = candidate.scheduleState !== "unscheduled";
   return <View style={[styles.card, compact && styles.cardCompact, scheduled && styles.cardScheduled]} accessibilityLabel={`${candidate.name}, ${scheduleLabel(candidate)}`}>
@@ -45,6 +48,7 @@ export function CandidatePlaceCard({
         {candidate.placeMissing ? <Text style={styles.warning}>연결된 장소 정보가 누락됐어요.</Text> : null}
       </View>
     </Pressable>
+    {extra}
     <View style={styles.actions}>
       <Pressable
         accessibilityRole="button"

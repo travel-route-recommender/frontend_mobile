@@ -1,5 +1,5 @@
 import type { EntityId, ItineraryItem, Place, TripCandidate, TripRoom, User, UserPreferenceResult } from "../../domain";
-import type { AnalysisEvidence, AnalysisSeverity, AnalysisStatus, ConfirmedScheduleConstraint, DuriAnalysisInput, DuriAnalysisResult, DuriDocumentReference } from "../../duri/duri-analysis";
+import type { AnalysisEvidence, AnalysisSeverity, AnalysisStatus, AnalysisTechnicalDetails, ConfirmedScheduleConstraint, DuriAnalysisInput, DuriAnalysisResult, DuriDocumentReference } from "../../duri/duri-analysis";
 import type { DuriSuggestion } from "../../duri/duri-suggestions";
 import type { DiagnosisCoverage, GroupPlanningProfile, GroupPreferenceDiagnosis } from "../../duri/group-preferences";
 
@@ -74,6 +74,7 @@ export interface DuriReportIssue {
   constraintType: DuriConstraintType;
   confidence: DuriDataConfidence;
   source: "web-engine" | "mobile-context" | "external-evidence";
+  technicalDetails?: AnalysisTechnicalDetails;
 }
 
 export interface DuriDayMetric {

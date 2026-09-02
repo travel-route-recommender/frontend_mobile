@@ -2,6 +2,7 @@ import { validateAppState } from "../src/core/state-integrity";
 import { resolveAppHydrationPolicy } from "../src/core/state-integrity/appHydrationPolicy";
 import { createDemoData, type DuriDomainState } from "../src/data/mock/demoData";
 import { createDuriAnalysisSession } from "../src/features/duri/logic/analysisSession";
+import { normalizePreferenceResult } from "../src/duri/group-preferences";
 import { buildDuriAnalysisInputFromState } from "../src/features/duri/selectors/duriSelectors";
 import { normalizePersistedState, CURRENT_SCHEMA_VERSION } from "../src/store/normalizePersistedState";
 
@@ -80,6 +81,36 @@ assert(normalized.tripsById[tripId].members.every((member) => Boolean(member.use
 assert(new Set(normalized.candidatesByTripId[tripId].map((entry) => entry.placeId)).size === normalized.candidatesByTripId[tripId].length, "duplicate candidates must merge");
 assert(new Set(normalized.savedPlaceIdsByUserId[normalized.currentUserId]).size === normalized.savedPlaceIdsByUserId[normalized.currentUserId].length, "saved place IDs must deduplicate independently");
 assert(normalized.itineraryByTripId[tripId].every((item) => item.preferredByUserIds.every((userId) => normalized.tripsById[tripId].members.some((member) => member.userId === userId))), "itinerary preference references must stay within trip members");
+
+const corruptDetailedPreference = copyDomain(base);
+const preferenceUserId = Object.keys(corruptDetailedPreference.preferenceResultsByUserId)[0];
+assert(preferenceUserId, "demo preference fixture");
+(corruptDetailedPreference.preferenceResultsByUserId[preferenceUserId] as unknown as Record<string, unknown>).detailedSignals = { algorithmVersion: "broken" };
+const normalizedCorruptPreference = normalizePersistedState(corruptDetailedPreference).preferenceResultsByUserId[preferenceUserId];
+assert(normalizedCorruptPreference.detailedSignalsInvalid === true
+  && normalizePreferenceResult(normalizedCorruptPreference, preferenceUserId) === null,
+"손상된 rich 상세 신호를 legacy 6축 응답으로 자동 강등하지 않는다");
+
+const mismatchedDetailedVersion = copyDomain(base);
+const mismatchedPreference = mismatchedDetailedVersion.preferenceResultsByUserId[preferenceUserId];
+assert(mismatchedPreference, "demo preference fixture");
+(mismatchedPreference as unknown as Record<string, unknown>).detailedSignals = {
+  surveyVersion: 9,
+  algorithmVersion: 6,
+  staminaScore: 50,
+  densityScore: 50,
+  scheduleStyle: "relaxed",
+  preferredDailyScheduledMinutes: 240,
+  preferredDailyScheduledResolutionMinutes: 30,
+  mobilityModes: [],
+  categoryScores: {},
+  budgetRanking: [],
+  landmarkImportance: 50,
+  localInterest: 50,
+};
+const normalizedMismatchedVersion = normalizePersistedState(mismatchedDetailedVersion).preferenceResultsByUserId[preferenceUserId];
+assert(normalizedMismatchedVersion.detailedSignalsInvalid === true,
+"미지원 상세 신호 버전이나 다른 버전 필드 조합을 분석 근거로 사용하지 않는다");
 
 const invalidFacts = copyDomain(base);
 invalidFacts.tripsById[tripId].endCondition = {

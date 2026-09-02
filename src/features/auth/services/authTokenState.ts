@@ -145,7 +145,10 @@ export type AuthErrorShape = {
 };
 
 export function isAccessTokenExpiredError(error: AuthErrorShape): boolean {
-  return error.status === 401 && error.code === "TOKEN_EXPIRED";
+  if (error.status !== 401) return false;
+  // 현재 Backend의 JwtAuthGuard는 만료 토큰에도 별도 code 없이 401을
+  // 반환한다. 명시적인 terminal code만 제외하고 한 번 refresh한다.
+  return !error.code || error.code === "TOKEN_EXPIRED";
 }
 
 export function isTerminalAccessAuthError(error: AuthErrorShape): boolean {
@@ -158,15 +161,10 @@ export function isTerminalAccessAuthError(error: AuthErrorShape): boolean {
 }
 
 export function isTerminalRefreshError(error: AuthErrorShape): boolean {
-  return error.status === 401 && [
-    "REFRESH_INVALID",
-    "REFRESH_TOKEN_MISSING",
-    "REFRESH_RECOVERY_EXPIRED",
-    "TOKEN_INVALID",
-    "SESSION_REVOKED",
-    "TOKEN_OBSOLETE",
-    "ACCOUNT_UNAVAILABLE",
-  ].includes(error.code ?? "");
+  // 이 판정은 /auth/refresh 요청 실패에만 사용한다. 현재 Swagger 계약은
+  // 유효하지 않은 Refresh Token을 code 없는 401로 반환하므로 모든 401은
+  // 재시도 불가능한 세션 종료로 처리해야 stale UI session이 남지 않는다.
+  return error.status === 401;
 }
 
 export function isRetryableRefreshStatus(status: number): boolean {

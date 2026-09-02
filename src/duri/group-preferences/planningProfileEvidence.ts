@@ -12,14 +12,17 @@ const labels: Record<GroupPlanningDimension, { average: string; difference: stri
 
 export function getGroupDimensionTone(profile: GroupPlanningProfile | undefined, dimension: GroupPlanningDimension) {
   const average = profile?.[dimension].average;
-  if (average === undefined) return undefined;
-  if (average < 0.75) return "low" as const;
-  if (average > 1.25) return "high" as const;
-  return "middle" as const;
+  const spread = profile?.[dimension].spread;
+  // 0/1/2는 서열 척도이므로 임의 0.75/1.25 경계로 평균을 재분류하지 않는다.
+  // 모든 직접 응답이 같을 때만 그 선택지를 그룹 tone으로 사용한다.
+  if (average === undefined || spread !== 0) return undefined;
+  if (average === 0) return "low" as const;
+  if (average === 2) return "high" as const;
+  return average === 1 ? "middle" as const : undefined;
 }
 
 export function canAdjustGroupThreshold(profile: GroupPlanningProfile | undefined, dimension: GroupPlanningDimension) {
-  return profile?.dataStatus === "complete" && profile[dimension].spread !== 2 && profile[dimension].average !== undefined;
+  return profile?.dataStatus === "complete" && profile[dimension].spread === 0 && getGroupDimensionTone(profile, dimension) !== undefined;
 }
 
 export function buildGroupProfileEvidence(
@@ -28,9 +31,12 @@ export function buildGroupProfileEvidence(
 ): AnalysisEvidence[] {
   if (!profile || profile.dataStatus === "insufficient" || profile[dimension].average === undefined) return [];
   const meta = labels[dimension];
-  const tone = getGroupDimensionTone(profile, dimension) ?? "middle";
-  const evidence: AnalysisEvidence[] = [{ label: meta.average, value: meta[tone] }];
-  if (profile[dimension].spread === 2) evidence.push({ label: meta.difference, value: "큼 · 절충 필요" });
+  const tone = getGroupDimensionTone(profile, dimension);
+  const evidence: AnalysisEvidence[] = [{
+    label: meta.average,
+    value: tone ? meta[tone] : "응답이 달라 단일 그룹 성향으로 축약하지 않음",
+  }];
+  if ((profile[dimension].spread ?? 0) > 0) evidence.push({ label: meta.difference, value: "직접 응답 차이 · 조율 필요" });
   if (profile.dataStatus === "partial") {
     evidence.push({ label: "성향 응답 기준", value: `${profile.completedMemberCount}/${profile.totalMemberCount}명 완료 기준` });
   }

@@ -160,6 +160,7 @@ export type ItineraryMutationResult =
   | "overlap"
   | "boundary"
   | "invalid-attachment"
+  | "protected-item"
   | "end-condition";
 
 export type AddPlaceToItineraryResult = Exclude<ItineraryMutationResult, "success-adjusted">;

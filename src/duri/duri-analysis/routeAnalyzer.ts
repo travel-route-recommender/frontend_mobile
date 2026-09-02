@@ -15,8 +15,11 @@ export function extractStableArea(address: string) {
 
 function getCoordinates(place: Place): Coordinates | undefined {
   const candidate = place as Place & Partial<Coordinates>;
-  return Number.isFinite(candidate.latitude) && Number.isFinite(candidate.longitude)
-    ? { latitude: candidate.latitude as number, longitude: candidate.longitude as number }
+  if (!Number.isFinite(candidate.latitude) || !Number.isFinite(candidate.longitude)) return undefined;
+  const latitude = candidate.latitude as number;
+  const longitude = candidate.longitude as number;
+  return latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180
+    ? { latitude, longitude }
     : undefined;
 }
 

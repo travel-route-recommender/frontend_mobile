@@ -4,6 +4,7 @@ import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import type { Place, TripRoom } from "../../../domain";
 import { Avatar, RemoteImage } from "../../../components/common";
+import { environment } from "../../../config/environment";
 import { useDuriStore } from "../../../store/useDuriStore";
 import { formatTripDateRange, formatTripStatus } from "../../../utils/formatters";
 import { colors, radius, shadows, spacing, typography } from "../../../theme/tokens";
@@ -12,6 +13,8 @@ import { useMemberGate } from "../../auth/hooks/useMemberGate";
 import { useAuthSessionStore } from "../../auth/store/useAuthSessionStore";
 import { usePlaceActions } from "../../places/hooks/usePlaceActions";
 import { selectRoomPreferenceResponseSummary } from "../../trips/selectors";
+import { useApiTripListQuery } from "../../trips/useApiTripListQuery";
+import type { TripRoomCardViewModel } from "../../trips/types";
 
 const HERO_IMAGE = require("../../../../assets/images/duri/home/hero-travel.png");
 const PLANNING_IMAGE = require("../../../../assets/images/duri/home/planning.png");
@@ -27,13 +30,16 @@ export function HomeScreen() {
   const { width } = useWindowDimensions();
   const state = useDuriStore();
   const sessionKind = useAuthSessionStore((session) => session.sessionKind);
+  const currentSessionUserId = useAuthSessionStore((session) => session.currentSessionUserId);
   const { requireMember, memberGatePrompt } = useMemberGate();
   const placeActions = usePlaceActions();
+  const apiMode = environment.dataSource === "api";
+  const apiTripsQuery = useApiTripListQuery(currentSessionUserId, apiMode && sessionKind !== "anonymous");
   const user = sessionKind === "anonymous" ? undefined : state.usersById[state.currentUserId];
   const tripCardWidth = Math.max(252, width - 96);
   const createCardWidth = Math.max(84, Math.min(96, width * 0.23));
 
-  const trips = useMemo(() => {
+  const localTrips = useMemo(() => {
     if (sessionKind === "anonymous") return [];
     const seen = new Set<string>();
     return [...state.tripOrder, ...Object.keys(state.tripsById)].flatMap((tripId) => {
@@ -44,21 +50,24 @@ export function HomeScreen() {
     });
   }, [sessionKind, state.currentUserId, state.tripOrder, state.tripsById]);
 
-  const activeTrip = trips.find((trip) => trip.id === state.activeTripId)
-    ?? trips.find((trip) => trip.status !== "completed");
+  const activeTrip = localTrips.find((trip) => trip.id === state.activeTripId)
+    ?? localTrips.find((trip) => trip.status !== "completed");
+  const apiTrips = apiTripsQuery.data ?? [];
+  const activeApiTrip = apiTrips.find((trip) => trip.viewModel.status !== "completed") ?? apiTrips[0];
+  const activeTripId = apiMode ? activeApiTrip?.id : activeTrip?.id;
 
   const recommendedPlaces = useMemo(() => {
     const places = Object.values(state.placesById);
-    if (!activeTrip) return places.slice(0, 4);
+    if (apiMode || !activeTrip) return places.slice(0, 4);
     const nearby = places.filter((place) => place.regionId === activeTrip.regionId);
     const elsewhere = places.filter((place) => place.regionId !== activeTrip.regionId);
     return [...nearby, ...elsewhere].slice(0, 4);
-  }, [activeTrip, state.placesById]);
+  }, [activeTrip, apiMode, state.placesById]);
 
   const createTrip = () => requireMember(() => router.push("/trips/new"), "여행방 만들기");
   const openDuri = () => {
-    if (activeTrip) {
-      router.push({ pathname: "/trips/[tripId]/analysis", params: { tripId: activeTrip.id } });
+    if (activeTripId) {
+      router.push({ pathname: "/trips/[tripId]/analysis", params: { tripId: activeTripId } });
       return;
     }
     createTrip();
@@ -77,7 +86,16 @@ export function HomeScreen() {
           onAction={() => router.push("/(tabs)/trips")}
         />
 
-        {trips.length ? (
+        {apiMode && apiTripsQuery.isLoading ? (
+          <HomeTripStatusCard title="여행을 불러오고 있어요" description="여행 탭과 같은 서버 목록을 확인하고 있어요." />
+        ) : apiMode && apiTripsQuery.error && !apiTripsQuery.data ? (
+          <HomeTripStatusCard
+            title="여행을 불러오지 못했어요"
+            description={apiTripsQuery.error instanceof Error ? apiTripsQuery.error.message : "서버 여행방 목록을 다시 확인해 주세요."}
+            actionLabel="다시 불러오기"
+            onAction={() => void apiTripsQuery.refetch()}
+          />
+        ) : (apiMode ? apiTrips.length : localTrips.length) ? (
           <ScrollView
             accessibilityLabel="내 여행 가로 목록"
             horizontal
@@ -87,22 +105,27 @@ export function HomeScreen() {
             decelerationRate="fast"
             contentContainerStyle={styles.tripCarousel}
           >
-            {trips.map((trip) => (
-              <HomeTripCard
-                key={trip.id}
-                state={state}
-                trip={trip}
-                width={tripCardWidth}
-                onOpen={() => router.push({ pathname: "/trips/[tripId]", params: { tripId: trip.id } })}
-              />
-            ))}
+            {apiMode
+              ? apiTrips.map((trip) => <HomeApiTripCard
+                  key={trip.id}
+                  viewModel={trip.viewModel}
+                  width={tripCardWidth}
+                  onOpen={() => router.push({ pathname: "/trips/[tripId]", params: { tripId: trip.id } })}
+                />)
+              : localTrips.map((trip) => <HomeTripCard
+                  key={trip.id}
+                  state={state}
+                  trip={trip}
+                  width={tripCardWidth}
+                  onOpen={() => router.push({ pathname: "/trips/[tripId]", params: { tripId: trip.id } })}
+                />)}
             <CreateTripCard width={createCardWidth} onPress={createTrip} />
           </ScrollView>
         ) : (
           <EmptyTripCard anonymous={sessionKind === "anonymous"} onPress={createTrip} />
         )}
 
-        <HomeDuriCard hasTrip={Boolean(activeTrip)} onPress={openDuri} />
+        <HomeDuriCard hasTrip={Boolean(activeTripId)} onPress={openDuri} />
 
         <HomeSectionHeader icon="♥" title="추천 장소" actionLabel="더 보기  ›" onAction={() => router.push("/(tabs)/explore")} />
 
@@ -211,6 +234,55 @@ function HomeTripCard({ state, trip, width, onOpen }: { state: DuriState; trip: 
       </Pressable>
     </View>
   );
+}
+
+function HomeApiTripCard({ viewModel, width, onOpen }: { viewModel: TripRoomCardViewModel; width: number; onOpen(): void }) {
+  const statusStyle = viewModel.status === "completed"
+    ? styles.badgeComplete
+    : viewModel.status === "confirmed"
+      ? styles.badgeConfirmed
+      : viewModel.status === "planning"
+        ? styles.badgePlanning
+        : styles.badgeDrafting;
+
+  return (
+    <View style={[styles.tripCard, { width }]}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${viewModel.title}, ${viewModel.dateLabel}, ${viewModel.memberCount}명 여행방 열기`}
+        onPress={onOpen}
+        style={({ pressed }) => [styles.tripCardContent, pressed && styles.pressed]}
+      >
+        <View style={[styles.tripBadge, statusStyle]}>
+          <Text style={styles.tripBadgeText}>{viewModel.statusLabel}</Text>
+        </View>
+        <Text numberOfLines={1} style={styles.tripTitle}>{viewModel.title}</Text>
+        <Text style={styles.tripMeta}>{viewModel.dateLabel} · {viewModel.memberCount}명</Text>
+        <RemoteImage uri={viewModel.imageUrl} accessibilityLabel={`${viewModel.destinationName} 대표`} aspectRatio={2.7} />
+        <View style={styles.tripStats}>
+          <TripMetric value={viewModel.candidateCount} label="후보" tone="lavender" />
+          <TripMetric value={viewModel.itineraryCount} label="일정" tone="blue" />
+          <TripMetric value={viewModel.preferenceCompletedCount} label="성향 응답" tone="mint" />
+        </View>
+      </Pressable>
+      <Pressable accessibilityRole="button" accessibilityLabel={`${viewModel.title} 여행방 바로가기`} onPress={onOpen} style={({ pressed }) => [styles.tripCta, pressed && styles.ctaPressed]}>
+        <Text style={styles.tripCtaText}>여행방 바로가기</Text>
+        <Text accessibilityElementsHidden style={styles.tripCtaArrow}>→</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function HomeTripStatusCard({ title, description, actionLabel, onAction }: { title: string; description: string; actionLabel?: string; onAction?: () => void }) {
+  return <View style={styles.tripStatusCard}>
+    <View style={styles.tripStatusCopy}>
+      <Text style={styles.tripStatusTitle}>{title}</Text>
+      <Text style={styles.tripStatusDescription}>{description}</Text>
+    </View>
+    {actionLabel && onAction ? <Pressable accessibilityRole="button" accessibilityLabel={actionLabel} onPress={onAction} style={({ pressed }) => [styles.tripStatusAction, pressed && styles.pressed]}>
+      <Text style={styles.tripStatusActionText}>{actionLabel}</Text>
+    </Pressable> : null}
+  </View>;
 }
 
 function TripMetric({ value, label, tone }: { value: number; label: string; tone: "lavender" | "blue" | "mint" }) {
@@ -347,6 +419,12 @@ const styles = StyleSheet.create({
   createTripPlus: { width: 42, height: 42, borderRadius: radius.pill, backgroundColor: "#EDF4FF", alignItems: "center", justifyContent: "center" },
   createTripPlusText: { color: colors.primary, fontSize: 29, lineHeight: 33, fontWeight: "400" },
   createTripLabel: { color: "#6677A2", fontSize: 12, lineHeight: 18, fontWeight: "700" },
+  tripStatusCard: { minHeight: 116, marginHorizontal: PAGE_PADDING, padding: spacing.md, borderRadius: 20, borderWidth: 1, borderColor: "#DCE7F7", backgroundColor: "#FAFCFF", flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  tripStatusCopy: { flex: 1, gap: spacing.xxs },
+  tripStatusTitle: { color: HOME_NAVY, fontSize: 16, lineHeight: 22, fontWeight: "800" },
+  tripStatusDescription: { color: "#6C7CA1", fontSize: 12, lineHeight: 18, fontWeight: "500" },
+  tripStatusAction: { minHeight: 40, paddingHorizontal: 12, borderRadius: radius.pill, backgroundColor: colors.primarySoft, alignItems: "center", justifyContent: "center" },
+  tripStatusActionText: { color: colors.primary, fontSize: 12, lineHeight: 18, fontWeight: "800" },
   emptyTripCard: { marginHorizontal: PAGE_PADDING, padding: spacing.md, borderRadius: 20, borderWidth: 1, borderColor: "#DCE7F7", backgroundColor: "#FAFCFF", flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: spacing.sm },
   emptyTripIcon: { width: 42, height: 42, borderRadius: 14, backgroundColor: colors.primarySoft, alignItems: "center", justifyContent: "center" },
   emptyTripIconText: { color: colors.primary, fontSize: 27, lineHeight: 30 },

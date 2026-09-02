@@ -13,9 +13,11 @@ import { useAuthSessionStore } from "../src/features/auth/store/useAuthSessionSt
 import { useFriendCompatibilityHydration } from "../src/features/compatibility/hooks/use-friend-compatibility-hydration";
 import { useTripInviteHydration } from "../src/features/invitations/hooks/useTripInviteHydration";
 import { usePreferenceDraftHydration } from "../src/features/preferences/hooks/usePreferenceDraftHydration";
+import { useApiPreferenceProfile } from "../src/features/preferences/hooks/useApiPreferenceProfile";
 import { useCreateTripDraftHydration } from "../src/features/trip-creation/hooks/useCreateTripDraftHydration";
 import { useTripDocumentHydration } from "../src/features/trip-documents";
 import { normalizePreferenceResult } from "../src/duri/group-preferences";
+import { environment } from "../src/config/environment";
 import { resolveAppHydrationPolicy } from "../src/core/state-integrity/appHydrationPolicy";
 import { queryClient } from "../src/query/queryClient";
 import { useStoreHydration } from "../src/store/useStoreHydration";
@@ -75,13 +77,24 @@ function SessionAwareNavigator() {
   const sessionUserExists = useDuriStore((state) => sessionUserId ? Boolean(state.usersById[sessionUserId]) : false);
   const hasSupportedPreferenceResult = useDuriStore((state) => sessionUserId ? Boolean(normalizePreferenceResult(state.preferenceResultsByUserId[sessionUserId], sessionUserId)) : false);
   const setCurrentUser = useDuriStore((state) => state.setCurrentUser);
+  const authenticated = sessionKind === "member" || sessionKind === "guest";
+  const apiPreferenceProfile = useApiPreferenceProfile(sessionUserId, authenticated);
   const expectedUserId = sessionKind === "member" || sessionKind === "guest" ? sessionUserId ?? "" : "";
   const shouldReconcile = domainUserId !== expectedUserId && (!expectedUserId || sessionUserExists);
-  const shouldReconcilePreference = !shouldReconcile && Boolean(expectedUserId) && preferenceTestCompleted !== hasSupportedPreferenceResult;
+  const canonicalPreferenceCompleted = environment.dataSource === "mock"
+    ? hasSupportedPreferenceResult
+    : apiPreferenceProfile.data?.completed;
+  const shouldReconcilePreference = !shouldReconcile
+    && Boolean(expectedUserId)
+    && canonicalPreferenceCompleted !== undefined
+    && preferenceTestCompleted !== canonicalPreferenceCompleted;
   useEffect(() => { if (shouldReconcile) setCurrentUser(expectedUserId || null); }, [expectedUserId, setCurrentUser, shouldReconcile]);
-  useEffect(() => { if (shouldReconcilePreference) setPreferenceTestCompleted(hasSupportedPreferenceResult); }, [hasSupportedPreferenceResult, setPreferenceTestCompleted, shouldReconcilePreference]);
+  useEffect(() => {
+    if (shouldReconcilePreference && canonicalPreferenceCompleted !== undefined) {
+      setPreferenceTestCompleted(canonicalPreferenceCompleted);
+    }
+  }, [canonicalPreferenceCompleted, setPreferenceTestCompleted, shouldReconcilePreference]);
   if (shouldReconcile || shouldReconcilePreference) return <View style={styles.loading}><LoadingState label="로그인과 성향 결과 상태를 맞추고 있어요" /></View>;
-  const authenticated = sessionKind === "member" || sessionKind === "guest";
   const member = sessionKind === "member";
   const publicPath = pathname === "/" || pathname === "/login" || pathname === "/signup-choice" || pathname === "/signup-email" || pathname === "/terms" || pathname === "/invite" || pathname === "/guest-room-limit" || pathname.startsWith("/invite/") || pathname === "/+not-found";
   if (!authenticated && !publicPath) {

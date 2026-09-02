@@ -4,13 +4,12 @@
 
 `workspace → 명시적 분석 → report → 명시적 제안 생성 → 제안 상세 → before/after/diff → 최종 확인 → 전체 validation → 한 번의 Zustand set → workspace` 순서다. 분석, 제안 생성, 미리보기는 `itineraryByTripId`를 수정하지 않는다.
 
-## 2. local/server engine
+## 2. 데이터와 계산 엔진
 
-- `local`: `Frontend_new`에서 이식되어 있던 `src/duri/duri-analysis`와 `src/duri/duri-suggestions` 순수 함수를 사용한다. 네트워크 요청은 없다.
-- `server`: 확인된 Duri API와 Schedule batch 계약이 없으므로 unavailable이다. local fallback은 없다.
-- DATA_SOURCE와 DURI_ENGINE은 독립적이다. 현재 api/hybrid의 Candidates·Schedule 계약도 대기 중이라 workspace data policy가 별도로 차단한다.
-
-UI는 환경 변수를 직접 읽지 않고 service availability만 사용한다.
+- mock/API 데이터 모드 모두 같은 Frontend 수학 엔진을 사용한다.
+- API 모드는 서버 일정·잠금·예약·planning·공유 성향·후보 신호의 최신 version을 다시 읽고, 분석 중 바뀌면 결과를 버린다.
+- Backend Duri 엔드포인트의 고정 응답은 정밀 분석이나 조율에 사용하지 않는다.
+- 자동차 경로와 TourAPI 근거만 Backend 프록시로 조회하며, 실패한 근거를 0이나 제약 없음으로 대체하지 않는다.
 
 ## 3. 분석 input
 
@@ -36,14 +35,14 @@ analyzedAt, createdAt, UI 상태와 랜덤 값은 제외한다. 보안 hash 목�
 
 ## 6. algorithm version
 
-- `DURI_ANALYSIS_VERSION = web-rules-v1+mobile-context-v1`
-- `DURI_SUGGESTION_VERSION = web-rules-v1+mobile-atomic-v1`
+- `DURI_ANALYSIS_VERSION = robust-interval-report-v10`
+- `DURI_SUGGESTION_VERSION = fair-adaptive-autofill-v6`
 
 웹에는 별도 상수가 없어 웹 규칙 계보와 모바일 보완 계약을 나타내는 compatibility version을 추가했다. 사용자 UI에는 노출하지 않는다.
 
 ## 7. 분석 가능 여부
 
-- 0개: no-itinerary, 분석 차단
+- 0개: no-itinerary, 구조 점검은 제한적으로 실행하고 성향·후보 근거가 있으면 자동 채우기 초안 허용
 - 1개: limited, 비교·균형 근거 부족 안내
 - 2개 이상: available
 - 손상된 날짜/tripId/Place/HH:mm/기간/중복 item ID: invalid-itinerary
@@ -56,11 +55,11 @@ analyzedAt, createdAt, UI 상태와 랜덤 값은 제외한다. 보안 hash 목�
 
 ## 9. 일정 밀도
 
-웹 실제 기준을 그대로 쓴다: dense place 5/very dense 7, occupied 420/540분, 휴식 없이 연속 3개 초과, 의미 있는 휴식 45분, 긴 연속 구간 210분. pace/activity/planningStyle coverage와 tone에 따라 웹 규칙이 threshold를 조정한다. 항목 수만으로 확정하지 않는다.
+장소 수나 45분 휴식 같은 전역 고정 임계값으로 판정하지 않는다. 참여자가 직접 응답한 하루 활동시간과 평균 체류시간을 응답 해상도의 구간으로 바꾸고, 실제 일정 구간의 합집합과 확인된 이동 구간만 합쳐 각 참여자의 선호 구간에서 얼마나 벗어났는지 계산한다. 경로를 확인하지 못한 공백은 휴식이나 이동으로 단정하지 않으며, 응답이 일부뿐이면 판정 신뢰도를 낮춘다. 직접 응답 근거가 없으면 밀도 판정을 보류한다.
 
 ## 10. 식사
 
-웹 `isMealPlace`가 Place category/tags/name을 쓴다. 시간대는 아침 07:30~10:00, 점심 11:30~14:00, 저녁 17:30~20:00이며 그 구간을 가로지르는 일정 범위가 있을 때만 검사한다. “식사 장소가 일정에서 확인되지 않아요” 수준으로 표현한다. 실제 meal candidate가 있으면 후보를, 없으면 장소 없는 meal block만 제안할 수 있다.
+`isMealPlace`가 Place category/tags/name을 쓴다. 공통 식사 시간대는 낮은 신뢰도의 확인 정보일 뿐이며, 이를 근거로 고정 60/90분 식사 블록을 만들거나 일정을 자동 변경하지 않는다.
 
 ## 11. 시간 충돌
 
@@ -68,7 +67,7 @@ analyzedAt, createdAt, UI 상태와 랜덤 값은 제외한다. 보안 hash 목�
 
 ## 12. 날짜 균형
 
-각 여행 날짜의 일정 수, 유효 총분, 충돌 pair, 120분 이상 긴 공백 총분을 계산한다. 새 warning 기준은 상수 `dayBalanceItemDifference = 3`이다. 최대/최소 날짜의 일정 수 차이가 3개 이상일 때만 issue와 빈 슬롯 이동안을 만든다. 첫날·마지막 날의 이동 조건은 가정하지 않는다.
+각 여행 날짜의 일정 수, 시간 구간 합집합, 충돌 pair, 확인된 이동을 제외한 여유시간을 설명용 지표로 계산한다. 날짜별 장소 수 차이만으로 문제나 이동 제안을 만들지 않는다. 실제 부담 판정은 참여자별 하루 활동시간 선호 구간을 사용하는 밀도 분석이 맡고, 첫날·마지막 날의 이동 조건은 근거 없이 가정하지 않는다.
 
 ## 13. 동선 coverage
 
@@ -92,7 +91,7 @@ candidate placeId와 itinerary placeId로 배치/미배치를 파생한다. `add
 
 ## 16. suggestion 타입
 
-웹 실제 7개 타입을 유지한다: reorder-route, move-item, insert-rest, insert-meal, add-preference-place, remove-overload-item, replace-place. 웹 생성기는 meal→density→route→preference issue와 stable ID/priority 순서를 쓴다. 모바일 context는 같은 operation/validation으로 종료 조건을 지키는 마지막 날 전체 이동 또는 장소 제외, 시간 충돌의 빈 슬롯 이동, 일정 수 차이 3개 이상의 날짜 분산을 보완한다.
+기존 7개 change 타입은 호환을 위해 유지한다. 실제 변경안은 최신 리포트가 `suggestionSupported`로 승인한 원인만 통과하며, 공통 식사창·고정 휴식·장소 수 차이 같은 낮은 신뢰도 휴리스틱은 자동 제안으로 승격하지 않는다. 시간 충돌과 복귀조건처럼 검증 가능한 변경도 잠금·예약·티켓·최신 fingerprint를 다시 통과해야 한다. 성향 기반 자동 채우기는 별도 공정 선택·적응형 체류시간·빈 구간 packing을 거친 미리보기 전용 제안이다.
 
 ## 17. change operation
 
@@ -126,9 +125,9 @@ trip/suggestion/tripId/version/fingerprint, member/completed, supported change, 
 
 웹 분석은 파생 결과이고 모바일 기존 analysesByTripId도 normalize 시 비운다. session/suggestion/receipt는 비영속이며 isStale/currentFingerprint/expected impact도 파생한다. 두리 분석 기능 자체는 새 영속 필드를 만들지 않는다. 현재 persist version은 여행방 사실 정보 migration이 반영된 5다.
 
-## 25. api/server 대기
+## 25. API 모드
 
-분석 request/response, suggestion DTO/version, 권한, idempotency, stale/version conflict, atomic Schedule batch와 authoritative receipt, Query invalidation 계약이 필요하다. endpoint를 추측하지 않았다.
+API 일정·잠금·예약·planning·성향·TODO·문서는 현재 계약에 연결했다. 제안 적용은 서버 `expectedVersion`·`expectedFactsVersion`과 잠금·예약 재검증을 통과하는 원자 apply만 허용한다. 새 후보의 미래 출발시각 경로와 날짜별 운영 예외가 완전하지 않은 자동 채우기는 계속 미리보기로 남긴다.
 
 ## 26. 실제 Schedule batch 연동 조건
 
@@ -140,4 +139,4 @@ server apply는 한 요청에서 전체 changes를 검증·적용하고 실패 �
 
 ## 검증
 
-`npm run verify:duri-analysis`는 분석 18, 제안 13, 원자 적용 10, 종료 조건 16 fixture를 실행한다. lint, typecheck, expo-doctor, export도 완료 조건이다.
+`verify:duri-analysis`, `verify:group-preferences`, `verify:preference-auto-fill`, source lint, typecheck와 Expo export를 함께 실행한다. 자동 생성은 작은 후보 집합에서 완전 탐색 여부를 증명하고, 큰 입력에서는 탐색 한도와 전역 최적 미보장을 certificate에 기록한다.

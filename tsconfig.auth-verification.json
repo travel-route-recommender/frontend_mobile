@@ -23,6 +23,8 @@
     "src/features/auth/services/googleNativeAuth.ts",
     "src/features/auth/services/kakaoNativeAuth.ts",
     "src/features/auth/services/socialLoginFlow.ts",
+    "src/features/preferences/logic/apiPreferenceProfile.ts",
+    "src/features/preferences/logic/resolve-preference-presentation.ts",
     "src/services/apiClient.ts"
   ]
 }

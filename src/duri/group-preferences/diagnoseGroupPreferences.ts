@@ -26,7 +26,9 @@ export function diagnoseGroupPreferences(
   const pendingMemberIds = memberIds.filter((userId) => preferenceResults[userId] === undefined);
   const invalidMemberIds = memberIds.filter((userId) => preferenceResults[userId] !== undefined && !completedSet.has(userId));
   const dimensions = Object.fromEntries(planningDimensions.map((dimension) => {
-    const responses = completedResults.map(({ userId, result }) => ({ userId, score: result.values[dimension] }));
+    const responses = completedResults.flatMap(({ userId, result }) => (
+      result.observedDimensions.includes(dimension) ? [{ userId, score: result.values[dimension] }] : []
+    ));
     return [dimension, diagnosePreferenceDimension(dimension, responses)];
   })) as GroupPreferenceDiagnosis["dimensions"];
   const completedMemberCount = completedMemberIds.length;

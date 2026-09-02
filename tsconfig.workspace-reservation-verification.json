@@ -1,0 +1,24 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "customConditions": [],
+    "target": "ES2022",
+    "types": ["node"],
+    "rootDir": ".",
+    "outDir": "../.codex-verification/workspace-reservation",
+    "declaration": false,
+    "sourceMap": false
+  },
+  "include": [
+    "scripts/verify-workspace-reservation-api.ts",
+    "src/config/environment.ts",
+    "src/domain/**/*.ts",
+    "src/features/auth/services/authTokenState.ts",
+    "src/features/workspace/services/workspaceScheduleReservationApi.ts",
+    "src/features/workspace/services/workspaceScheduleContract.ts",
+    "src/services/apiClient.ts"
+  ]
+}

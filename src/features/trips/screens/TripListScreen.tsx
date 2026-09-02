@@ -2,12 +2,10 @@ import { useMemo, useState } from "react";
 import { FlatList, Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { useQuery } from "@tanstack/react-query";
 import { useShallow } from "zustand/react/shallow";
 import { PrimaryButton, Screen } from "../../../components/common";
 import { ErrorState, LoadingState } from "../../../components/feedback";
 import { environment } from "../../../config/environment";
-import { queryKeys } from "../../../query/keys";
 import { selectCompletedTripsForCurrentUser, selectPlanningTripsForCurrentUser } from "../../../store/selectors";
 import { useDuriHydrationState, useDuriStore } from "../../../store/useDuriStore";
 import { colors, radius, spacing } from "../../../theme/tokens";
@@ -15,7 +13,7 @@ import { useMemberGate } from "../../auth/hooks/useMemberGate";
 import { useAuthSessionStore } from "../../auth/store/useAuthSessionStore";
 import { TripRoomCard } from "../components/TripCard";
 import { selectTripRoomCardViewModel } from "../selectors";
-import { fetchApiTripList } from "../tripRoomApi";
+import { useApiTripListQuery } from "../useApiTripListQuery";
 import type { TripListFilter } from "../types";
 
 const createTripImage = require("../../../../assets/images/duri/trip-list/create-trip.png");
@@ -100,11 +98,7 @@ function ApiTripListContent() {
   const currentUserId = useAuthSessionStore((session) => session.currentSessionUserId);
   const { requireMember, memberGatePrompt } = useMemberGate();
   const [filter, setFilter] = useState<TripListFilter>("ongoing");
-  const query = useQuery({
-    queryKey: [...queryKeys.trips.all, "api", currentUserId],
-    queryFn: ({ signal }) => fetchApiTripList(currentUserId, signal),
-    enabled: Boolean(currentUserId),
-  });
+  const query = useApiTripListQuery(currentUserId);
   const rooms = query.data ?? [];
   const ongoing = rooms.filter((room) => room.viewModel.status !== "completed");
   const completed = rooms.filter((room) => room.viewModel.status === "completed");

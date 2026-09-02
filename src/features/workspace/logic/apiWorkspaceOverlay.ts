@@ -1,7 +1,7 @@
 import type { ItineraryItem, ItineraryItemType } from "../../../domain";
 import type { WorkspaceScheduleLocalOverlay } from "../services/workspaceScheduleContract";
 
-export const API_WORKSPACE_OVERLAY_STORAGE_VERSION = 1;
+export const API_WORKSPACE_OVERLAY_STORAGE_VERSION = 2;
 const MONGO_OBJECT_ID_PATTERN = /^[a-f\d]{24}$/i;
 const ITEM_TYPES = new Set<ItineraryItemType>(["place", "meal", "rest", "transport", "reservation"]);
 

@@ -1,23 +1,49 @@
-import { useMemo } from "react";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
 import { StyleSheet, Text, View } from "react-native";
 import { useShallow } from "zustand/react/shallow";
-import { AppHeader } from "../../../components/common";
-import { ErrorState } from "../../../components/feedback";
+import { AppHeader, SecondaryButton } from "../../../components/common";
+import { ErrorState, LoadingState } from "../../../components/feedback";
+import { environment } from "../../../config/environment";
+import type { Place } from "../../../domain";
+import type { DuriAnalysisInput } from "../../../duri/duri-analysis";
+import { queryClient } from "../../../query/queryClient";
+import { queryKeys } from "../../../query/keys";
+import { ApiError } from "../../../services/apiClient";
 import { useDuriStore } from "../../../store/useDuriStore";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import { formatTripDateRange } from "../../../utils/formatters";
 import { workspaceScheduleService } from "../../workspace/services/workspaceDataPolicy";
-import { useTripDocumentStore, type TravelDocument } from "../../trip-documents";
+import { useAuthSessionStore } from "../../auth/store/useAuthSessionStore";
+import { fetchApiTripDetail, type ApiTripDetailData } from "../../trips/tripRoomApi";
+import { resolveAreaCodeForRegion, searchBackendPlaces } from "../../places/services/placeApi";
+import { ensureTripDocumentStoreHydrated, useTripDocumentHydrationState, useTripDocumentStore, type TravelDocument } from "../../trip-documents";
 import { syncDuriIssueTodos } from "../../trip-todos/services/tripTodoAutomationService";
-import { getDuriTodoResolvableDedupePrefixes } from "../../trip-todos/logic/todoAutomation";
+import { syncApiDuriIssueTodos } from "../../trip-todos/services/apiDuriTodoAutomationService";
+import { getDuriTodoResolvableDedupePrefixes, isDuriIssueTodoActionable } from "../../trip-todos/logic/todoAutomation";
+import { DuriTechnicalDetailsModal } from "../components/DuriTechnicalDetailsModal";
+import { PreferenceAutoFillCard } from "../components/PreferenceAutoFillCard";
 import { DuriAnalysisIntro } from "../components/DuriAnalysisIntro";
 import { DuriAnalysisReport } from "../components/DuriAnalysisReport";
 import { DuriScrollPage } from "../components/DuriPageShell";
 import { StaleSuggestionNotice } from "../components/StaleSuggestionNotice";
 import { createDuriAnalysisSnapshot, createDuriInputFingerprint, getDuriAnalysisAvailability } from "../logic/analysisSnapshot";
+import { buildApiDuriAnalysisInput } from "../logic/apiAnalysisInput";
 import { buildDuriAnalysisInputWithDocuments, isDuriAnalysisCompletionCurrent } from "../logic/analysisInput";
+import {
+  buildPreferenceAutoFillSuggestionEnvelope,
+  planPreferenceAutoFill,
+  shouldAugmentPreferenceAutoFillWithDiscovery,
+  type PreferenceAutoFillPlan,
+  type PreferenceAutoFillRequest,
+} from "../logic/preferenceAutoFill";
+import {
+  requestPreferenceAutoFillWithDeadline,
+  throwIfPreferenceAutoFillRequestAborted,
+} from "../logic/preferenceAutoFillAsync";
 import { duriAnalysisService } from "../services/duriAnalysisService";
+import { enrichPreferenceAutoFillCandidateEvidence } from "../services/duriEvidenceService";
 import { useDuriAnalysisStore } from "../store/useDuriAnalysisStore";
 
 const EMPTY_TRAVEL_DOCUMENTS: TravelDocument[] = [];
@@ -28,16 +54,131 @@ const itineraryTypeLabel: Record<string, string> = {
   transport: "이동",
   reservation: "예약 일정",
 };
+const preferenceAutoFillTitlePrefixes = ["성향 기반 일정 초안 ", "중립 후보 일정 초안 "] as const;
+// 네트워크·기기 탐색 안전 한도일 뿐 선호 점수나 일정 품질의 magic weight가 아니다.
+const DISCOVERY_FETCH_LIMIT = 50;
+const DISCOVERY_POOL_LIMIT = 24;
+const DISCOVERABLE_TOUR_CONTENT_TYPES = new Set([12, 14, 15, 28, 38, 39]);
+// 네트워크가 멈춰도 미리보기 UI가 영구 대기하지 않게 하는 단계별 안전 한도다.
+// 이 값들은 선호·체류시간·장소 수 계산에는 참여하지 않는다.
+const AUTO_FILL_SERVER_REFRESH_TIMEOUT_MS = 6_000;
+const AUTO_FILL_EVIDENCE_TIMEOUT_MS = 4_000;
+const AUTO_FILL_DISCOVERY_TIMEOUT_MS = 4_000;
+
+type TechnicalDetailsTarget = { kind: "overview" } | { kind: "issue"; issueId: string };
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "두리 요청을 처리하지 못했어요. 기존 일정은 변경되지 않았어요.";
 }
 
+function supplementalAutoFillEvidence(data: ApiTripDetailData | undefined) {
+  return Object.fromEntries((data?.room.members ?? [])
+    .filter((member) => member.travelTypeTags.length > 0)
+    .map((member) => [member.userId, { source: "travel-type-snapshot" as const, tags: member.travelTypeTags }]));
+}
+
+function buildDiscoveryCandidateInput(input: DuriAnalysisInput, sourcePlaces: readonly Place[]) {
+  const scheduledPlaceIds = new Set(input.itinerary.flatMap((item) => item.placeId ? [item.placeId] : []));
+  const existingCandidatePlaceIds = new Set(input.candidates.map((candidate) => candidate.placeId));
+  const unique = new Map<string, Place>();
+  sourcePlaces.forEach((place) => {
+    if (!place.id.trim() || scheduledPlaceIds.has(place.id) || existingCandidatePlaceIds.has(place.id)) return;
+    if (place.contentTypeId !== undefined && !DISCOVERABLE_TOUR_CONTENT_TYPES.has(place.contentTypeId)) return;
+    unique.set(place.id, { ...place, regionId: input.trip.regionId });
+  });
+  const grouped = new Map<string, Place[]>();
+  [...unique.values()].sort((left, right) => left.id.localeCompare(right.id)).forEach((place) => {
+    const key = place.contentTypeId === undefined
+      ? `category:${place.category.trim().toLocaleLowerCase("ko-KR") || "unknown"}`
+      : `content:${place.contentTypeId}`;
+    grouped.set(key, [...(grouped.get(key) ?? []), place]);
+  });
+  const queues = [...grouped.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([, places]) => [...places]);
+  const selected: Place[] = [];
+  while (selected.length < DISCOVERY_POOL_LIMIT && queues.some((queue) => queue.length)) {
+    queues.forEach((queue) => {
+      const place = queue.shift();
+      if (place && selected.length < DISCOVERY_POOL_LIMIT) selected.push(place);
+    });
+  }
+  if (!selected.length) return { input, discoveredPlaceIds: [] as string[] };
+  return {
+    input: {
+      ...input,
+      placesById: {
+        ...input.placesById,
+        ...Object.fromEntries(selected.map((place) => [place.id, place])),
+      },
+      candidates: [
+        ...input.candidates,
+        ...selected.map((place) => ({
+          tripId: input.trip.id,
+          placeId: place.id,
+          addedByUserIds: [],
+          recommendedByDuri: true,
+        })),
+      ],
+    },
+    discoveredPlaceIds: selected.map((place) => place.id),
+  };
+}
+
+async function discoverRegionalPlaces(input: DuriAnalysisInput, apiMode: boolean, signal?: AbortSignal) {
+  if (!apiMode) {
+    return Object.values(input.placesById).filter((place) => place.regionId === input.trip.regionId);
+  }
+  const regionId = input.trip.regionId.trim().toLocaleLowerCase("en-US");
+  const areaCode = /^\d+$/.test(regionId) ? regionId : resolveAreaCodeForRegion(regionId);
+  if (!areaCode) return [];
+  try {
+    return await searchBackendPlaces({ areaCode, page: 1, limit: DISCOVERY_FETCH_LIMIT, signal });
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    return [];
+  }
+}
+
+async function enrichAutoFillEvidenceWithinDeadline(input: DuriAnalysisInput, signal?: AbortSignal) {
+  try {
+    return await requestPreferenceAutoFillWithDeadline(
+      (requestSignal) => enrichPreferenceAutoFillCandidateEvidence(
+        input,
+        new Date().toISOString(),
+        undefined,
+        { signal: requestSignal, requestTimeoutMs: AUTO_FILL_EVIDENCE_TIMEOUT_MS },
+      ),
+      { timeoutMs: AUTO_FILL_EVIDENCE_TIMEOUT_MS, signal },
+    );
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    return input;
+  }
+}
+
+function addCachedServerDataNotice(plan: PreferenceAutoFillPlan) {
+  const notice = "서버 응답이 늦어 현재 화면에 마지막으로 불러온 일정과 의견을 기준으로 초안을 만들었어요. 적용하기 전 최신 내용을 다시 확인해 주세요.";
+  return {
+    ...plan,
+    message: `${plan.message} ${notice}`,
+    limitations: [...new Set([...plan.limitations, notice])],
+  };
+}
+
 export function DuriAnalysisScreen() {
   const router = useRouter();
+  const [technicalDetailsTarget, setTechnicalDetailsTarget] = useState<TechnicalDetailsTarget>();
   const params = useLocalSearchParams<{ tripId?: string | string[] }>();
   const tripId = Array.isArray(params.tripId) ? params.tripId[0] : params.tripId ?? "";
-  const source = useDuriStore(useShallow((state) => ({
+  const apiMode = environment.dataSource === "api";
+  const authenticatedUserId = useAuthSessionStore((state) => state.currentSessionUserId) ?? "";
+  const apiQuery = useQuery({
+    queryKey: queryKeys.trips.detail(tripId, authenticatedUserId),
+    queryFn: ({ signal }) => fetchApiTripDetail(tripId, authenticatedUserId, signal),
+    enabled: apiMode && Boolean(tripId && authenticatedUserId),
+  });
+  const localSource = useDuriStore(useShallow((state) => ({
     currentUserId: state.currentUserId,
     usersById: state.usersById,
     placesById: state.placesById,
@@ -55,12 +196,34 @@ export function DuriAnalysisScreen() {
     suggestionError: state.suggestionErrorByTripId[tripId],
   })));
   const tripDocuments = useTripDocumentStore((state) => state.documentsByTripId[tripId] ?? EMPTY_TRAVEL_DOCUMENTS);
-  const input = useMemo(() => buildDuriAnalysisInputWithDocuments(source, tripId, tripDocuments), [source, tripDocuments, tripId]);
+  const documentsHydrated = useTripDocumentHydrationState((state) => state.isHydrated);
+  const documentHydrationError = useTripDocumentHydrationState((state) => state.hydrationError);
+  const documentCollectionStatus = documentsHydrated ? "loaded" as const : documentHydrationError ? "unavailable" as const : undefined;
+  const input = useMemo(() => apiMode
+    ? buildApiDuriAnalysisInput(
+        apiQuery.data,
+        authenticatedUserId,
+        documentsHydrated ? tripDocuments : EMPTY_TRAVEL_DOCUMENTS,
+        documentCollectionStatus ?? "unavailable",
+      )
+    : !documentCollectionStatus
+      ? undefined
+      : buildDuriAnalysisInputWithDocuments(localSource, tripId, tripDocuments, [], documentCollectionStatus),
+  [apiMode, apiQuery.data, authenticatedUserId, documentCollectionStatus, documentsHydrated, localSource, tripDocuments, tripId]);
   const currentFingerprint = useMemo(() => input ? createDuriInputFingerprint(createDuriAnalysisSnapshot(input)) : "", [input]);
   const sessionStale = Boolean(feature.session && feature.session.inputFingerprint !== currentFingerprint);
-  const engineAvailable = duriAnalysisService.available && workspaceScheduleService.available;
+  const apiAuthenticationRejected = apiMode && apiQuery.error instanceof ApiError && apiQuery.error.status === 401;
+  const apiRoomForbidden = apiMode && apiQuery.error instanceof ApiError && apiQuery.error.status === 403;
+  const apiRefreshFailed = apiMode && Boolean(apiQuery.error && apiQuery.data);
+  const scheduleSourceAvailable = apiMode ? Boolean(apiQuery.data?.scheduleSnapshot) && !apiRefreshFailed : workspaceScheduleService.available;
+  const engineAvailable = duriAnalysisService.available && scheduleSourceAvailable;
   const availability = useMemo(() => getDuriAnalysisAvailability({ input, engineAvailable }), [engineAvailable, input]);
-  const trip = source.tripsById[tripId];
+  const trip = input?.trip;
+  const analysisUserId = apiMode ? authenticatedUserId : localSource.currentUserId;
+  const autoFillSupplementalEvidence = useMemo(() => supplementalAutoFillEvidence(apiQuery.data), [apiQuery.data]);
+  const autoFillSupplementalFingerprint = useMemo(() => JSON.stringify(Object.entries(autoFillSupplementalEvidence)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([memberId, evidence]) => [memberId, [...evidence.tags].sort()])), [autoFillSupplementalEvidence]);
   const affectedEntityLabelsByIssueId = useMemo(() => {
     const session = feature.session;
     if (!session) return {} as Record<string, string[]>;
@@ -89,19 +252,59 @@ export function DuriAnalysisScreen() {
     }));
   }, [feature.session]);
 
+  const readLatestAnalysisInput = () => {
+    const documents = useTripDocumentStore.getState().documentsByTripId[tripId] ?? EMPTY_TRAVEL_DOCUMENTS;
+    const documentHydration = useTripDocumentHydrationState.getState();
+    const collectionStatus = documentHydration.isHydrated ? "loaded" as const : documentHydration.hydrationError ? "unavailable" as const : undefined;
+    if (apiMode) {
+      const userId = useAuthSessionStore.getState().currentSessionUserId ?? "";
+      return buildApiDuriAnalysisInput(
+        queryClient.getQueryData<ApiTripDetailData>(queryKeys.trips.detail(tripId, userId)),
+        userId,
+        documentHydration.isHydrated ? documents : EMPTY_TRAVEL_DOCUMENTS,
+        collectionStatus ?? "unavailable",
+      );
+    }
+    if (!collectionStatus) return undefined;
+    return buildDuriAnalysisInputWithDocuments(useDuriStore.getState(), tripId, documents, [], collectionStatus);
+  };
+
+  const readLatestAnalysisUserId = () => apiMode
+    ? useAuthSessionStore.getState().currentSessionUserId ?? ""
+    : useDuriStore.getState().currentUserId;
+
   const runAnalysis = async () => {
     if (!input || !availability.canAnalyze || !useDuriAnalysisStore.getState().beginAnalysis(tripId)) return;
-    const requestedFingerprint = createDuriInputFingerprint(createDuriAnalysisSnapshot(input));
-    const requestedByUserId = source.currentUserId;
+    const requestedByUserId = analysisUserId;
     try {
-      const session = await duriAnalysisService.analyze(input);
-      const latestSource = useDuriStore.getState();
-      const latestInput = buildDuriAnalysisInputWithDocuments(
-        latestSource,
-        tripId,
-        useTripDocumentStore.getState().documentsByTripId[tripId] ?? EMPTY_TRAVEL_DOCUMENTS,
-      );
-      if (latestSource.currentUserId !== requestedByUserId || !isDuriAnalysisCompletionCurrent({
+      let requestedInput = input;
+      if (apiMode) {
+        // 분석 버튼을 누른 시점의 서버 scheduleVersion을 다시 확인한다. 화면 focus 시점의
+        // cache만 사용하면 다른 동행자의 변경을 구 버전으로 분석할 수 있다.
+        const refreshed = await apiQuery.refetch();
+        if (refreshed.isError || !refreshed.data?.scheduleSnapshot) {
+          throw new Error("최신 서버 일정을 확인하지 못해 분석을 시작하지 않았어요. 네트워크를 확인한 뒤 다시 시도해 주세요.");
+        }
+        const documentHydration = useTripDocumentHydrationState.getState();
+        const collectionStatus = documentHydration.isHydrated ? "loaded" as const : "unavailable" as const;
+        const userId = useAuthSessionStore.getState().currentSessionUserId ?? "";
+        if (userId !== requestedByUserId) throw new Error("분석 중 로그인 사용자가 변경되어 결과를 저장하지 않았어요.");
+        requestedInput = buildApiDuriAnalysisInput(
+          refreshed.data,
+          userId,
+          documentHydration.isHydrated
+            ? useTripDocumentStore.getState().documentsByTripId[tripId] ?? EMPTY_TRAVEL_DOCUMENTS
+            : EMPTY_TRAVEL_DOCUMENTS,
+          collectionStatus,
+        ) as typeof input;
+        if (!requestedInput) throw new Error("최신 서버 일정으로 분석 입력을 구성하지 못했어요.");
+        const refreshedAvailability = getDuriAnalysisAvailability({ input: requestedInput, engineAvailable: duriAnalysisService.available });
+        if (!refreshedAvailability.canAnalyze) throw new Error(refreshedAvailability.message);
+      }
+      const requestedFingerprint = createDuriInputFingerprint(createDuriAnalysisSnapshot(requestedInput));
+      const session = await duriAnalysisService.analyze(requestedInput);
+      const latestInput = readLatestAnalysisInput();
+      if (readLatestAnalysisUserId() !== requestedByUserId || !isDuriAnalysisCompletionCurrent({
         requestedFingerprint,
         sessionFingerprint: session.inputFingerprint,
         latestInput,
@@ -110,22 +313,23 @@ export function DuriAnalysisScreen() {
         return;
       }
       useDuriAnalysisStore.getState().completeAnalysis(session);
-      const actionableIssues = session.issues.filter((issue) => issue.constraintType !== "informational" && issue.severity !== "info");
+      const actionableIssues = session.issues.filter(isDuriIssueTodoActionable);
       // TODO 저장 실패는 분석 결과나 워크스페이스를 되돌리지 않는다.
-      void syncDuriIssueTodos({
+      if (session.snapshot.trip.status !== "completed" && apiMode) void syncApiDuriIssueTodos({
+        roomId: tripId,
+        issues: actionableIssues,
+        baseRevision: session.inputFingerprint,
+        timezone: apiQuery.data?.scheduleSnapshot?.planning?.timezone ?? "Asia/Seoul",
+      }).then(() => queryClient.invalidateQueries({ queryKey: queryKeys.trips.todos(tripId, requestedByUserId) })).catch(() => undefined);
+      if (session.snapshot.trip.status !== "completed" && !apiMode) void syncDuriIssueTodos({
         tripId,
         issues: actionableIssues,
         createdByUserId: requestedByUserId,
         resolvableDedupePrefixes: getDuriTodoResolvableDedupePrefixes(session.coverage),
         isCurrent: () => {
           if (useDuriAnalysisStore.getState().sessionsByTripId[tripId] !== session) return false;
-          const currentSource = useDuriStore.getState();
-          if (currentSource.currentUserId !== requestedByUserId) return false;
-          const currentInput = buildDuriAnalysisInputWithDocuments(
-            currentSource,
-            tripId,
-            useTripDocumentStore.getState().documentsByTripId[tripId] ?? EMPTY_TRAVEL_DOCUMENTS,
-          );
+          if (readLatestAnalysisUserId() !== requestedByUserId) return false;
+          const currentInput = readLatestAnalysisInput();
           return isDuriAnalysisCompletionCurrent({
             requestedFingerprint,
             sessionFingerprint: session.inputFingerprint,
@@ -143,11 +347,7 @@ export function DuriAnalysisScreen() {
     if (!session || session.inputFingerprint !== currentFingerprint || !useDuriAnalysisStore.getState().beginSuggestionGeneration(tripId)) return;
     try {
       const suggestions = await duriAnalysisService.generateSuggestions(session);
-      const latestInput = buildDuriAnalysisInputWithDocuments(
-        useDuriStore.getState(),
-        tripId,
-        useTripDocumentStore.getState().documentsByTripId[tripId] ?? EMPTY_TRAVEL_DOCUMENTS,
-      );
+      const latestInput = readLatestAnalysisInput();
       const latestFingerprint = latestInput ? createDuriInputFingerprint(createDuriAnalysisSnapshot(latestInput)) : "";
       if (latestFingerprint !== session.inputFingerprint) {
         useDuriAnalysisStore.getState().failSuggestionGeneration(tripId, "제안을 계산하는 동안 일정이 변경되었어요. 다시 분석해 주세요.");
@@ -159,24 +359,188 @@ export function DuriAnalysisScreen() {
     }
   };
 
-  if (!trip || !input) return <DuriScrollPage><AppHeader title="DURI 일정 점검" onBack={() => router.back()} /><ErrorState message="여행방 또는 점검할 일정을 찾을 수 없어요." /></DuriScrollPage>;
-  if (!trip.members.some((member) => member.userId === source.currentUserId)) return <DuriScrollPage><AppHeader title="DURI 일정 점검" onBack={() => router.back()} /><ErrorState message="이 여행방의 점검 결과를 볼 권한이 없어요." /></DuriScrollPage>;
+  const generatePreferenceAutoFill = async (request: PreferenceAutoFillRequest, signal?: AbortSignal) => {
+    throwIfPreferenceAutoFillRequestAborted(signal);
+    const session = useDuriAnalysisStore.getState().sessionsByTripId[tripId] ?? feature.session;
+    const displayedFingerprint = session?.inputFingerprint ?? currentFingerprint;
+    const requestedByUserId = readLatestAnalysisUserId();
+    let planningInput = readLatestAnalysisInput();
+    let supplementalEvidence = autoFillSupplementalEvidence;
+    let usedCachedServerData = false;
+    let refreshedServerData: ApiTripDetailData | undefined;
+    if (apiMode) {
+      let refreshedData: ApiTripDetailData | undefined;
+      try {
+        const candidate = await requestPreferenceAutoFillWithDeadline(
+          (requestSignal) => fetchApiTripDetail(tripId, requestedByUserId, requestSignal),
+          { timeoutMs: AUTO_FILL_SERVER_REFRESH_TIMEOUT_MS, signal },
+        );
+        if (!candidate.scheduleSnapshot) throw new Error("서버 일정 응답에 일정 버전이 없어요.");
+        throwIfPreferenceAutoFillRequestAborted(signal);
+        refreshedData = candidate;
+        refreshedServerData = candidate;
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        const cached = queryClient.getQueryData<ApiTripDetailData>(queryKeys.trips.detail(tripId, requestedByUserId));
+        if (!cached?.scheduleSnapshot) {
+          throw new Error("최신 서버 일정을 확인하지 못해 초안을 만들지 않았어요. 네트워크를 확인한 뒤 다시 시도해 주세요.");
+        }
+        refreshedData = cached;
+        usedCachedServerData = true;
+      }
+      const documentHydration = useTripDocumentHydrationState.getState();
+      const collectionStatus = documentHydration.isHydrated ? "loaded" as const : "unavailable" as const;
+      const latestUserId = readLatestAnalysisUserId();
+      if (!latestUserId || latestUserId !== requestedByUserId) {
+        throw new Error("초안을 계산하는 동안 로그인 사용자가 변경되어 결과를 표시하지 않았어요.");
+      }
+      planningInput = buildApiDuriAnalysisInput(
+        refreshedData,
+        latestUserId,
+        documentHydration.isHydrated
+          ? useTripDocumentStore.getState().documentsByTripId[tripId] ?? EMPTY_TRAVEL_DOCUMENTS
+          : EMPTY_TRAVEL_DOCUMENTS,
+        collectionStatus,
+      );
+      supplementalEvidence = supplementalAutoFillEvidence(refreshedData);
+    }
+    throwIfPreferenceAutoFillRequestAborted(signal);
+    if (!planningInput || readLatestAnalysisUserId() !== requestedByUserId) {
+      throw new Error("최신 일정 또는 사용자 정보를 확인하지 못해 초안을 만들지 않았어요.");
+    }
+    const latestFingerprint = createDuriInputFingerprint(createDuriAnalysisSnapshot(planningInput));
+    if (!displayedFingerprint || displayedFingerprint !== latestFingerprint) {
+      // 실제 일정 사실이 달라졌을 때만 캐시를 교체한다. 동일 일정의 최신 의견만
+      // 달라진 경우 생성 중 카드 key를 바꾸면 완성된 preview를 받을 컴포넌트가
+      // 사라질 수 있으므로 이번 계산에만 최신 의견을 사용한다.
+      if (apiMode && refreshedServerData && !usedCachedServerData) {
+        queryClient.setQueryData(queryKeys.trips.detail(tripId, requestedByUserId), refreshedServerData);
+      }
+      throw new Error("서버 일정·예약·문서 상태가 화면을 연 뒤 변경되었어요. 갱신된 화면에서 다시 초안을 만들어 주세요.");
+    }
+    let autoFillPlanningInput: DuriAnalysisInput = planningInput;
+    if (apiMode) {
+      autoFillPlanningInput = await enrichAutoFillEvidenceWithinDeadline(autoFillPlanningInput, signal);
+    }
+    throwIfPreferenceAutoFillRequestAborted(signal);
+    if (readLatestAnalysisUserId() !== requestedByUserId) {
+      throw new Error("후보 장소 정보를 확인하는 동안 로그인 사용자가 변경되어 결과를 표시하지 않았어요.");
+    }
+    const autoFillRequest: PreferenceAutoFillRequest = {
+      ...request,
+      ...(Object.keys(supplementalEvidence).length ? {
+        supplementalPreferenceEvidenceByMemberId: supplementalEvidence,
+      } : {}),
+    };
+    let plan = planPreferenceAutoFill(autoFillPlanningInput, autoFillRequest);
+    let usedDiscoveryPool = false;
+    // 저장 후보가 전혀 없을 때뿐 아니라, 기존 후보가 모두 이미 배치됐거나
+    // 지역·고정예약·의견 충돌 때문에 실제 선택 대상이 되지 못한 경우에도
+    // 지역 후보를 한 번만 보태 재계산한다. 전역 Hard 오류라면 두 번째 계산도
+    // 같은 이유로 안전하게 중단되며 기존 일정은 바뀌지 않는다.
+    const shouldTryDiscovery = shouldAugmentPreferenceAutoFillWithDiscovery(plan, request);
+    if (shouldTryDiscovery) {
+      let regionalPlaces: Place[] = [];
+      try {
+        regionalPlaces = await requestPreferenceAutoFillWithDeadline(
+          (requestSignal) => discoverRegionalPlaces(autoFillPlanningInput, apiMode, requestSignal),
+          { timeoutMs: AUTO_FILL_DISCOVERY_TIMEOUT_MS, signal },
+        );
+      } catch (error) {
+        if (signal?.aborted) throw error;
+      }
+      const discovered = buildDiscoveryCandidateInput(
+        autoFillPlanningInput,
+        regionalPlaces,
+      );
+      if (discovered.discoveredPlaceIds.length) {
+        autoFillPlanningInput = discovered.input;
+        if (apiMode) {
+          autoFillPlanningInput = await enrichAutoFillEvidenceWithinDeadline(autoFillPlanningInput, signal);
+        }
+        throwIfPreferenceAutoFillRequestAborted(signal);
+        if (readLatestAnalysisUserId() !== requestedByUserId) {
+          throw new Error("지역 후보를 확인하는 동안 로그인 사용자가 변경되어 결과를 표시하지 않았어요.");
+        }
+        usedDiscoveryPool = true;
+        plan = planPreferenceAutoFill(autoFillPlanningInput, {
+          ...autoFillRequest,
+          transientDiscoveryPlaceIds: discovered.discoveredPlaceIds,
+        });
+      }
+    }
+    if (usedCachedServerData) plan = addCachedServerDataNotice(plan);
+    throwIfPreferenceAutoFillRequestAborted(signal);
+    // 새 장소의 경로·운영시간 Hard 근거가 부족한 자동 채우기는 API/local 모두
+    // preview-only로 유지한다. 검증 가능한 제안만 별도의 apply 계약으로 적용한다.
+    if (session && plan.status === "preview-only" && !usedDiscoveryPool && !usedCachedServerData) {
+      if (latestFingerprint === session.inputFingerprint) {
+        const envelope = buildPreferenceAutoFillSuggestionEnvelope(session, plan, new Date().toISOString());
+        if (envelope) {
+          const previous = useDuriAnalysisStore.getState().suggestionsByTripId[tripId] ?? [];
+          const retained = previous.filter((entry) => !(
+            entry.suggestion.type === "add-preference-place"
+            && entry.suggestion.sourceIssueIds.length === 0
+            && preferenceAutoFillTitlePrefixes.some((prefix) => entry.suggestion.title.startsWith(prefix))
+          ));
+          useDuriAnalysisStore.getState().completeSuggestionGeneration(
+            tripId,
+            session.inputFingerprint,
+            [...retained, envelope],
+          );
+        }
+      }
+    }
+    return plan;
+  };
 
-  const sourceMessage = !workspaceScheduleService.available ? workspaceScheduleService.message : undefined;
+  if (apiMode && !authenticatedUserId) return <DuriScrollPage><AppHeader title="DURI 일정 점검" onBack={() => router.back()} /><ErrorState message="로그인 사용자 정보를 확인하지 못했어요." /></DuriScrollPage>;
+  if (apiMode && apiQuery.isLoading) return <DuriScrollPage><AppHeader title="DURI 일정 점검" onBack={() => router.back()} /><LoadingState label="서버의 최신 일정을 불러오고 있어요." /></DuriScrollPage>;
+  // 401은 API client가 refresh를 시도한 뒤 복구 불가능한 경우에만 남는다.
+  // auth store가 정리되는 짧은 동안 오류 문구를 노출하지 않고 Root의
+  // 인증 guard가 returnTo를 보존한 로그인 화면으로 이동하게 한다.
+  if (apiAuthenticationRejected) return <DuriScrollPage><LoadingState label="로그인 상태를 다시 확인하고 있어요." /></DuriScrollPage>;
+  // 다른 계정의 오래된 URL이나 탈퇴한 방은 저장 리포트를 보여주지 않고
+  // 현재 계정으로 접근 가능한 여행 목록으로 즉시 복귀시킨다.
+  if (apiRoomForbidden) return <Redirect href="/(tabs)/trips" />;
+  if (apiMode && !apiQuery.data) return <DuriScrollPage><AppHeader title="DURI 일정 점검" onBack={() => router.back()} /><ErrorState message={apiQuery.error instanceof Error ? apiQuery.error.message : "서버 여행방을 불러오지 못했어요."} onRetry={() => void apiQuery.refetch()} /></DuriScrollPage>;
+  if (!apiMode && !documentsHydrated && !documentHydrationError) return <DuriScrollPage><AppHeader title="DURI 일정 점검" onBack={() => router.back()} /><LoadingState label="첨부 문서 확인 상태를 불러오고 있어요." /></DuriScrollPage>;
+  if (!trip || !input) return <DuriScrollPage><AppHeader title="DURI 일정 점검" onBack={() => router.back()} /><ErrorState message="여행방 또는 분석 입력을 찾을 수 없어요." /></DuriScrollPage>;
+  if (!trip.members.some((member) => member.userId === analysisUserId)) return <DuriScrollPage><AppHeader title="DURI 일정 점검" onBack={() => router.back()} /><ErrorState message="이 여행방의 분석 리포트를 볼 권한이 없어요." /></DuriScrollPage>;
+
+  const sourceMessage = apiRefreshFailed
+    ? "최신 서버 일정 확인에 실패해 보이는 리포트는 마지막으로 확인한 사본 기준이에요. 다시 불러오기 전에는 새 분석을 실행하지 않아요."
+    : !apiMode && !workspaceScheduleService.available
+      ? workspaceScheduleService.message
+      : undefined;
   const engineMessage = !duriAnalysisService.available ? duriAnalysisService.unavailableMessage : undefined;
+  const autoFillInputInvalid = availability.status === "invalid-itinerary" || availability.status === "invalid-trip-dates";
+  const autoFillDisabled = feature.analysisStatus === "loading" || apiRefreshFailed || trip.status === "completed" || autoFillInputInvalid;
+  const autoFillDisabledReason = trip.status === "completed"
+    ? "완료된 여행방에서는 초안을 만들지 않아요."
+    : apiRefreshFailed
+      ? "최신 서버 일정을 다시 불러온 뒤 생성해 주세요."
+      : autoFillInputInvalid
+        ? availability.message
+        : undefined;
+
   return <DuriScrollPage testID="duri-analysis-screen">
     <AppHeader title="DURI 일정 점검" subtitle={`${trip.title} · ${formatTripDateRange(trip.startDate, trip.endDate)}`} onBack={() => router.back()} />
-    {!engineAvailable ? <View accessibilityRole="alert" style={styles.unavailable}><Text style={styles.unavailableTitle}>{sourceMessage ? "일정 데이터 계약을 확인해 주세요" : "두리 엔진을 사용할 수 없어요"}</Text><Text style={styles.unavailableText}>{sourceMessage ?? engineMessage ?? availability.message}</Text></View> : null}
+    {!engineAvailable ? <View accessibilityRole="alert" style={styles.unavailable}><Text style={styles.unavailableTitle}>{apiRefreshFailed ? "최신 서버 일정 확인이 필요해요" : sourceMessage ? "일정 데이터 계약을 확인해 주세요" : "두리 엔진을 사용할 수 없어요"}</Text><Text style={styles.unavailableText}>{sourceMessage ?? engineMessage ?? availability.message}</Text>{apiRefreshFailed ? <SecondaryButton label="서버 일정 다시 불러오기" onPress={() => { void apiQuery.refetch(); }} /> : null}</View> : null}
+    {documentHydrationError ? <View accessibilityRole="alert" style={styles.unavailable}><Text style={styles.unavailableTitle}>기기 문서함을 확인하지 못했어요</Text><Text style={styles.unavailableText}>문서·예약 기반 검사는 제외하고 나머지 일정은 점검할 수 있어요. 문서 기반 검사를 복구하려면 다시 불러와 주세요.</Text><SecondaryButton label="문서 다시 불러오기" onPress={() => { void ensureTripDocumentStoreHydrated().catch(() => undefined); }} /></View> : null}
 
-    {!feature.session ? <DuriAnalysisIntro
-      title={availability.status === "no-itinerary" ? "일정을 추가하면 두리가 점검해드려요" : "현재 일정을 두리와 함께 점검해보세요"}
-      message={availability.message}
-      error={feature.analysisError}
-      loading={feature.analysisStatus === "loading"}
-      disabled={!availability.canAnalyze}
-      onAnalyze={runAnalysis}
-      onWorkspace={() => router.push({ pathname: "/trips/[tripId]/workspace", params: { tripId } })}
-    /> : null}
+    {!feature.session ? <View style={styles.introStack}>
+      <DuriAnalysisIntro
+        title={availability.status === "no-itinerary" ? "일정이 비어 있어도 두리가 초안을 만들 수 있어요" : "현재 일정을 두리와 함께 점검해보세요"}
+        message={availability.message}
+        error={feature.analysisError}
+        loading={feature.analysisStatus === "loading"}
+        disabled={!availability.canAnalyze}
+        onAnalyze={runAnalysis}
+        onWorkspace={() => router.push({ pathname: "/trips/[tripId]/workspace", params: { tripId } })}
+      />
+      <PreferenceAutoFillCard key={`intro:${currentFingerprint}:${apiMode ? "api" : "local"}:${autoFillSupplementalFingerprint}:${autoFillDisabled ? "disabled" : "enabled"}`} input={input} disabled={autoFillDisabled} disabledReason={autoFillDisabledReason} onGenerate={generatePreferenceAutoFill} />
+    </View> : null}
 
     {feature.session && sessionStale ? <View style={styles.staleWrap}>
       {feature.analysisStatus === "error" && feature.analysisError ? <View accessibilityRole="alert" style={styles.retainedError}><Text style={styles.retainedErrorTitle}>다시 점검하지 못했어요</Text><Text style={styles.retainedErrorText}>이전 결과는 보관하고 있어요. {feature.analysisError}</Text></View> : null}
@@ -192,9 +556,17 @@ export function DuriAnalysisScreen() {
       suggestionError={feature.suggestionError}
       canAnalyze={availability.canAnalyze}
       affectedEntityLabelsByIssueId={affectedEntityLabelsByIssueId}
+      preferenceAutoFillContent={<PreferenceAutoFillCard key={`${feature.session.inputFingerprint}:${apiMode ? "api" : "local"}:${autoFillSupplementalFingerprint}:${autoFillDisabled ? "disabled" : "enabled"}`} input={feature.session.snapshot} disabled={autoFillDisabled} disabledReason={autoFillDisabledReason} onGenerate={generatePreferenceAutoFill} />}
       onReanalyze={runAnalysis}
       onGenerateSuggestions={generateSuggestions}
       onPreviewSuggestion={(envelope) => router.push({ pathname: "/trips/[tripId]/suggestions/[suggestionId]", params: { tripId, suggestionId: envelope.suggestion.id } })}
+      onOpenTechnicalDetails={(issueId) => setTechnicalDetailsTarget(issueId ? { kind: "issue", issueId } : { kind: "overview" })}
+    /> : null}
+    {feature.session && technicalDetailsTarget ? <DuriTechnicalDetailsModal
+      visible
+      session={feature.session}
+      issue={technicalDetailsTarget.kind === "issue" ? feature.session.issues.find((issue) => issue.id === technicalDetailsTarget.issueId) : undefined}
+      onClose={() => setTechnicalDetailsTarget(undefined)}
     /> : null}
   </DuriScrollPage>;
 }
@@ -203,6 +575,7 @@ const styles = StyleSheet.create({
   unavailable: { gap: spacing.xs, borderRadius: radius.lg, backgroundColor: colors.warningSoft, padding: spacing.md },
   unavailableTitle: { ...typography.bodyStrong, color: colors.warning },
   unavailableText: { ...typography.caption, color: colors.textSecondary },
+  introStack: { gap: spacing.lg },
   staleWrap: { gap: spacing.sm },
   retainedError: { gap: spacing.xs, borderRadius: radius.md, borderWidth: 1, borderColor: "#F2D3AA", backgroundColor: colors.warningSoft, padding: spacing.md },
   retainedErrorTitle: { ...typography.bodyStrong, color: colors.warning },

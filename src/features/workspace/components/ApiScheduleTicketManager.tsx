@@ -5,17 +5,19 @@ import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import type { BackendScheduleTicket } from "../services/workspaceScheduleContract";
 
 export function ApiScheduleTicketManager({
+  itemId,
   tickets,
   disabled,
   onUpload,
   onOpen,
   onDelete,
 }: {
+  itemId: string;
   tickets: readonly BackendScheduleTicket[];
   disabled: boolean;
-  onUpload: (note: string) => Promise<boolean>;
+  onUpload: (itemId: string, note: string) => Promise<boolean>;
   onOpen: (ticket: BackendScheduleTicket) => void;
-  onDelete: (ticket: BackendScheduleTicket) => Promise<boolean>;
+  onDelete: (itemId: string, ticket: BackendScheduleTicket) => Promise<boolean>;
 }) {
   const [note, setNote] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -25,7 +27,7 @@ export function ApiScheduleTicketManager({
     if (disabled || uploading) return;
     setUploading(true);
     try {
-      if (await onUpload(note)) setNote("");
+      if (await onUpload(itemId, note)) setNote("");
     } finally {
       setUploading(false);
     }
@@ -34,7 +36,7 @@ export function ApiScheduleTicketManager({
     if (disabled || deletingId) return;
     setDeletingId(ticket.id);
     try {
-      if (await onDelete(ticket)) setPendingDeleteId(undefined);
+      if (await onDelete(itemId, ticket)) setPendingDeleteId(undefined);
     } finally {
       setDeletingId(undefined);
     }

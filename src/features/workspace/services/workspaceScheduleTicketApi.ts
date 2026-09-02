@@ -1,6 +1,8 @@
 import * as DocumentPicker from "expo-document-picker";
 import { Platform } from "react-native";
+import { environment } from "../../../config/environment";
 import { apiClient } from "../../../services/apiClient";
+import type { BackendScheduleTicket, BackendSignedDownload } from "./workspaceScheduleContract";
 
 const MAX_TICKET_BYTES = 5 * 1024 * 1024;
 const ALLOWED_TICKET_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "heic", "heif"]);
@@ -23,6 +25,7 @@ function extensionOf(name: string) {
 export async function pickAndUploadScheduleTicket(input: {
   roomId: string;
   itemId: string;
+  expectedVersion: number;
   note?: string;
 }): Promise<ScheduleTicketUploadResult> {
   const result = await DocumentPicker.getDocumentAsync({
@@ -54,6 +57,8 @@ export async function pickAndUploadScheduleTicket(input: {
   }
   const note = input.note?.trim();
   if (note) form.append("note", note.slice(0, 200));
+  form.append("expectedVersion", String(input.expectedVersion));
+  form.append("clientMutationId", `ticket-upload-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`);
   await apiClient.request({
     path: endpoint(input.roomId, input.itemId),
     method: "POST",
@@ -63,10 +68,47 @@ export async function pickAndUploadScheduleTicket(input: {
   return { status: "uploaded" };
 }
 
-export async function deleteScheduleTicket(roomId: string, itemId: string, ticketId: string) {
+export async function deleteScheduleTicket(roomId: string, itemId: string, ticketId: string, expectedVersion: number) {
   await apiClient.request({
     path: endpoint(roomId, itemId, ticketId),
     method: "DELETE",
+    query: {
+      expectedVersion,
+      clientMutationId: `ticket-delete-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
+    },
     auth: true,
   });
+}
+
+function parseSignedDownload(value: unknown): BackendSignedDownload {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("다운로드 주소 응답이 올바르지 않아요.");
+  const record = value as Record<string, unknown>;
+  if (typeof record.token !== "string" || !record.token
+    || typeof record.url !== "string" || !record.url
+    || typeof record.path !== "string" || !record.path
+    || typeof record.expiresAt !== "string" || !Number.isFinite(Date.parse(record.expiresAt))
+    || !Number.isInteger(record.expiresInSec) || (record.expiresInSec as number) < 0) {
+    throw new Error("다운로드 주소 응답이 올바르지 않아요.");
+  }
+  return {
+    token: record.token,
+    url: record.url,
+    path: record.path,
+    expiresAt: record.expiresAt,
+    expiresInSec: record.expiresInSec as number,
+  };
+}
+
+/** Always issues a fresh member-scoped URL instead of persisting an expiring token. */
+export async function getSignedScheduleTicketUrl(roomId: string, ticket: Pick<BackendScheduleTicket, "imageUrl">) {
+  const signed = parseSignedDownload(await apiClient.request<unknown>({
+    path: `/rooms/${encodeURIComponent(roomId)}/files/signed-url`,
+    method: "POST",
+    body: { path: ticket.imageUrl },
+    auth: true,
+  }));
+  // APP_BASE_URL can be localhost even when a physical device talks to a LAN
+  // API host. Rebuild the authenticated download endpoint from the configured
+  // API base URL while preserving only the signed opaque token.
+  return `${environment.apiBaseUrl.replace(/\/+$/, "")}/files/download?token=${encodeURIComponent(signed.token)}`;
 }

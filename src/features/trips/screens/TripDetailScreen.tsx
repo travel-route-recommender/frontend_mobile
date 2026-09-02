@@ -15,7 +15,6 @@ import {
   TripPlanningSection,
   TripPreparationCard,
   TripQuickActions,
-  type TripHomeDuriState,
   type TripNextAction,
 } from "../components/home";
 import { GroupPreferenceDiagnosisCard, PreferenceResponseSummaryCard } from "../components/preferences";
@@ -34,6 +33,7 @@ import { duriAnalysisService } from "../../duri/services/duriAnalysisService";
 import { useDuriAnalysisStore } from "../../duri/store/useDuriAnalysisStore";
 import { workspaceScheduleService } from "../../workspace/services/workspaceDataPolicy";
 import { ApiTripDetailContent } from "./ApiTripDetailContent";
+import { selectTripHomeDuriState } from "../logic/selectTripHomeDuriState";
 
 const EMPTY_TRAVEL_DOCUMENTS: TravelDocument[] = [];
 
@@ -52,7 +52,6 @@ function ApiTripDetailRoute() {
 
 function MockTripHomeScreen() {
   const router = useRouter();
-  const sessionKind = useAuthSessionStore((state) => state.sessionKind);
   const params = useLocalSearchParams<{ tripId?: string | string[]; created?: string | string[] }>();
   const tripId = Array.isArray(params.tripId) ? params.tripId[0] : params.tripId;
   const created = (Array.isArray(params.created) ? params.created[0] : params.created) === "1";
@@ -147,19 +146,15 @@ function MockTripHomeScreen() {
         : itinerary.length === 0
           ? { title: "첫 일정을 만들어보세요", description: "모아둔 후보를 날짜와 시간에 배치해보세요.", label: "일정 만들기", onPress: openWorkspace }
           : { title: "일정을 계속 만들어보세요", description: `${itinerary.length}개 일정을 바탕으로 남은 후보도 배치해보세요.`, label: "일정 계속 만들기", onPress: openWorkspace };
-  const analysisStale = Boolean(analysisState.session && analysisState.session.inputFingerprint !== currentAnalysisFingerprint);
   const engineAvailable = duriAnalysisService.available && workspaceScheduleService.available;
-  const duriState: TripHomeDuriState = itinerary.length === 0
-    ? { kind: "no-itinerary" }
-    : !engineAvailable
-      ? { kind: "unavailable", message: !workspaceScheduleService.available ? workspaceScheduleService.message : duriAnalysisService.unavailableMessage }
-      : analysisState.status === "loading"
-        ? { kind: "loading" }
-        : analysisStale
-          ? { kind: "stale" }
-          : analysisState.session
-            ? { kind: "existing", issueCount: analysisState.session.issues.filter((issue) => issue.severity !== "info").length }
-            : { kind: "ready" };
+  const duriState = selectTripHomeDuriState({
+    itineraryCount: itinerary.length,
+    analysisAvailable: engineAvailable,
+    unavailableMessage: !workspaceScheduleService.available ? workspaceScheduleService.message : duriAnalysisService.unavailableMessage,
+    analysisStatus: analysisState.status,
+    currentFingerprint: currentAnalysisFingerprint,
+    session: analysisState.session,
+  });
 
   return <Screen padded={false} testID="trip-home-screen"><View style={styles.page}>
     <TripHomeHero trip={trip} region={source.regionsById[trip.regionId]} usersById={source.usersById} currentUserId={source.currentUserId} onBack={() => router.back()} />

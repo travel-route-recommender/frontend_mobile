@@ -4,8 +4,10 @@ import type { ConfirmedScheduleConstraint, DuriAnalysisInput, PlaceCongestionEvi
 import { buildItineraryFingerprint, generateSuggestionId } from "../src/duri/duri-suggestions";
 import type { DuriSuggestion, ScheduleChangePreview } from "../src/duri/duri-suggestions";
 import { DURI_SUGGESTION_VERSION } from "../src/features/duri/constants";
-import { analyzeCandidateUsage, analyzeDayBalance, analyzeOvernightRecovery, analyzeTimeConflicts, calculateAnalysisCoverage } from "../src/features/duri/logic/analysisContext";
+import { analyzeCandidateUsage, analyzeDayBalance, analyzeEndCondition, analyzeOvernightRecovery, analyzeTimeConflicts, calculateAnalysisCoverage } from "../src/features/duri/logic/analysisContext";
+import { buildApiDuriAnalysisInput } from "../src/features/duri/logic/apiAnalysisInput";
 import { buildDuriAnalysisInputWithDocuments, isDuriAnalysisCompletionCurrent } from "../src/features/duri/logic/analysisInput";
+import { isDuriAnalysisEntryBlocked } from "../src/features/duri/logic/analysisEntry";
 import { createDuriAnalysisSession } from "../src/features/duri/logic/analysisSession";
 import { createDuriAnalysisSnapshot, createDuriInputFingerprint, getDuriAnalysisAvailability, isSuggestionStale } from "../src/features/duri/logic/analysisSnapshot";
 import { analyzePlaceCongestionConstraints, analyzePlaceOperatingConstraints, analyzePlacePracticalConstraints, analyzeRecommendedDurations, hasEvaluableOperatingFactForDate, parseExplicitParkingAvailability, parseOperatingWindows, parseRecommendedDurationMinutes } from "../src/features/duri/logic/placeConstraintAnalysis";
@@ -16,7 +18,7 @@ import { generateDuriSuggestions } from "../src/features/duri/logic/suggestionGe
 import { getDuriItemProtection } from "../src/features/duri/logic/suggestionProtection";
 import { createDuriSuggestionPreview, diffItinerarySnapshots } from "../src/features/duri/logic/suggestionPreview";
 import { buildDuriAnalysisInputFromState } from "../src/features/duri/selectors/duriSelectors";
-import { enrichDuriAnalysisInput, normalizeTourCongestionDays } from "../src/features/duri/services/duriEvidenceService";
+import { enrichDuriAnalysisInput, enrichPreferenceAutoFillCandidateEvidence, normalizeTourCongestionDays } from "../src/features/duri/services/duriEvidenceService";
 import type { DuriInputSource, DuriSuggestionEnvelope } from "../src/features/duri/types";
 import { prepareDuriSuggestionAtomicApply, validateDuriSuggestion } from "../src/features/duri/validation/atomicSuggestionApply";
 import {
@@ -121,6 +123,216 @@ function snapshotFor(source: DuriInputSource) {
   return createDuriAnalysisSnapshot(input);
 }
 
+const apiScheduleData = {
+  room: {
+    id: "trip",
+    title: "API 부산 여행",
+    startDate: "2026-07-18",
+    endDate: "2026-07-19",
+    status: "planning" as const,
+    members: [{ userId: "owner", role: "owner" as const }, { userId: "friend", role: "member" as const }],
+    factsVersion: 5,
+  },
+  region: { id: "busan", name: "부산", shortName: "부산", description: "바다", spots: 2, weather: "맑음", imageUrl: "busan" },
+  usersById: users,
+  candidates: [candidate("a")],
+  placesById: places,
+  scheduleSnapshot: {
+    scope: { roomId: "trip", tripId: "trip", startDate: "2026-07-18", endDate: "2026-07-19" },
+    itinerary: [item("api-item", "a", "2026-07-18", "10:00")],
+    metadataByItemId: {
+      "api-item": {
+        itemId: "api-item",
+        placeName: "a",
+        tags: ["명소"],
+        reason: "",
+        priority: "optional" as const,
+        locked: false,
+        tickets: [{
+          id: "ticket-1",
+          imageUrl: "/ticket.png",
+          uploadedBy: "owner",
+          createdAt: "2026-07-10T00:00:00.000Z",
+        }],
+      },
+    },
+    priorityProtectionsByItemId: {},
+    scheduleVersion: 7,
+  },
+  localFacts: null,
+  localFactsStatus: "missing" as const,
+  workspaceOverlayStatus: "missing" as const,
+  sharedPreferenceEvidenceStatus: "loaded" as const,
+  sharedPreferenceEvidence: {
+    roomId: "trip",
+    factsVersion: 5,
+    scheduleVersion: 7,
+    members: ["owner", "friend"].map((userId, index) => ({
+      userId,
+      nickname: users[userId].name,
+      travelType: null,
+      personalityAxes: {
+        scheduleDensity: { value: index ? 80 : 20, unit: "score" as const, range: [0, 100] as const, resolution: 1, source: "quiz" as const, method: "rule-based-4axis" as const },
+        landmarkNecessity: { value: index ? 70 : 30, unit: "score" as const, range: [0, 100] as const, resolution: 1, source: "quiz" as const, method: "rule-based-4axis" as const },
+        localInterest: { value: index ? 30 : 70, unit: "score" as const, range: [0, 100] as const, resolution: 1, source: "quiz" as const, method: "rule-based-4axis" as const },
+        challenging: { value: index ? 60 : 40, unit: "score" as const, range: [0, 100] as const, resolution: 1, source: "quiz" as const, method: "rule-based-4axis" as const },
+      },
+      mobilityConstraints: { values: [], status: "missing" as const, source: "user", version: 1, updatedAt: null },
+      preferenceUpdatedAt: "2026-07-01T00:00:00.000Z",
+      interestTags: [],
+    })),
+    candidateSignals: [{
+      placeId: "a",
+      signals: [
+        { userId: "owner", mustVisit: true, avoid: null, preferenceStrength: 5 as const, version: 1, updatedAt: null },
+        { userId: "friend", mustVisit: null, avoid: true, preferenceStrength: null, version: 1, updatedAt: null },
+      ],
+    }],
+  },
+};
+const apiAnalysisInput = buildApiDuriAnalysisInput(apiScheduleData, "owner");
+assert(apiAnalysisInput, "API schedule snapshot should build a Duri input");
+assert(Object.keys(apiAnalysisInput.preferenceResults).length === 0, "API 분석은 서버에 없는 상세 성향을 중립값이나 mock으로 채우지 않는다");
+assert(apiAnalysisInput.documentReferences?.[0]?.kind === "other"
+  && apiAnalysisInput.documentReferences[0].extractionStatus === "not-requested"
+  && apiAnalysisInput.documentReferences[0].orderProtected === true,
+"서버 티켓 존재를 예약 종류·확정 사실로 추정하지 않되 연결 일정의 자동 재배치는 보호한다");
+assert(apiAnalysisInput.localPlanningFactsStatus === "missing"
+  && apiAnalysisInput.scheduleOverlayStatus === "missing",
+"API 로컬 계획 사실과 잠금 overlay의 미설정 상태를 분석 입력에 보존한다");
+assert(apiAnalysisInput.sourceFactsVersion === 5
+  && apiAnalysisInput.sharedPreferenceEvidenceStatus === "loaded"
+  && apiAnalysisInput.sharedPreferenceEvidence?.members[0].personalityAxes?.scheduleDensity.value === 20,
+"API factsVersion과 별도 공유 파생 성향을 UserPreferenceResult로 변환하지 않고 보존한다");
+const sharedPreferenceIssues = analyzePreferenceConstraints(createDuriAnalysisSnapshot(apiAnalysisInput), "2026-07-01T00:00:00.000Z");
+assert(sharedPreferenceIssues.some((issue) => issue.id.startsWith("shared-candidate-signal-conflict-")
+  && issue.constraintType === "hard"
+  && issue.confidence === "high"),
+"공유 mustVisit/avoid 충돌을 고신뢰 문제로 노출한다");
+assert(sharedPreferenceIssues.some((issue) => issue.id.startsWith("shared-derived-axis-")
+  && issue.evidence.some((entry) => entry.value.includes("rule-based-4axis"))),
+"공유 파생 축 차이는 해상도와 산출 provenance를 보존해 비교한다");
+assert(createDuriAnalysisSession(apiAnalysisInput, "2026-07-01T00:00:00.000Z").groupInsights
+  .some((insight) => insight.id === "group-coverage-shared-derived" && insight.description.includes("원본 상세 설문")),
+"원본 설문 미응답을 완료로 꾸미지 않으면서 공유 파생 근거 사용 범위를 설명한다");
+const sharedFingerprint = createDuriInputFingerprint(apiAnalysisInput);
+assert(sharedFingerprint !== createDuriInputFingerprint({
+  ...apiAnalysisInput,
+  sharedPreferenceEvidence: {
+    ...apiAnalysisInput.sharedPreferenceEvidence!,
+    factsVersion: 6,
+  },
+}), "공유 facts revision 변경은 분석 fingerprint를 stale로 만든다");
+const unavailableApiAuxiliaryInput = buildApiDuriAnalysisInput({
+  ...apiScheduleData,
+  localFacts: {
+    transport: "car",
+    accommodationLocation: null,
+    endCondition: {
+      type: "train",
+      location: { name: "부산역" },
+      deadline: "18:00",
+      travelMinutes: 30,
+      serviceBufferMinutes: 20,
+    },
+    companionType: null,
+    expectedMemberCount: null,
+    savedAt: "2026-07-10T00:00:00.000Z",
+  },
+  localFactsStatus: "unavailable",
+  workspaceOverlayStatus: "unavailable",
+}, "owner");
+assert(unavailableApiAuxiliaryInput
+  && unavailableApiAuxiliaryInput.trip.endCondition === null
+  && unavailableApiAuxiliaryInput.localPlanningFactsStatus === "missing"
+  && analyzeEndCondition(createDuriAnalysisSnapshot(unavailableApiAuxiliaryInput)).length === 0
+  && createDuriInputFingerprint(apiAnalysisInput) !== createDuriInputFingerprint(unavailableApiAuxiliaryInput),
+"로컬 계획 사실이나 잠금 overlay를 읽지 못하면 이전 분석을 stale로 만든다");
+const unavailableFactsCoverage = calculateAnalysisCoverage(createDuriAnalysisSnapshot({
+  ...unavailableApiAuxiliaryInput!,
+  evidenceCollection: {
+    route: { requiredLegCount: 1, analyzedLegCount: 1, mode: "car", provider: "kakao-mobility" },
+    placeDetails: { scheduledPlaceCount: 1, requestedPlaceCount: 0, fetchedPlaceCount: 0, usablePlaceCount: 0, operatingFactPlaceCount: 0, durationFactPlaceCount: 0 },
+  },
+}));
+assert(unavailableFactsCoverage.routeData === "unavailable"
+  && unavailableFactsCoverage.routeMessage.includes("설정되지 않아"),
+"공유 planning에 이동수단이 없으면 기기 값으로 보완하지 않고 주입된 이전 경로 근거도 available로 표시하지 않는다");
+const inconsistentLoadedFactsInput = buildApiDuriAnalysisInput({
+  ...apiScheduleData,
+  localFacts: null,
+  localFactsStatus: "loaded",
+}, "owner");
+assert(inconsistentLoadedFactsInput?.localPlanningFactsStatus === "missing"
+  && inconsistentLoadedFactsInput.trip.transport === "public",
+"기기 localFacts loaded 표시는 API 공유 planning의 이동수단 근거로 승격하지 않는다");
+const versionedPlanningValue = <T,>(value: T) => ({
+  value,
+  updatedBy: "owner",
+  updatedAt: "2026-07-01T00:00:00.000Z",
+  confirmedAt: "2026-07-01T00:00:00.000Z",
+  version: 1,
+});
+const serverPlanningInput = buildApiDuriAnalysisInput({
+  ...apiScheduleData,
+  scheduleSnapshot: {
+    ...apiScheduleData.scheduleSnapshot,
+    planning: {
+      timezone: "Asia/Seoul",
+      transportMode: versionedPlanningValue("car" as const),
+      lodging: { name: "해운대 숙소", source: "manual" as const },
+      returnPoint: { name: "부산역", source: "manual" as const },
+      returnDeadline: versionedPlanningValue("18:00"),
+      travelBufferMinutes: versionedPlanningValue(35),
+      prepBufferMinutes: versionedPlanningValue(20),
+    },
+    metadataByItemId: {
+      ...apiScheduleData.scheduleSnapshot.metadataByItemId,
+      "api-item": {
+        ...apiScheduleData.scheduleSnapshot.metadataByItemId["api-item"],
+        reservation: {
+          id: "reservation-1",
+          status: "confirmed" as const,
+          date: "2026-07-18",
+          startTime: "10:00",
+          endTime: "11:00",
+          placeId: "a",
+          documentTicketIds: ["ticket-1"],
+          confirmedBy: "owner",
+          confirmedAt: "2026-07-01T00:00:00.000Z",
+          revision: 2,
+        },
+      },
+    },
+  },
+}, "owner");
+assert(serverPlanningInput?.localPlanningFactsStatus === "loaded"
+  && serverPlanningInput.trip.transport === "car"
+  && serverPlanningInput.trip.accommodationLocation?.name === "해운대 숙소"
+  && serverPlanningInput.trip.endCondition?.location.name === "부산역",
+"공유 Backend planning transport가 있으면 loaded로 판정하고 숙소·복귀 조건을 분석 입력에 연결한다");
+assert(serverPlanningInput.confirmedScheduleConstraints?.some((constraint) => (
+  constraint.id === "server-reservation:reservation-1"
+  && constraint.itineraryItemId === "api-item"
+  && constraint.startTime === "10:00"
+  && constraint.endTime === "11:00"
+  && constraint.source === "user-confirmed"
+)), "Backend confirmed reservation을 임의 추정 없이 확정 일정 제약으로 변환한다");
+const changedApiVersionInput = buildApiDuriAnalysisInput({
+  ...apiScheduleData,
+  scheduleSnapshot: { ...apiScheduleData.scheduleSnapshot, scheduleVersion: 8 },
+}, "owner");
+assert(changedApiVersionInput
+  && changedApiVersionInput.sharedPreferenceEvidenceStatus === "stale"
+  && changedApiVersionInput.sharedPreferenceEvidence === undefined
+  && calculateAnalysisCoverage(createDuriAnalysisSnapshot(changedApiVersionInput)).limitations.some((message) => message.includes("facts revision"))
+  && createDuriInputFingerprint(apiAnalysisInput) !== createDuriInputFingerprint(changedApiVersionInput),
+"API 일정 내용이 같아도 scheduleVersion 변경은 이전 분석을 stale로 만든다");
+assert(!buildApiDuriAnalysisInput({
+  ...apiScheduleData,
+  scheduleSnapshot: { ...apiScheduleData.scheduleSnapshot, scope: { ...apiScheduleData.scheduleSnapshot.scope, roomId: "other" } },
+}, "owner"), "다른 room scope의 서버 일정을 분석 입력에 섞지 않는다");
+
 function inputFor(source: DuriInputSource) {
   const input = buildDuriAnalysisInputFromState(source, "trip");
   assert(input, "trip input");
@@ -129,7 +341,9 @@ function inputFor(source: DuriInputSource) {
 
 // Analysis: 25 required scenarios.
 const empty = state();
-assert(getDuriAnalysisAvailability({ input: buildDuriAnalysisInputFromState(empty, "trip"), engineAvailable: true }).status === "no-itinerary", "analysis 1: empty itinerary");
+const emptyAvailability = getDuriAnalysisAvailability({ input: buildDuriAnalysisInputFromState(empty, "trip"), engineAvailable: true });
+assert(emptyAvailability.status === "no-itinerary" && emptyAvailability.canAnalyze, "analysis 1: empty itinerary can enter analysis and auto-fill mode");
+assert(!isDuriAnalysisEntryBlocked({ loading: false, engineAvailable: true, hasExistingSession: false }), "analysis 1b: workspace entry must not block an empty itinerary");
 const one = state({ itineraryByTripId: { trip: [item("i1", "a", "2026-07-18", "10:00")], other: [] } });
 assert(getDuriAnalysisAvailability({ input: buildDuriAnalysisInputFromState(one, "trip"), engineAvailable: true }).status === "limited", "analysis 2: one item limited");
 const conflict = state({ itineraryByTripId: { trip: [item("i1", "a", "2026-07-18", "10:00", 90), item("i2", "b", "2026-07-18", "11:00")], other: [] } });
@@ -137,9 +351,35 @@ assert(analyzeTimeConflicts(snapshotFor(conflict)).length === 1, "analysis 3: ov
 const touching = state({ itineraryByTripId: { trip: [item("i1", "a", "2026-07-18", "10:00"), item("i2", "b", "2026-07-18", "11:00")], other: [] } });
 assert(analyzeTimeConflicts(snapshotFor(touching)).length === 0, "analysis 4: touching ranges");
 const denseItems = ["a", "b", "c", "d", "e"].map((placeId, index) => item(`dense-${index}`, placeId, "2026-07-18", `${String(8 + index).padStart(2, "0")}:00`));
-const denseSnapshot = snapshotFor(state({ itineraryByTripId: { trip: denseItems, other: [] } }));
-assert(analyzeDensity(denseSnapshot).issues.some((issue) => issue.severity !== "info"), "analysis 5: dense day");
-assert(analyzeDayBalance(denseSnapshot).issues.length === 1, "analysis 6: day balance");
+const densityPreference = (userId: string): UserPreferenceResult => ({
+  ...preference(userId),
+  detailedSignals: {
+    surveyVersion: 9,
+    algorithmVersion: 9,
+    staminaScore: 40,
+    densityScore: 30,
+    scheduleStyle: "relaxed",
+    preferredDailyScheduledMinutes: 180,
+    preferredDailyScheduledResolutionMinutes: 30,
+    preferredAverageActivityBlockMinutes: 60,
+    preferredAverageActivityBlockResolutionMinutes: 30,
+    mobilityModes: ["walk"],
+    categoryScores: {},
+    budgetRanking: [],
+    landmarkImportance: 0,
+    localInterest: 0,
+  },
+});
+const denseSnapshot = snapshotFor(state({
+  itineraryByTripId: { trip: denseItems, other: [] },
+  preferenceResultsByUserId: { owner: densityPreference("owner"), friend: densityPreference("friend"), third: densityPreference("third") },
+}));
+const robustDensityIssue = analyzeDensity(denseSnapshot).issues[0];
+assert(robustDensityIssue?.severity === "medium"
+  && robustDensityIssue.affectedMemberIds.length === 3
+  && robustDensityIssue.technicalDetails?.formulaLatex.includes("R_{u,d}"),
+"analysis 5: direct preference intervals, not place-count magic, detect excessive load for all observed members");
+assert(analyzeDayBalance(denseSnapshot).issues.length === 0 && analyzeDayBalance(denseSnapshot).metrics.length === 2, "analysis 6: day balance is descriptive and does not invent a fixed count threshold");
 assert(isMealPlace(places.meal), "analysis 7: meal category");
 assert(!isMealPlace(places.a), "analysis 8: non-meal category");
 assert(calculateAnalysisCoverage(snapshotFor(touching)).routeData === "unavailable", "analysis 9: no coordinates");
@@ -160,18 +400,36 @@ const backendMinuteItems = state({ itineraryByTripId: { trip: [item("minute-a", 
 assert(getDuriAnalysisAvailability({ input: buildDuriAnalysisInputFromState(backendMinuteItems, "trip"), engineAvailable: true }).status !== "invalid-itinerary", "analysis 18b: Backend HH:mm arbitrary-minute schedule remains analyzable without rounding");
 const heuristicDenseSource = state({ itineraryByTripId: { trip: ["a", "b", "c", "d", "e", "f", "g"].map((placeId, index) => item(`heuristic-${index}`, placeId, "2026-07-18", `${String(8 + index).padStart(2, "0")}:00`)), other: [] } });
 assert(sessionFor(heuristicDenseSource).overallStatus !== "warning", "analysis 19: low-confidence density heuristic cannot create the hard-warning headline");
+const overlayUnavailableInput = inputFor(state({
+  itineraryByTripId: {
+    trip: [item("overlay-a", "a", "2026-07-18", "10:00", 90), item("overlay-b", "b", "2026-07-18", "11:00", 60)],
+    other: [],
+  },
+}));
+const overlayUnavailableSession = createDuriAnalysisSession({
+  ...overlayUnavailableInput,
+  scheduleOverlayStatus: "unavailable",
+}, "2026-07-14T00:00:00.000Z");
+assert(overlayUnavailableSession.result.density.status === "insufficient-data"
+  && overlayUnavailableSession.result.meal.status === "insufficient-data"
+  && overlayUnavailableSession.result.preference.status === "insufficient-data"
+  && overlayUnavailableSession.result.route.status !== "insufficient-data"
+  && overlayUnavailableSession.issues.some((issue) => issue.id.startsWith("time-conflict-")),
+"analysis 19a: unreadable overlay suppresses type/preference-dependent claims while preserving server-time conflicts and route flow");
 
 const detailedPreference = (userId: string, mobilityScore: 0 | 1 | 2, mobilityModes: string[]) => ({
   ...preference(userId),
   answers: { ...preference(userId).answers, mobility: mobilityScore },
   detailedSignals: {
-    surveyVersion: 1,
-    algorithmVersion: 1,
+    surveyVersion: 9,
+    algorithmVersion: 8,
     staminaScore: 0,
-    densityScore: 0,
+    densityScore: mobilityScore * 50,
     scheduleStyle: "relaxed" as const,
-    preferredDailyScheduledMinutes: 30,
-    preferredAverageStayMinutes: 60,
+    preferredDailyScheduledMinutes: mobilityScore === 0 ? 30 : 180,
+    preferredDailyScheduledResolutionMinutes: 30,
+    preferredAverageActivityBlockMinutes: 60,
+    preferredAverageActivityBlockResolutionMinutes: 60,
     mobilityModes,
     categoryScores: { cafe: 100 },
     budgetRanking: ["food"],
@@ -188,16 +446,94 @@ const preferenceConstraintSnapshot = snapshotFor(state({
   },
 }));
 const preferenceIssues = analyzePreferenceConstraints(preferenceConstraintSnapshot, "2026-07-14T00:00:00.000Z");
-assert(preferenceIssues.some((issue) => issue.id === "preference-coordination-mobility" && issue.constraintType === "soft"), "analysis 20: opposite direct mobility answers require soft coordination");
-assert(preferenceIssues.some((issue) => issue.id === "preference-coordination-mobility"
-  && issue.summary.includes("가중치")
-  && issue.evidence.some((entry) => entry.label === "계산 가정" && entry.value.includes("동일 가중치"))),
-"analysis 20a: minimax coordination discloses equal-member and equal-step-distance assumptions");
+assert(!preferenceIssues.some((issue) => issue.id === "preference-coordination-mobility")
+  && !preferenceIssues.some((issue) => issue.id === "preference-coordination-pace")
+  && preferenceIssues.some((issue) => issue.id.startsWith("preference-continuous-daily-load-") && issue.constraintType === "soft"),
+"analysis 20: rich 설문은 legacy 축으로 투영하지 않고 원 단위·해상도 구간으로 조율한다");
+const legacyPreferenceSnapshot = snapshotFor(state({
+  itineraryByTripId: { trip: [item("legacy-preference", "a", "2026-07-18", "10:00")], other: [] },
+  preferenceResultsByUserId: {
+    owner: preference("owner"),
+    friend: { ...preference("friend"), answers: { ...preference("friend").answers, pace: 2 } },
+  },
+}));
+const legacyPreferenceIssues = analyzePreferenceConstraints(legacyPreferenceSnapshot, "2026-07-14T00:00:00.000Z");
+assert(legacyPreferenceIssues.some((issue) => issue.id === "preference-coordination-pace"
+  && issue.summary.includes("Pareto")
+  && issue.evidence.some((entry) => entry.label === "최적성·계산 가정" && entry.value.includes("동일 가중치"))),
+"analysis 20a: legacy 직접 3단계 응답의 공정 조율은 Pareto·max-min·Nash 기준과 등거리 가정을 공개한다");
+const unavailableOverlayPreferenceIssues = analyzePreferenceConstraints({
+  ...legacyPreferenceSnapshot,
+  scheduleOverlayStatus: "unavailable",
+}, "2026-07-14T00:00:00.000Z");
+assert(unavailableOverlayPreferenceIssues.some((issue) => issue.id === "preference-coordination-pace")
+  && !unavailableOverlayPreferenceIssues.some((issue) => issue.id.startsWith("preference-representation-")),
+"analysis 20aa: unreadable schedule overlay preserves direct survey conflicts but suppresses preferredBy-based representation claims");
+const unavailableOverlayDetailedIssues = analyzePreferenceConstraints({
+  ...preferenceConstraintSnapshot,
+  scheduleOverlayStatus: "unavailable",
+  itinerary: preferenceConstraintSnapshot.itinerary.map((entry) => ({ ...entry, durationMinutes: 180 })),
+}, "2026-07-14T00:00:00.000Z");
+assert(!unavailableOverlayDetailedIssues.some((issue) => issue.id.startsWith("preference-average-stay-"))
+  && unavailableOverlayDetailedIssues.some((issue) => issue.id.startsWith("preference-continuous-daily-load-")),
+"analysis 20ab: unreadable item types suppress average-stay classification while retaining overlay-independent detailed survey consensus");
+assert(preferenceIssues.some((issue) => issue.id.startsWith("preference-mobility-no-common-")), "analysis 20b: 직접 고른 이동수단은 별도 집합 합의로 조율한다");
+const partialContinuousIssue = preferenceIssues.find((issue) => issue.id.startsWith("preference-continuous-daily-load-"));
+assert(partialContinuousIssue?.confidence === "low" && partialContinuousIssue.summary.includes("2/3명"),
+"analysis 20c: 축별 부분 관측을 전체 설문 완료율로 high 처리하거나 모든 참여자의 합의로 표현하지 않는다");
+assert(preferenceIssues.find((issue) => issue.id.startsWith("preference-mobility-no-common-"))?.confidence === "low",
+"analysis 20d: 이동수단 합의 신뢰도도 해당 신호 응답률로 계산한다");
+
+const budgetPreference = (userId: string, ranking: string[]) => {
+  const base = detailedPreference(userId, 1, ["walk"]);
+  return { ...base, detailedSignals: { ...base.detailedSignals, budgetRanking: ranking } };
+};
+const sameTopBudgetSnapshot = snapshotFor(state({
+  itineraryByTripId: { trip: [item("budget-place", "a", "2026-07-18", "10:00")], other: [] },
+  preferenceResultsByUserId: {
+    owner: budgetPreference("owner", ["food", "stay", "activity"]),
+    friend: budgetPreference("friend", ["food", "activity", "stay"]),
+  },
+}));
+const sameTopBudgetIssue = analyzePreferenceConstraints(sameTopBudgetSnapshot, "2026-07-14T00:00:00.000Z")
+  .find((issue) => issue.id.startsWith("preference-budget-priority-"));
+assert(sameTopBudgetIssue?.summary.includes("Kemeny") && sameTopBudgetIssue.confidence === "low",
+"analysis 20e: 1순위가 같아도 하위 순위 역전을 분석하고 부분 응답을 낮은 신뢰도로 공개한다");
+
+const unsupportedDetailed = detailedPreference("owner", 0, ["walk"]);
+unsupportedDetailed.detailedSignals.algorithmVersion = 99;
+const unsupportedDetailedIssues = analyzePreferenceConstraints(snapshotFor(state({
+  itineraryByTripId: { trip: [item("unsupported-place", "a", "2026-07-18", "10:00")], other: [] },
+  preferenceResultsByUserId: { owner: unsupportedDetailed },
+})), "2026-07-14T00:00:00.000Z");
+assert(!unsupportedDetailedIssues.some((issue) => issue.id.startsWith("preference-daily-load-")
+  || issue.id.startsWith("preference-mobility-mode-")
+  || issue.id.startsWith("preference-category-coverage-")),
+"analysis 20f: 미지원 detailed algorithmVersion을 정밀 성향 근거로 소비하지 않는다");
+
+const overlapPreference = detailedPreference("owner", 1, ["walk"]);
+overlapPreference.detailedSignals.preferredDailyScheduledMinutes = 100;
+overlapPreference.detailedSignals.preferredDailyScheduledResolutionMinutes = 10;
+const overlapLoadSnapshot = snapshotFor(state({
+  itineraryByTripId: {
+    trip: [item("overlap-a", "a", "2026-07-18", "10:00", 60), item("overlap-b", "b", "2026-07-18", "10:30", 60)],
+    other: [],
+  },
+  preferenceResultsByUserId: { owner: overlapPreference },
+}));
+const overlapLoadIssues = analyzePreferenceConstraints(overlapLoadSnapshot, "2026-07-14T00:00:00.000Z");
+const overlapDensityIssue = analyzeDensity(overlapLoadSnapshot).issues[0];
+assert(!overlapLoadIssues.some((issue) => issue.id.startsWith("preference-daily-load-owner-"))
+  && overlapDensityIssue?.evidence.some((entry) => entry.label === "일정 점유 하한" && entry.value.startsWith("90분")),
+"analysis 20g: 겹친 일정은 duration 단순합이 아니라 시간 구간 합집합으로 하루 점유량을 계산한다");
 assert(preferenceIssues.some((issue) => issue.id.startsWith("preference-mobility-mode-owner-car") && issue.confidence === "high"), "analysis 21: explicit selected transport modes are compared with the room fact");
 assert(preferenceIssues.some((issue) => issue.id.startsWith("preference-mobility-mode-owner-car")
   && issue.evidence.some((entry) => entry.value.includes("지하철") && !entry.value.includes("subway"))),
 "analysis 21a: internal mobility IDs are translated in user-facing evidence");
-assert(preferenceIssues.some((issue) => issue.id.startsWith("preference-daily-load-owner-") && issue.evidence.some((entry) => entry.value.includes("조회 실패 이동구간 제외"))), "analysis 22: direct preferred daily load uses only scheduled and known route minutes");
+const directLoadDensity = robustDensityIssue;
+assert(directLoadDensity?.evidence.some((entry) => entry.label === "일정 점유 하한" && entry.value.includes("300분"))
+  && directLoadDensity.technicalDetails?.caveats.some((entry) => entry.includes("하한")),
+"analysis 22: direct preferred daily load uses only scheduled and known route minutes and exposes the lower-bound caveat");
 assert(preferenceIssues.some((issue) => issue.id.startsWith("preference-category-coverage-owner-") && issue.confidence === "low"), "analysis 23: missing liked category remains low-confidence because place taxonomy can be incomplete");
 assert(preferenceIssues.some((issue) => issue.id.startsWith("preference-category-coverage-owner-")
   && issue.evidence.some((entry) => entry.label === "미반영 선호 유형" && entry.value.includes("카페") && !entry.value.includes("cafe"))),
@@ -234,8 +570,11 @@ const partiallyExplainedGap = analyzeDayBalance(createDuriAnalysisSnapshot({
 assert(partiallyExplainedGap.routeAdjustedIdleMinutes === 60, "analysis 25: only the idle time left after known travel is reported");
 const rawGapDensity = analyzeDensity(routeAdjustedIdleInput);
 const routeAdjustedDensity = analyzeDensity({ ...routeAdjustedIdleInput, routeLegEstimates: [routeAdjustedEstimateBase] });
-assert(rawGapDensity.issues[0]?.evidence.some((entry) => entry.label.includes("이동 제외 휴식") && entry.value.includes("45분 이상 1회")), "analysis 26: an unmeasured long gap remains a possible break");
-assert(routeAdjustedDensity.issues[0]?.evidence.some((entry) => entry.label.includes("이동 제외 휴식") && entry.value.includes("45분 이상 0회") && entry.value.includes("실제 경로 1구간")), "analysis 27: a gap fully consumed by measured travel is not counted as rest");
+assert(rawGapDensity.issues[0]?.summary.includes("임의 기준으로 판정하지 않았어요")
+  && rawGapDensity.issues[0]?.evidence.some((entry) => entry.label === "실제 경로 반영"
+    && entry.value.includes("경로 미확인 공백 1회는 휴식 판정 보류")),
+"analysis 26: an unmeasured long gap is neither claimed as rest nor treated as uninterrupted activity");
+assert(routeAdjustedDensity.issues[0]?.evidence.some((entry) => entry.label === "실제 경로 반영" && entry.value.includes("1/1구간") && entry.value.includes("빈 시간 0분")), "analysis 27: a gap fully consumed by measured travel is not counted as rest");
 const duplicateVisitIssues = analyzeDuplicateVisits(snapshotFor(state({
   itineraryByTripId: {
     trip: [item("duplicate-a", "a", "2026-07-18", "09:00"), item("duplicate-b", "a", "2026-07-18", "18:00")],
@@ -269,11 +608,11 @@ const conflictSuggestions = generateDuriSuggestions(conflictSession, "2026-07-14
 assert(conflictSuggestions.some((entry) => entry.suggestion.sourceIssueIds.some((id) => id.startsWith("time-conflict"))), "suggestion 1: conflict time move");
 assert(JSON.stringify(conflict) === conflictSourceBeforeSuggestions, "suggestion generation must not mutate source state");
 const balanceSource = state({ itineraryByTripId: { trip: [item("b1", "a", "2026-07-18", "08:00"), item("b2", "b", "2026-07-18", "10:00"), item("b3", "c", "2026-07-18", "12:00"), item("b4", "d", "2026-07-18", "14:00")], other: [] } });
-assert(generateDuriSuggestions(sessionFor(balanceSource), "2026-07-14T00:00:00.000Z").some((entry) => entry.suggestion.changes.some((change) => change.before?.date !== change.after?.date)), "suggestion 2: move day 1 to day 2");
+assert(!generateDuriSuggestions(sessionFor(balanceSource), "2026-07-14T00:00:00.000Z").some((entry) => entry.suggestion.changes.some((change) => change.before?.date !== change.after?.date)), "suggestion 2: descriptive day/density evidence never moves an item to another day without route and operating facts");
 const routeSource = state({ itineraryByTripId: { trip: [item("r1", "a", "2026-07-18", "09:00"), item("r2", "b", "2026-07-18", "11:00"), item("r3", "c", "2026-07-18", "13:00")], other: [] } });
 assert(!generateDuriSuggestions(sessionFor(routeSource), "2026-07-14T00:00:00.000Z").some((entry) => entry.suggestion.type === "reorder-route"), "suggestion 3: address-area heuristic never creates an applicable route reorder");
 const mealSource = state({ itineraryByTripId: { trip: [item("m1", "a", "2026-07-18", "10:00", 60), item("m2", "b", "2026-07-18", "14:00", 60)], other: [] } });
-assert(generateDuriSuggestions(sessionFor(mealSource), "2026-07-14T00:00:00.000Z").some((entry) => entry.suggestion.changes.some((change) => change.action === "add")), "suggestion 4: add candidate/meal block");
+assert(!generateDuriSuggestions(sessionFor(mealSource), "2026-07-14T00:00:00.000Z").some((entry) => entry.suggestion.changes.some((change) => change.action === "add")), "suggestion 4: low-confidence common meal window never inserts a fixed-duration block");
 const lockedConflictSource = state({ itineraryByTripId: { trip: [item("lock-open", "a", "2026-07-18", "10:00", 90), { ...item("lock-fixed", "b", "2026-07-18", "11:00"), lockedForDuri: true }], other: [] } });
 const lockedConflictSuggestions = generateDuriSuggestions(sessionFor(lockedConflictSource), "2026-07-14T00:00:00.000Z");
 assert(lockedConflictSuggestions.some((entry) => entry.suggestion.sourceIssueIds.some((id) => id.startsWith("time-conflict"))), "suggestion 4a: conflict can still suggest moving an unlocked peer");
@@ -799,6 +1138,19 @@ assert(createDuriInputFingerprint(confirmedInput) !== createDuriInputFingerprint
 const documentSource = state({ itineraryByTripId: { trip: [item("document-item", "a", "2026-07-18", "10:00")], other: [] } });
 const helperInput = buildDuriAnalysisInputWithDocuments(documentSource, "trip", [{ id: "ticket", kind: "admission", itineraryItemIds: ["document-item"] }]);
 assert(helperInput?.documentReferences?.[0]?.itineraryItemIds[0] === "document-item", "evidence 17a: shared input builder includes document links");
+const loadedEmptyDocumentInput = buildDuriAnalysisInputWithDocuments(documentSource, "trip", [], undefined, "loaded");
+const unavailableDocumentInput = buildDuriAnalysisInputWithDocuments(documentSource, "trip", [], undefined, "unavailable");
+const unavailableDocumentCoverage = unavailableDocumentInput
+  ? calculateAnalysisCoverage(createDuriAnalysisSnapshot(unavailableDocumentInput))
+  : undefined;
+assert(unavailableDocumentCoverage?.documentData === "unavailable"
+  && unavailableDocumentCoverage.documentMessage.includes("불러오지 못해")
+  && unavailableDocumentCoverage.limitations.some((message) => message.includes("문서 없음과 확인 불가")),
+"evidence 17aa: failed document hydration is explicit and never treated as an empty document collection");
+assert(Boolean(loadedEmptyDocumentInput && unavailableDocumentInput)
+  && createDuriInputFingerprint(createDuriAnalysisSnapshot(loadedEmptyDocumentInput!))
+    !== createDuriInputFingerprint(createDuriAnalysisSnapshot(unavailableDocumentInput!)),
+"evidence 17ab: document collection availability invalidates the analysis fingerprint");
 const helperFingerprint = helperInput ? createDuriInputFingerprint(createDuriAnalysisSnapshot(helperInput)) : "";
 assert(isDuriAnalysisCompletionCurrent({ requestedFingerprint: helperFingerprint, sessionFingerprint: helperFingerprint, latestInput: helperInput }), "evidence 17b: unchanged async analysis completion is accepted");
 const changedDocumentInput = buildDuriAnalysisInputWithDocuments(documentSource, "trip", [{ id: "ticket", kind: "admission", itineraryItemIds: [] }]);
@@ -872,6 +1224,27 @@ assert(confirmedOcrSession.issues.some((issue) => issue.category === "confirmed-
 "evidence 17m: actual analysis detects a missing reservation only after explicit confirmation");
 assert(!confirmedOcrSession.issues.some((issue) => issue.category === "document-check"), "evidence 17n: a usable confirmed document is no longer reported as unstructured");
 assert(createDuriInputFingerprint(suggestedOcrInput) !== createDuriInputFingerprint(confirmedOcrInput!), "evidence 17o: confirmation invalidates stale analysis results");
+const externalUrlDocument: TravelDocument = {
+  ...confirmedOcrDocument,
+  id: "confirmed-external-url",
+  displayName: "예약 확인 링크",
+  fileName: "reservation-link.url",
+  mimeType: "text/uri-list",
+  localUri: "https://example.com/reservation",
+  storage: "external-url",
+  extraction: {
+    ...confirmedOcr.extraction,
+    facts: confirmedOcr.extraction.facts.map((fact) => ({
+      ...fact,
+      id: `external-${fact.id}`,
+      sourceDocumentId: "confirmed-external-url",
+    })),
+  },
+};
+const externalUrlInput = buildDuriAnalysisInputWithDocuments(productionDocumentSource, "trip", [externalUrlDocument]);
+assert(externalUrlInput?.confirmedScheduleConstraints?.[0]?.sourceDocumentId === externalUrlDocument.id
+  && externalUrlInput.documentReferences?.[0]?.extractionStatus === "confirmed",
+"evidence 17oa: a reviewed external URL document keeps confirmed reservation provenance in production analysis");
 const partiallyReviewedDocument: TravelDocument = {
   ...confirmedOcrDocument,
   extraction: {
@@ -887,6 +1260,30 @@ const partiallyReviewedInput = buildDuriAnalysisInputWithDocuments(productionDoc
 assert(partiallyReviewedInput?.confirmedScheduleConstraints?.length === 1
   && createDuriAnalysisSession(partiallyReviewedInput, "2026-07-14T00:00:05.000Z").issues.some((issue) => issue.category === "document-check"),
 "evidence 17oa: a confirmed fact does not hide another pending fact from the same document");
+
+const unavailableStaleDocumentInput = buildDuriAnalysisInputWithDocuments(
+  productionDocumentSource,
+  "trip",
+  [confirmedOcrDocument, partiallyReviewedDocument],
+  undefined,
+  "unavailable",
+);
+assert(unavailableStaleDocumentInput
+  && unavailableStaleDocumentInput.documentReferences?.length === 0
+  && unavailableStaleDocumentInput.confirmedScheduleConstraints?.filter((constraint) => constraint.source === "document-confirmed").length === 0
+  && !createDuriAnalysisSession(unavailableStaleDocumentInput, "2026-07-14T00:00:05.500Z").issues.some((issue) => issue.category === "confirmed-schedule" || issue.category === "document-check"),
+"evidence 17ob: a failed local document read never reuses stale TravelDocuments as confirmed or pending facts");
+const unavailableWithServerReference = buildDuriAnalysisInputWithDocuments(
+  productionDocumentSource,
+  "trip",
+  [confirmedOcrDocument, { id: "fresh-server-ticket", kind: "other", itineraryItemIds: ["ocr-item"], orderProtected: true }],
+  undefined,
+  "unavailable",
+);
+assert(unavailableWithServerReference?.documentReferences?.length === 1
+  && unavailableWithServerReference.documentReferences[0].id === "fresh-server-ticket"
+  && unavailableWithServerReference.documentReferences[0].orderProtected === true,
+"evidence 17oc: a current server ticket reference remains available while stale local TravelDocuments are isolated");
 
 const mixedDocumentInput = buildDuriAnalysisInputWithDocuments(productionDocumentSource, "trip", [
   confirmedOcrDocument,
@@ -944,6 +1341,51 @@ async function verifyRouteCollection() {
   assert(callCount === 5, "evidence 18: three-place adjacent optimization uses O(n) directed edges, not permutations");
   assert(collected.routeLegEstimates.length === 2 && collected.routeCollection.analyzedLegCount === 2, "evidence 19: all same-day scheduled legs receive estimates");
   assert(collected.routeOrderEvaluations[0]?.currentDurationSeconds === 4_000 && collected.routeOrderEvaluations[0]?.alternativeDurationSeconds === 500, "evidence 20: exact directed edge delta selects best adjacent swap");
+  let ticketProtectedCalls = 0;
+  const ticketProtectedCollection = await collectCarRouteEvidence({
+    ...carInput,
+    documentReferences: [{
+      id: "server-ticket:opt-b:ticket-1",
+      kind: "other",
+      itineraryItemIds: ["opt-b"],
+      orderProtected: true,
+    }],
+  }, async ({ origin, destination }) => {
+    ticketProtectedCalls += 1;
+    const durationSeconds = directedCosts[`${origin.lat}>${destination.lat}`];
+    if (durationSeconds === undefined) throw new Error("unexpected ticket-protected pair");
+    return { distanceMeters: durationSeconds * 10, durationSeconds, source: "kakao-mobility" };
+  }, "2026-07-14T00:00:00.000Z");
+  assert(ticketProtectedCalls === 2 && ticketProtectedCollection.routeOrderEvaluations.length === 0,
+    "evidence 20-server-ticket: an attached server ticket conservatively protects its schedule from route reordering");
+  let unavailableOverlayCalls = 0;
+  const unavailableOverlayCollection = await collectCarRouteEvidence({
+    ...carInput,
+    scheduleOverlayStatus: "unavailable",
+  }, async ({ origin, destination }) => {
+    unavailableOverlayCalls += 1;
+    const durationSeconds = directedCosts[`${origin.lat}>${destination.lat}`];
+    if (durationSeconds === undefined) throw new Error("unexpected overlay-unavailable pair");
+    return { distanceMeters: durationSeconds * 10, durationSeconds, source: "kakao-mobility" };
+  }, "2026-07-14T00:00:00.000Z");
+  assert(unavailableOverlayCalls === 2
+    && unavailableOverlayCollection.routeLegEstimates.length === 2
+    && unavailableOverlayCollection.routeOrderEvaluations.length === 0,
+  "evidence 20-local-lock: unreadable locks retain required route checks but skip resultless optimization-only requests");
+  let unavailableDocumentsCalls = 0;
+  const unavailableDocumentsCollection = await collectCarRouteEvidence({
+    ...carInput,
+    documentCollectionStatus: "unavailable",
+  }, async ({ origin, destination }) => {
+    unavailableDocumentsCalls += 1;
+    const durationSeconds = directedCosts[`${origin.lat}>${destination.lat}`];
+    if (durationSeconds === undefined) throw new Error("unexpected document-unavailable pair");
+    return { distanceMeters: durationSeconds * 10, durationSeconds, source: "kakao-mobility" };
+  }, "2026-07-14T00:00:00.000Z");
+  assert(unavailableDocumentsCalls === 2
+    && unavailableDocumentsCollection.routeLegEstimates.length === 2
+    && unavailableDocumentsCollection.routeOrderEvaluations.length === 0,
+  "evidence 20-document-status: unreadable document links retain required route checks but skip unsafe reorder requests");
 
   const fareCollection = await collectCarRouteEvidence(carInput, async () => ({
     distanceMeters: 1_000,
@@ -980,7 +1422,22 @@ async function verifyRouteCollection() {
   }, "2026-07-14T00:00:00.000Z");
   assert(twoItemCallCount === 2 && twoItemCollection.routeOrderEvaluations[0]?.swappedItemIds.join(",") === "opt-a,opt-b", "evidence 20a: a two-place day compares both directed orders with two edges");
   const optimizationIssue = analyzeRouteOptimization(createDuriAnalysisSnapshot({ ...carInput, routeOrderEvaluations: collected.routeOrderEvaluations }))[0];
-  assert(optimizationIssue?.constraintType === "soft" && optimizationIssue.suggestionSupported === false, "evidence 21: route optimization remains a read-only soft suggestion");
+  assert(optimizationIssue?.constraintType === "soft"
+    && optimizationIssue.suggestionSupported === false
+    && optimizationIssue.confidence === "low"
+    && optimizationIssue.summary.includes("운영시간 충족은 확인하지 못했으므로")
+    && optimizationIssue.evidence.some((entry) => entry.label === "운영시간 검증"),
+  "evidence 21: route optimization remains a read-only low-confidence route-only suggestion when operating facts are unknown");
+  assert(analyzeRouteOptimization(createDuriAnalysisSnapshot({
+    ...carInput,
+    scheduleOverlayStatus: "unavailable",
+    routeOrderEvaluations: collected.routeOrderEvaluations,
+  })).length === 0, "evidence 21-local-lock: unreadable local locks suppress route reorder advice instead of assuming no locks");
+  assert(analyzeRouteOptimization(createDuriAnalysisSnapshot({
+    ...carInput,
+    documentCollectionStatus: "unavailable",
+    routeOrderEvaluations: collected.routeOrderEvaluations,
+  })).length === 0, "evidence 21-document-status: unreadable document links suppress route reorder advice");
   const endDayInput: DuriAnalysisInput = {
     ...carInput,
     trip: { ...carInput.trip, endCondition },
@@ -1217,6 +1674,23 @@ async function verifyRouteCollection() {
   }, "2026-07-14T00:00:00.000Z");
   assert(publicCalls === 0 && publicResult.routeCollection.analyzedLegCount === 0 && Boolean(publicResult.routeCollection.unavailableReason), "evidence 22: public mode never substitutes car estimates");
 
+  let unavailableFactsCalls = 0;
+  const unavailableFactsResult = await collectCarRouteEvidence({
+    ...carInput,
+    localPlanningFactsStatus: "unavailable",
+  }, async () => {
+    unavailableFactsCalls += 1;
+    return { distanceMeters: 0, durationSeconds: 0, source: "kakao-mobility" };
+  }, "2026-07-14T00:00:00.000Z");
+  assert(unavailableFactsCalls === 0
+    && unavailableFactsResult.routeLegEstimates.length === 0
+    && Boolean(unavailableFactsResult.routeCollection.unavailableReason)
+    && analyzeRouteTimeConstraints(createDuriAnalysisSnapshot({
+      ...routeConstraintInput,
+      localPlanningFactsStatus: "unavailable",
+    }), "2026-07-14T00:00:01.000Z").length === 0,
+  "evidence 22-local-facts: unreadable local transport facts never fall back to the public or car default");
+
   const fiveLocatedPlaces = Object.fromEntries(["a", "b", "c", "d", "e"].map((id, index) => [
     id,
     { ...places[id], latitude: index + 1, longitude: index + 1 } as Place,
@@ -1321,6 +1795,51 @@ async function verifyRouteCollection() {
   });
   assert(maxActiveTourCalls <= 4, "evidence 24c: Tour detail and congestion requests keep bounded burst concurrency");
 
+  const autoFillCandidateIds = Array.from({ length: 9 }, (_, index) => `tour:${30_000 + index}`);
+  const autoFillCandidateInput: DuriAnalysisInput = {
+    ...serviceInput,
+    candidates: [candidate("tour:1"), ...autoFillCandidateIds.map((placeId) => candidate(placeId))],
+    placesById: {
+      ...serviceInput.placesById,
+      ...Object.fromEntries(autoFillCandidateIds.map((placeId) => [placeId, place(placeId)])),
+    },
+    placeConstraintEvidence: [{
+      placeId: "tour:1",
+      provider: "tour-api",
+      fetchedAt: "2026-07-01T00:00:00.000Z",
+      recommendedDurationText: "45분",
+    }],
+    evidenceCollection: {
+      route: { requiredLegCount: 3, analyzedLegCount: 0, mode: "car", unavailableReason: "검증용" },
+      placeDetails: { scheduledPlaceCount: 4, requestedPlaceCount: 0, fetchedPlaceCount: 0, usablePlaceCount: 0, operatingFactPlaceCount: 0, durationFactPlaceCount: 0 },
+    },
+  };
+  let activeCandidateTourCalls = 0;
+  let maxActiveCandidateTourCalls = 0;
+  const requestedCandidateTourIds: string[] = [];
+  const candidateEvidence = await enrichPreferenceAutoFillCandidateEvidence(autoFillCandidateInput, "2026-08-26T00:00:00.000Z", {
+    requestPlaceReference: async () => { throw new Error("prefixed Tour IDs do not need a CommonPlace lookup"); },
+    requestTourDetail: async (contentId) => {
+      requestedCandidateTourIds.push(contentId);
+      activeCandidateTourCalls += 1;
+      maxActiveCandidateTourCalls = Math.max(maxActiveCandidateTourCalls, activeCandidateTourCalls);
+      await Promise.resolve();
+      activeCandidateTourCalls -= 1;
+      if (contentId === "30004") throw new Error("one candidate detail failed");
+      return { intro: { spendtime: `${Number(contentId) % 60 + 30}분` } };
+    },
+    requestDirections: async () => { throw new Error("candidate duration enrichment must not request routes"); },
+  });
+  assert(!requestedCandidateTourIds.includes("1")
+    && requestedCandidateTourIds.length === autoFillCandidateIds.length
+    && maxActiveCandidateTourCalls <= 4,
+  "evidence 24d: auto-fill evidence requests only unscheduled candidates with bounded concurrency");
+  assert(candidateEvidence.placeConstraintEvidence?.length === autoFillCandidateIds.length
+    && candidateEvidence.placeConstraintEvidence.some((entry) => entry.placeId === "tour:1" && entry.fetchedAt === "2026-07-01T00:00:00.000Z")
+    && !candidateEvidence.placeConstraintEvidence.some((entry) => entry.placeId === "tour:30004")
+    && candidateEvidence.evidenceCollection === autoFillCandidateInput.evidenceCollection,
+  "evidence 24e: candidate facts merge fail-soft without changing scheduled analysis coverage");
+
   const tourPlaces = {
     "tour:126508": { ...place("tour:126508"), contentTypeId: 12 },
     "665abc123def456789012345": place("665abc123def456789012345"),
@@ -1387,6 +1906,40 @@ async function verifyRouteCollection() {
     if (signal) stalledSignals.push(signal);
     return new Promise<never>(() => undefined);
   };
+  const stalledAutoFillInput: DuriAnalysisInput = {
+    ...serviceInput,
+    candidates: [candidate("tour:99999")],
+    placesById: { ...serviceInput.placesById, "tour:99999": place("tour:99999") },
+  };
+  const stalledAutoFillEvidence = await Promise.race([
+    enrichPreferenceAutoFillCandidateEvidence(stalledAutoFillInput, "2026-08-26T00:00:00.000Z", {
+      requestPlaceReference: async () => { throw new Error("prefixed Tour IDs do not need a CommonPlace lookup"); },
+      requestTourDetail: async (_contentId, signal) => neverSettles(signal),
+      requestDirections: async () => { throw new Error("candidate duration enrichment must not request routes"); },
+    }, { requestTimeoutMs: 5 }),
+    new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("bounded auto-fill evidence collection did not finish")), 1_000)),
+  ]);
+  assert(stalledAutoFillEvidence === stalledAutoFillInput,
+    "evidence 29b: stalled auto-fill evidence returns the original input without blocking generation");
+  const partialDeadlineInput: DuriAnalysisInput = {
+    ...serviceInput,
+    candidates: [candidate("tour:99998"), candidate("tour:99999")],
+    placesById: {
+      ...serviceInput.placesById,
+      "tour:99998": place("tour:99998"),
+      "tour:99999": place("tour:99999"),
+    },
+  };
+  const partialDeadlineEvidence = await enrichPreferenceAutoFillCandidateEvidence(partialDeadlineInput, "2026-08-26T00:00:00.000Z", {
+    requestPlaceReference: async () => { throw new Error("prefixed Tour IDs do not need a CommonPlace lookup"); },
+    requestTourDetail: async (contentId, signal) => contentId === "99998"
+      ? { intro: { spendtime: "80분" } }
+      : neverSettles(signal),
+    requestDirections: async () => { throw new Error("candidate duration enrichment must not request routes"); },
+  }, { requestTimeoutMs: 5 });
+  assert(partialDeadlineEvidence.placeConstraintEvidence?.length === 1
+    && partialDeadlineEvidence.placeConstraintEvidence[0].placeId === "tour:99998",
+  "evidence 29c: total deadline preserves candidate facts that completed before another provider stalled");
   const stalledEvidence = await Promise.race([
     enrichDuriAnalysisInput(serviceInput, "2026-07-14T00:00:00.000Z", {
       requestPlaceReference: async () => { throw new Error("prefixed Tour IDs do not need a CommonPlace lookup"); },
@@ -1430,7 +1983,7 @@ async function verifyRouteCollection() {
 }
 
 void verifyRouteCollection().then(() => {
-  console.log("Duri verification passed: 29 analysis + 20 suggestion + 10 atomic + 19 end-condition + evidence/OCR/congestion scenarios");
+console.log("Duri verification passed: 36 analysis + 20 suggestion + 10 atomic + 19 end-condition + evidence/OCR/congestion scenarios");
 }).catch((error) => {
   console.error(error);
   throw error;

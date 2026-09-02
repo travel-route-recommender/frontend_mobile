@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { PrimaryButton, SecondaryButton } from "../../../components/common";
 import { colors, radius, shadows, sizes, spacing, typography } from "../../../theme/tokens";
@@ -24,9 +24,11 @@ export function DuriAnalysisReport({
   suggestionError,
   canAnalyze,
   affectedEntityLabelsByIssueId,
+  preferenceAutoFillContent,
   onReanalyze,
   onGenerateSuggestions,
   onPreviewSuggestion,
+  onOpenTechnicalDetails,
 }: {
   session: DuriAnalysisSession;
   suggestions: DuriSuggestionEnvelope[] | undefined;
@@ -36,9 +38,11 @@ export function DuriAnalysisReport({
   suggestionError?: string;
   canAnalyze: boolean;
   affectedEntityLabelsByIssueId: Record<string, string[]>;
+  preferenceAutoFillContent?: ReactNode;
   onReanalyze: () => void | Promise<void>;
   onGenerateSuggestions: () => void | Promise<void>;
   onPreviewSuggestion: (envelope: DuriSuggestionEnvelope) => void;
+  onOpenTechnicalDetails?: (issueId?: string) => void;
 }) {
   const { width } = useWindowDimensions();
   const compactHero = width <= 360;
@@ -101,6 +105,8 @@ export function DuriAnalysisReport({
       })}
     </View> : null}
 
+    {preferenceAutoFillContent ? <View style={styles.autoFillSection}>{preferenceAutoFillContent}</View> : null}
+
     <View style={styles.section}>
       <View style={styles.sectionHeading}><Text style={styles.sectionTitle}>잘 맞는 점</Text><Text style={styles.sectionCount}>{presentation.strengths.length}개</Text></View>
       <View style={styles.groupCard}>
@@ -118,7 +124,7 @@ export function DuriAnalysisReport({
           <View style={[styles.rowIcon, styles.peachSoft]}><Text style={styles.peachText}>!</Text></View>
           <View style={styles.flex}><DuriKoreanText style={styles.rowTitle}>{issue.title}</DuriKoreanText><DuriKoreanText numberOfLines={1} style={styles.rowDetail}>{issuePreviewText(issue)}</DuriKoreanText></View>
         </View>)}
-        {presentation.actionableIssues.length > 3 ? <Text style={styles.moreHint}>외 {presentation.actionableIssues.length - 3}개는 전체 점검에서 확인할 수 있어요.</Text> : null}
+        {presentation.actionableIssues.length > 3 ? <Text style={styles.moreHint}>나머지 {presentation.actionableIssues.length - 3}개 결과는 아래 ‘전체 점검 항목’에서 자세히 볼 수 있어요.</Text> : null}
       </View> : <View style={styles.emptyCompact}><DuriKoreanText style={styles.rowTitle}>현재 근거에서 조정할 점이 없어요</DuriKoreanText></View>}
     </View>
 
@@ -134,17 +140,20 @@ export function DuriAnalysisReport({
       <DisclosureRow label="전체 점검 항목" meta={`${session.issues.length}개`} open={openSections.has("checks")} onPress={() => toggleSection("checks")} />
       {openSections.has("checks") ? <View style={styles.detailBody}>
         <DuriIssueFilterBar issues={session.issues} value={issueFilter} onChange={setIssueFilter} />
-        {filteredIssues.map((issue) => <AnalysisIssueCard key={issue.id} issue={issue} affectedEntityLabels={affectedEntityLabelsByIssueId[issue.id]} hasGeneratedSuggestion={suggestionIssueIds.has(issue.id)} />)}
+        {filteredIssues.map((issue) => <AnalysisIssueCard key={issue.id} issue={issue} affectedEntityLabels={affectedEntityLabelsByIssueId[issue.id]} hasGeneratedSuggestion={suggestionIssueIds.has(issue.id)} onOpenTechnicalDetails={onOpenTechnicalDetails ? () => onOpenTechnicalDetails(issue.id) : undefined} />)}
       </View> : null}
       <DisclosureRow label="근거와 분석 한계" meta={session.coverage.routeData === "available" ? "경로 반영" : "일부 근거"} open={openSections.has("evidence")} onPress={() => toggleSection("evidence")} />
       {openSections.has("evidence") ? <View style={styles.detailBody}><AnalysisCoverageNotice coverage={session.coverage} /><Text style={styles.provenance}>마지막 점검 {new Date(session.analyzedAt).toLocaleString("ko-KR")} · 분석 버전 {session.algorithmVersion}</Text></View> : null}
       <DisclosureRow label="날짜별 상세" meta={`${session.dayMetrics.length}일`} open={openSections.has("days")} onPress={() => toggleSection("days")} />
       {openSections.has("days") ? <View style={styles.detailBody}>{session.dayMetrics.map((metric) => <View key={metric.date} style={styles.dayRow}><View style={styles.sectionHeading}><Text style={styles.rowTitle}>{metric.date}</Text><Text style={styles.dayCount}>일정 {metric.itemCount}개</Text></View><Text style={styles.rowDetail}>체류 {metric.scheduledMinutes}분 · 충돌 {metric.conflictCount}건</Text><Text style={styles.rowDetail}>이동 제외 여유 {metric.routeAdjustedIdleMinutes}분 · 실제 경로 {metric.analyzedRouteLegCount}/{metric.requiredRouteLegCount}구간 확인</Text></View>)}</View> : null}
       <DisclosureRow label="성향 상세" meta={`${session.groupInsights.length}개 인사이트`} open={openSections.has("preferences")} onPress={() => toggleSection("preferences")} />
-      {openSections.has("preferences") ? <View style={styles.detailBody}><Text style={styles.detailIntro}>직접 응답과 일정 반영 상태만 사용하며, 다수결로 소수 의견을 지우지 않아요.</Text>{session.groupInsights.map((insight) => <GroupPreferenceInsightCard key={insight.id} insight={insight} />)}{preferenceIssues.length ? <View style={styles.detailBody}><Text style={styles.rowTitle}>성향 관련 점검</Text>{preferenceIssues.map((issue) => <AnalysisIssueCard key={issue.id} issue={issue} affectedEntityLabels={affectedEntityLabelsByIssueId[issue.id]} hasGeneratedSuggestion={suggestionIssueIds.has(issue.id)} />)}</View> : null}</View> : null}
+      {openSections.has("preferences") ? <View style={styles.detailBody}><Text style={styles.detailIntro}>직접 응답과 일정 반영 상태만 사용하며, 다수결로 소수 의견을 지우지 않아요.</Text>{session.groupInsights.map((insight) => <GroupPreferenceInsightCard key={insight.id} insight={insight} />)}{preferenceIssues.length ? <View style={styles.detailBody}><Text style={styles.rowTitle}>성향 관련 점검</Text>{preferenceIssues.map((issue) => <AnalysisIssueCard key={issue.id} issue={issue} affectedEntityLabels={affectedEntityLabelsByIssueId[issue.id]} hasGeneratedSuggestion={suggestionIssueIds.has(issue.id)} onOpenTechnicalDetails={onOpenTechnicalDetails ? () => onOpenTechnicalDetails(issue.id) : undefined} />)}</View> : null}</View> : null}
     </View>
 
-    <SecondaryButton label="현재 일정 다시 점검" disabled={!canAnalyze || analysisStatus === "loading"} loading={analysisStatus === "loading"} onPress={onReanalyze} />
+    <View style={styles.finalActions}>
+      {onOpenTechnicalDetails ? <SecondaryButton label="수식과 계산 과정 보기" onPress={() => onOpenTechnicalDetails()} /> : null}
+      <SecondaryButton label="현재 일정 다시 점검" disabled={!canAnalyze || analysisStatus === "loading"} loading={analysisStatus === "loading"} onPress={onReanalyze} />
+    </View>
   </View>;
 }
 
@@ -198,6 +207,7 @@ const styles = StyleSheet.create({
   suggestionEyebrow: { ...typography.caption, color: "#735BC4", fontWeight: "900" },
   suggestionTitle: { ...typography.subtitle, color: "#17265F", fontWeight: "900" },
   suggestionText: { ...typography.caption, color: "#60719B" },
+  autoFillSection: { gap: spacing.sm },
   inlineError: { ...typography.caption, color: colors.danger, backgroundColor: colors.dangerSoft, borderRadius: radius.sm, padding: spacing.sm },
   metrics: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
   metric: { flexBasis: "47%", flexGrow: 1, minWidth: 140, minHeight: 98, gap: 2, borderRadius: radius.md, borderWidth: 1, borderColor: "#DCE7F7", backgroundColor: colors.surface, padding: spacing.sm },
@@ -206,6 +216,7 @@ const styles = StyleSheet.create({
   metricValue: { fontSize: 18, lineHeight: 23, fontWeight: "900" },
   metricDetail: { fontSize: 10, lineHeight: 15, fontWeight: "600", color: "#8290AE" },
   detailList: { overflow: "hidden", borderRadius: radius.lg, borderWidth: 1, borderColor: "#DCE7F7", backgroundColor: colors.surface },
+  finalActions: { gap: spacing.sm },
   disclosure: { minHeight: 62, flexDirection: "row", alignItems: "center", gap: spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#DCE7F7", paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
   disclosureLabel: { ...typography.bodyStrong, color: "#17265F" },
   disclosureMeta: { ...typography.caption, color: "#8290AE" },

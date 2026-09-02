@@ -19,6 +19,7 @@
     "src/features/auth/services/authTokenState.ts",
     "src/features/trips/tripRoomApi.ts",
     "src/features/trips/selectors/**/*.ts",
+    "src/features/trips/logic/selectTripHomeDuriState.ts",
     "src/features/trips/types.ts",
     "src/features/trips/utils/**/*.ts",
     "src/features/trip-creation/services/apiTripFactsStorage.ts",
