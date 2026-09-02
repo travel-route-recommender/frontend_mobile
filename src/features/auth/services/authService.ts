@@ -22,6 +22,7 @@ import {
   createSignupRequestBody,
   supportsBackendSocialProvider,
 } from "./backendAuthContract";
+import { toKoreanAuthErrorMessage } from "./authErrorMessage";
 import { requestKakaoAccessToken } from "./socialAuth";
 import { requestSocialLoginSession } from "./socialLoginFlow";
 
@@ -131,9 +132,9 @@ function failure(error: unknown): AuthFailure {
     if (error.code === "ACCOUNT_LINK_REQUIRED" || error.code === "ACCOUNT_MERGE_REQUIRED") return { status: "error", code: "account-link-required", message: "같은 이메일의 기존 계정이 있어요. 기존 방식으로 로그인한 뒤 소셜 계정을 연결해 주세요." };
     if (error.status === 409) return { status: "error", code: "account-exists", message: "이미 가입된 이메일이거나 다른 계정에 연결된 정보예요." };
     if (error.status === 401) return { status: "error", code: "invalid-credentials", message: "이메일 또는 비밀번호가 올바르지 않아요." };
-    return { status: "error", code: "unknown", message: error.message };
+    return { status: "error", code: "unknown", message: toKoreanAuthErrorMessage(error) };
   }
-  return { status: "error", code: "unknown", message: error instanceof Error ? error.message : "인증 처리 중 오류가 발생했어요." };
+  return { status: "error", code: "unknown", message: toKoreanAuthErrorMessage(error) };
 }
 
 async function persistSession(session: BackendSession) {

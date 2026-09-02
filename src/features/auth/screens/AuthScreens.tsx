@@ -1,10 +1,10 @@
-import { useRef, useState } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
+import { useCallback, useRef, useState } from "react";
+import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { PrimaryButton, SecondaryButton } from "../../../components/common";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import { formatTripDateRange } from "../../../utils/formatters";
-import { AuthDivider, AuthErrorBanner, AuthTextField, GoogleButton, KakaoButton, PasswordField, TermsCheckbox } from "../components/AuthControls";
+import { AuthDivider, AuthErrorBanner, AuthErrorToast, AuthTextField, GoogleButton, KakaoButton, PasswordField, TermsCheckbox } from "../components/AuthControls";
 import { AuthLayout } from "../components/AuthLayout";
 import { DuriLogo } from "../components/DuriLogo";
 import { useAuthFlow } from "../hooks/useAuthFlow";
@@ -16,10 +16,6 @@ import { normalizeEmail, normalizeInviteCode, validateEmail, validateInviteCode,
 
 function TextLink({ label, onPress }: { label: string; onPress: () => void }) {
   return <Pressable accessibilityRole="link" onPress={onPress} style={styles.textLinkButton}><Text style={styles.textLink}>{label}</Text></Pressable>;
-}
-
-function Benefits() {
-  return <View style={styles.benefits}><Text style={styles.benefitTitle}>두리와 함께하면</Text><Text style={styles.benefit}>✓ 여행지를 함께 저장하고 후보를 모을 수 있어요</Text><Text style={styles.benefit}>✓ 모두의 취향을 반영해 일정을 조율할 수 있어요</Text><Text style={styles.benefit}>✓ 초대 코드로 여행방에 바로 합류할 수 있어요</Text></View>;
 }
 
 function destinationAfterLogin(profileCompleted: boolean, onboardingIntroSeen: boolean, guest = false) {
@@ -41,8 +37,10 @@ export function LoginScreen() {
   const emailRef = useRef<TextInput>(null);
   const passwordRef = useRef<TextInput>(null);
   const { applyAuthSuccess } = useAuthFlow();
+  const dismissServiceError = useCallback(() => setServiceError(null), []);
 
   const finishEmail = async () => {
+    dismissServiceError();
     const nextEmailError = validateEmail(email);
     const nextPasswordError = password ? undefined : "비밀번호를 입력해 주세요.";
     setEmailError(nextEmailError); setPasswordError(nextPasswordError);
@@ -67,46 +65,18 @@ export function LoginScreen() {
     } finally { setLoading(false); }
   };
 
-  return <AuthLayout testID="login-screen">
+  return <AuthLayout testID="login-screen" overlay={<AuthErrorToast message={serviceError} onDismiss={dismissServiceError} />}>
     <DuriLogo />
     <View><Text style={styles.heroTitle}>여행의 시작을 함께해요</Text><Text style={styles.heroSubtitle}>로그인하고 친구들과 여행을 계획해 보세요.</Text></View>
     {authCapabilities.googleLogin ? <GoogleButton disabled={loading} onPress={() => finishSocial("google")} /> : null}
-    {authCapabilities.kakaoLogin ? <KakaoButton disabled={loading} onPress={() => finishSocial("kakao")} /> : null}
+    {authCapabilities.kakaoLogin ? <KakaoButton label="카카오로 계속하기" disabled={loading} onPress={() => finishSocial("kakao")} /> : null}
     {authCapabilities.googleLogin || authCapabilities.kakaoLogin ? <AuthDivider /> : null}
-    <AuthTextField ref={emailRef} label="이메일" value={email} onChangeText={(value) => { setEmail(value); setEmailError(undefined); }} error={emailError} keyboardType="email-address" autoCapitalize="none" autoComplete="email" returnKeyType="next" onSubmitEditing={() => passwordRef.current?.focus()} />
-    <PasswordField ref={passwordRef} label="비밀번호" value={password} onChangeText={(value) => { setPassword(value); setPasswordError(undefined); }} error={passwordError} autoComplete="current-password" returnKeyType="done" onSubmitEditing={finishEmail} />
-    <AuthErrorBanner message={serviceError} />
+    <AuthTextField ref={emailRef} label="이메일" value={email} onChangeText={(value) => { setEmail(value); setEmailError(undefined); dismissServiceError(); }} error={emailError} keyboardType="email-address" autoCapitalize="none" autoComplete="email" returnKeyType="next" onSubmitEditing={() => passwordRef.current?.focus()} />
+    <PasswordField ref={passwordRef} label="비밀번호" value={password} onChangeText={(value) => { setPassword(value); setPasswordError(undefined); dismissServiceError(); }} error={passwordError} autoComplete="current-password" returnKeyType="done" onSubmitEditing={finishEmail} />
     <PrimaryButton label="이메일로 로그인" loading={loading} onPress={finishEmail} />
     <SecondaryButton label="게스트로 입장하기" disabled={loading} onPress={() => router.push((resolveAuthReturnTo(returnTo, false)?.startsWith("/invite/") ? returnTo : "/(auth)/invite") as never)} />
-    <View style={styles.inlineLinks}><TextLink label="회원가입" onPress={() => router.push({ pathname: "/(auth)/signup-choice", params: { ...(returnTo ? { returnTo } : {}) } })} /></View>
+    <View style={styles.inlineLinks}><TextLink label="회원가입" onPress={() => router.push({ pathname: "/(auth)/signup-email", params: { ...(returnTo ? { returnTo } : {}) } })} /></View>
     <View style={styles.inlineLinks}><TextLink label="서비스 이용약관" onPress={() => router.push({ pathname: "/(auth)/terms", params: { type: "service" } })} /><Text style={styles.dot}>·</Text><TextLink label="개인정보 처리방침" onPress={() => router.push({ pathname: "/(auth)/terms", params: { type: "privacy" } })} /></View>
-  </AuthLayout>;
-}
-
-export function SignupChoiceScreen() {
-  const params = useLocalSearchParams<{ returnTo?: string | string[] }>();
-  const returnTo = Array.isArray(params.returnTo) ? params.returnTo[0] : params.returnTo;
-  const [loading, setLoading] = useState(false);
-  const [serviceError, setServiceError] = useState<string | null>(null);
-  const { applyAuthSuccess } = useAuthFlow();
-  const social = async (provider: SocialProvider) => {
-    setLoading(true); setServiceError(null);
-    try {
-      const result = await authService.loginWithSocial(provider);
-      if (result.status === "error") { setServiceError(result.message); return; }
-      await applyAuthSuccess(result);
-      router.replace((resolveAuthReturnTo(returnTo, false) ?? destinationAfterLogin(result.profileCompleted, result.onboardingIntroSeen)) as never);
-    } finally { setLoading(false); }
-  };
-  return <AuthLayout title="두리 시작하기" subtitle="나에게 편한 방법으로 가입하세요." onBack={() => router.back()}>
-    <DuriLogo compact />
-    {authCapabilities.googleLogin ? <GoogleButton disabled={loading} onPress={() => social("google")} /> : null}
-    {authCapabilities.kakaoLogin ? <KakaoButton disabled={loading} onPress={() => social("kakao")} /> : null}
-    {authCapabilities.googleLogin || authCapabilities.kakaoLogin ? <AuthDivider /> : null}
-    <PrimaryButton label="이메일로 가입하기" onPress={() => router.push({ pathname: "/(auth)/signup-email", params: { ...(returnTo ? { returnTo } : {}) } })} />
-    <AuthErrorBanner message={serviceError} />
-    <View style={styles.inlineLinks}><Text style={styles.muted}>이미 계정이 있나요?</Text><TextLink label="로그인" onPress={() => router.replace({ pathname: "/(auth)/login", params: { ...(returnTo ? { returnTo } : {}) } })} /></View>
-    <Benefits />
   </AuthLayout>;
 }
 
@@ -126,6 +96,12 @@ export function SignupEmailScreen() {
   const { applyAuthSuccess } = useAuthFlow();
   const allAgreed = serviceAgreed && privacyAgreed;
 
+  const validateEmailField = () => {
+    const emailError = validateEmail(email);
+    setErrors((old) => ({ ...old, email: emailError }));
+    return emailError;
+  };
+
   const submit = async () => {
     const next = { nickname: validateNickname(nickname), email: validateEmail(email), password: validatePassword(password), confirmation: validatePasswordConfirmation(password, confirmation), agreements: validateRequiredAgreement(allAgreed, "필수 약관") };
     setErrors(next);
@@ -137,7 +113,15 @@ export function SignupEmailScreen() {
     setLoading(true); setServiceError(null);
     try {
       const result = await authService.signup({ nickname: nickname.trim(), email: normalizeEmail(email), password });
-      if (result.status === "error") { setServiceError(result.message); return; }
+      if (result.status === "error") {
+        if (result.code === "account-exists") {
+          setErrors((old) => ({ ...old, email: "이미 가입된 이메일이에요. 로그인해 주세요." }));
+          emailRef.current?.focus();
+        } else {
+          setServiceError(result.message);
+        }
+        return;
+      }
       await applyAuthSuccess(result);
       router.replace((resolveAuthReturnTo(returnTo, false) ?? destinationAfterLogin(result.profileCompleted, result.onboardingIntroSeen)) as never);
     } finally { setLoading(false); }
@@ -146,7 +130,23 @@ export function SignupEmailScreen() {
   const toggleAll = () => { const checked = !allAgreed; setServiceAgreed(checked); setPrivacyAgreed(checked); setErrors((value) => ({ ...value, agreements: undefined })); };
   return <AuthLayout title="이메일로 가입하기" subtitle="안전한 계정을 만들고 여행을 시작하세요." onBack={() => router.back()} footer={<PrimaryButton label="가입하고 계속하기" loading={loading} onPress={submit} />}>
     <AuthTextField ref={nicknameRef} label="닉네임" value={nickname} onChangeText={(value) => { setNickname(value); setErrors((old) => ({ ...old, nickname: undefined })); }} error={errors.nickname} maxLength={12} autoCapitalize="none" returnKeyType="next" onSubmitEditing={() => emailRef.current?.focus()} />
-    <AuthTextField ref={emailRef} label="이메일" value={email} onChangeText={(value) => { setEmail(value); setErrors((old) => ({ ...old, email: undefined })); }} error={errors.email} keyboardType="email-address" autoCapitalize="none" autoComplete="email" returnKeyType="next" onSubmitEditing={() => passwordRef.current?.focus()} />
+    <AuthTextField
+      ref={emailRef}
+      label="이메일"
+      value={email}
+      onChangeText={(value) => {
+        setEmail(value);
+        setServiceError(null);
+        setErrors((old) => ({ ...old, email: old.email ? validateEmail(value) : undefined }));
+      }}
+      onBlur={validateEmailField}
+      error={errors.email}
+      keyboardType="email-address"
+      autoCapitalize="none"
+      autoComplete="email"
+      returnKeyType="next"
+      onSubmitEditing={() => passwordRef.current?.focus()}
+    />
     <PasswordField ref={passwordRef} label="비밀번호" value={password} onChangeText={(value) => { setPassword(value); setErrors((old) => ({ ...old, password: undefined })); }} error={errors.password} helperText="12자 이상이며 이메일과 다른 비밀번호를 사용해 주세요." autoComplete="new-password" returnKeyType="next" onSubmitEditing={() => confirmationRef.current?.focus()} />
     <PasswordField ref={confirmationRef} label="비밀번호 확인" value={confirmation} onChangeText={(value) => { setConfirmation(value); setErrors((old) => ({ ...old, confirmation: undefined })); }} error={errors.confirmation} autoComplete="new-password" returnKeyType="done" onSubmitEditing={submit} />
     <View style={styles.termsBox}>
@@ -249,7 +249,6 @@ const styles = StyleSheet.create({
   heroTitle: { ...typography.display, color: colors.text, marginTop: spacing.lg }, heroSubtitle: { ...typography.body, color: colors.textSecondary, marginTop: spacing.xs },
   textLinkButton: { minHeight: 36, alignItems: "center", justifyContent: "center" }, textLink: { ...typography.bodyStrong, color: colors.primary },
   inlineLinks: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "center", gap: spacing.xs }, dot: { color: colors.textMuted }, muted: { ...typography.body, color: colors.textSecondary },
-  benefits: { gap: spacing.sm, padding: spacing.lg, borderRadius: radius.lg, backgroundColor: colors.background }, benefitTitle: { ...typography.subtitle, color: colors.text }, benefit: { ...typography.body, color: colors.textSecondary },
   termsBox: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, padding: spacing.md }, rule: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border }, error: { ...typography.caption, color: colors.danger },
   inviteHero: { alignItems: "center", gap: spacing.sm, borderRadius: radius.lg, backgroundColor: colors.background, padding: spacing.xl }, inviteEmoji: { fontSize: 44 }, inviteCopy: { ...typography.body, color: colors.textSecondary, textAlign: "center" },
   previewBox: { gap: spacing.xs, borderWidth: 1, borderColor: colors.primary, borderRadius: radius.lg, padding: spacing.lg, backgroundColor: colors.primarySoft }, previewTitle: { ...typography.subtitle, color: colors.text }, previewMeta: { ...typography.caption, color: colors.textSecondary },

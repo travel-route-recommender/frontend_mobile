@@ -35,7 +35,7 @@ export function MemberOnlyRoute({ children, feature, title = "회원 전용 화�
         <View style={styles.actions}>
           <PrimaryButton
             label={authCapabilities.guestUpgrade ? "게스트 계정 업그레이드" : "회원가입"}
-            onPress={() => router.push(authCapabilities.guestUpgrade ? "/(auth)/guest-upgrade" as never : "/(auth)/signup-choice")}
+            onPress={() => router.push(authCapabilities.guestUpgrade ? "/(auth)/guest-upgrade" as never : "/(auth)/signup-email")}
           />
           <SecondaryButton label="허용된 화면으로 돌아가기" onPress={leave} />
         </View>

@@ -36,9 +36,37 @@ import {
   resolveHydratedLocalPrivateDataScope,
   transferLocalPrivateDataScope,
 } from "../src/features/auth/services/localPrivateDataPolicy";
+import { toKoreanAuthErrorMessage } from "../src/features/auth/services/authErrorMessage";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
+}
+
+function verifyKoreanAuthErrorMessages() {
+  assert(
+    toKoreanAuthErrorMessage(new Error("The authentication session has been canceled by user.")) === "로그인이 취소됐어요.",
+    "native authentication cancellation must be translated to Korean",
+  );
+  assert(
+    toKoreanAuthErrorMessage({ code: "USER_CANCELLED", message: "unknown" }) === "로그인이 취소됐어요.",
+    "provider cancellation codes must be translated even when the message is unhelpful",
+  );
+  assert(
+    toKoreanAuthErrorMessage(new Error("Invalid credentials")) === "이메일 또는 비밀번호가 올바르지 않아요.",
+    "backend credential errors must be translated to Korean",
+  );
+  assert(
+    toKoreanAuthErrorMessage(new Error("Email already registered")) === "이미 가입된 이메일이에요. 로그인해 주세요.",
+    "backend duplicate-email errors must be translated to Korean",
+  );
+  assert(
+    toKoreanAuthErrorMessage(new Error("Unexpected native provider failure")) === "인증 처리 중 오류가 발생했어요. 잠시 후 다시 시도해 주세요.",
+    "unknown provider internals must not be exposed in English",
+  );
+  assert(
+    toKoreanAuthErrorMessage(new Error("카카오 로그인을 완료하지 못했어요.")) === "카카오 로그인을 완료하지 못했어요.",
+    "specific Korean app errors must remain unchanged",
+  );
 }
 
 async function expectApiError(operation: Promise<unknown>, code?: string) {
@@ -427,6 +455,7 @@ function verifyInviteLoginReturnFlow() {
 }
 
 async function main() {
+  verifyKoreanAuthErrorMessages();
   await verifyTokenState();
   await verifySingleFlight();
   await verifyTenConcurrentExpiredRequests();

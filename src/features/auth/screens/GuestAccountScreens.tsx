@@ -88,7 +88,7 @@ export function GuestUpgradeScreen() {
         <Text style={styles.noticeTitle}>현재 서버에서는 지원하지 않아요</Text>
         <Text style={styles.noticeBody}>게스트 데이터를 유지한 회원 전환 API가 추가된 뒤 사용할 수 있어요. 지금은 별도 회원 계정으로 로그인하거나 가입해 주세요.</Text>
       </Card>
-      <PrimaryButton label="회원가입" onPress={() => router.replace("/(auth)/signup-choice")} />
+      <PrimaryButton label="회원가입" onPress={() => router.replace("/(auth)/signup-email")} />
       <SecondaryButton label="로그인" onPress={() => router.replace("/(auth)/login")} />
     </AuthLayout>;
   }

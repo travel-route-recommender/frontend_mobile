@@ -14,9 +14,9 @@ export function useMemberGate() {
   }, [sessionKind]);
 
   const closePrompt = useCallback(() => setPrompt({ visible: false }), []);
-  const go = useCallback((route: "/(auth)/login" | "/(auth)/signup-choice" | "/(auth)/guest-upgrade") => { closePrompt(); router.push(route as never); }, [closePrompt]);
+  const go = useCallback((route: "/(auth)/login" | "/(auth)/signup-email" | "/(auth)/guest-upgrade") => { closePrompt(); router.push(route as never); }, [closePrompt]);
   const canUpgradeGuest = sessionKind === "guest" && authCapabilities.guestUpgrade;
-  const memberGatePrompt = <GuestPromptModal visible={prompt.visible} sessionKind={sessionKind} actionLabel={prompt.actionLabel} guestUpgradeAvailable={authCapabilities.guestUpgrade} onClose={closePrompt} onLogin={() => go("/(auth)/login")} onSignup={() => go(canUpgradeGuest ? "/(auth)/guest-upgrade" : "/(auth)/signup-choice")} />;
+  const memberGatePrompt = <GuestPromptModal visible={prompt.visible} sessionKind={sessionKind} actionLabel={prompt.actionLabel} guestUpgradeAvailable={authCapabilities.guestUpgrade} onClose={closePrompt} onLogin={() => go("/(auth)/login")} onSignup={() => go(canUpgradeGuest ? "/(auth)/guest-upgrade" : "/(auth)/signup-email")} />;
 
   return { isMember: sessionKind === "member", sessionKind, requireMember, memberGatePrompt, closePrompt };
 }

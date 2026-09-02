@@ -75,7 +75,7 @@ export function PersonalResultScreen() {
       {sessionKind === "guest" ? <View style={styles.guestNotice}><Text style={styles.guestTitle}>게스트 결과로 저장됐어요</Text><Text style={styles.guestText}>현재 초대 계정에서 확인할 수 있어요. 정식 계정으로 결과를 옮기는 기능은 아직 제공하지 않아요.</Text></View> : null}
       {sessionKind !== "anonymous" && sessionUserId !== domainUserId ? <Pressable accessibilityRole="button" onPress={() => router.replace("/")}><Text style={styles.sessionWarning}>사용자 상태 다시 확인하기</Text></Pressable> : null}
     </View> : null}
-    <View style={styles.actions}><PrimaryButton label="테스트 다시 하기" onPress={() => setRestartVisible(true)} />{sessionKind === "anonymous" ? <><SecondaryButton label="로그인하기" onPress={() => router.push("/(auth)/login")} /><SecondaryButton label="회원가입" onPress={() => router.push("/(auth)/signup-choice")} /></> : <SecondaryButton label="마이페이지에서 결과 보기" onPress={() => router.replace("/(tabs)/mypage")} />}<SecondaryButton label="홈으로 이동" onPress={() => router.replace("/(tabs)/home")} /></View>
+    <View style={styles.actions}><PrimaryButton label="테스트 다시 하기" onPress={() => setRestartVisible(true)} />{sessionKind === "anonymous" ? <><SecondaryButton label="로그인하기" onPress={() => router.push("/(auth)/login")} /><SecondaryButton label="회원가입" onPress={() => router.push("/(auth)/signup-email")} /></> : <SecondaryButton label="마이페이지에서 결과 보기" onPress={() => router.replace("/(tabs)/mypage")} />}<SecondaryButton label="홈으로 이동" onPress={() => router.replace("/(tabs)/home")} /></View>
     <PreferenceRestartModal visible={restartVisible} onRestart={restart} onCancel={() => setRestartVisible(false)} />
   </Screen>;
 }
