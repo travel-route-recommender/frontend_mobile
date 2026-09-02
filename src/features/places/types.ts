@@ -1,9 +1,15 @@
-import type { EntityId } from "../../domain";
+import type { EntityId, ItineraryItem } from "../../domain";
 import type { PlaceClassificationSelection } from "./logic/placeClassification";
 
 export type PlaceCategoryFilter = "all" | string;
 export type PlaceSortOption = "popular" | "rating" | "distance" | "default" | "name" | "saved-first";
 export type PlaceCandidateState = "not-added" | "candidate" | "scheduled";
+export type PlaceTripRelation = {
+  isCandidate: boolean;
+  isScheduled: boolean;
+  scheduledCount: number;
+  scheduledItems: ItineraryItem[];
+};
 export type PlaceLocationSelection = {
   value: string;
   label: string;
@@ -43,6 +49,7 @@ export interface PlaceCardViewModel {
   distanceLabel?: string;
   isSaved: boolean;
   candidateTripIds: EntityId[];
+  scheduledTripIds: EntityId[];
   activeTripCandidateState: PlaceCandidateState;
 }
 

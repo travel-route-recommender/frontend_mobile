@@ -1,4 +1,5 @@
 import type { EntityId } from "../../domain";
+import type { WorkspaceMutationPermissions } from "./logic/workspaceCapabilities";
 
 export type CandidateBoardFilter = "all" | "common" | "mine" | "companion";
 export type CandidateScheduleState =
@@ -30,6 +31,7 @@ export interface WorkspaceViewModel {
   scheduledCandidateCount: number;
   itineraryCount: number;
   memberCount: number;
+  permissions: WorkspaceMutationPermissions;
   canEdit: boolean;
   readOnlyReason?: string;
 }
@@ -47,7 +49,15 @@ export interface CandidatePlaceViewModel {
   addedByCount: number;
   recommendedByDuri: boolean;
   scheduleState: CandidateScheduleState;
+  scheduledCount: number;
   scheduledDates: string[];
+  scheduledPlacements: {
+    itemId: EntityId;
+    date: string;
+    dayLabel: string;
+    startTime: string;
+    endTime: string;
+  }[];
   placeMissing: boolean;
 }
 

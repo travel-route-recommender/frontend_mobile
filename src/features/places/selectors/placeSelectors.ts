@@ -1,5 +1,5 @@
 import type { EntityId, ItineraryItem, Place, Region, TripCandidate, TripRoom, User } from "../../../domain";
-import type { PlaceCandidateState, PlaceCardViewModel } from "../types";
+import type { PlaceCandidateState, PlaceCardViewModel, PlaceTripRelation } from "../types";
 import { getPlaceCategoryLabel } from "../logic/placeSearch";
 
 const isGenericTourSummary = (summary: string) => /TourAPI/i.test(summary);
@@ -67,9 +67,24 @@ export function selectCandidateForPlace(state: Pick<PlaceSelectorState, "candida
   return (state.candidatesByTripId[tripId] ?? []).find((candidate) => candidate.placeId === placeId);
 }
 
+export function selectPlaceTripRelation(
+  state: Pick<PlaceSelectorState, "candidatesByTripId" | "itineraryByTripId">,
+  tripId: EntityId,
+  placeId: EntityId,
+): PlaceTripRelation {
+  const scheduledItems = (state.itineraryByTripId[tripId] ?? []).filter((item) => item.placeId === placeId);
+  return {
+    isCandidate: Boolean(selectCandidateForPlace(state, tripId, placeId)),
+    isScheduled: scheduledItems.length > 0,
+    scheduledCount: scheduledItems.length,
+    scheduledItems,
+  };
+}
+
 export function selectCandidateStateForPlace(state: Pick<PlaceSelectorState, "candidatesByTripId" | "itineraryByTripId">, tripId: EntityId, placeId: EntityId): PlaceCandidateState {
-  if ((state.itineraryByTripId[tripId] ?? []).some((item) => item.placeId === placeId)) return "scheduled";
-  return selectCandidateForPlace(state, tripId, placeId) ? "candidate" : "not-added";
+  const relation = selectPlaceTripRelation(state, tripId, placeId);
+  if (relation.isScheduled) return "scheduled";
+  return relation.isCandidate ? "candidate" : "not-added";
 }
 
 export function selectEligibleTripsForPlaceCandidate(state: Pick<PlaceSelectorState, "currentUserId" | "tripOrder" | "tripsById">) {
@@ -91,9 +106,19 @@ export function buildPlaceCardViewModel(state: PlaceSelectorState, placeId: Enti
   const place = state.placesById[placeId];
   if (!place) return null;
   const savedIds = new Set(state.savedPlaceIdsByUserId[state.currentUserId] ?? []);
-  const candidateTripIds = Object.entries(state.candidatesByTripId).flatMap(([tripId, candidates]) => {
+  const relationTripIds = [...new Set([
+    ...Object.keys(state.candidatesByTripId),
+    ...Object.keys(state.itineraryByTripId),
+  ])];
+  const candidateTripIds = relationTripIds.flatMap((tripId) => {
     const trip = state.tripsById[tripId];
-    return trip?.members.some((member) => member.userId === state.currentUserId) && candidates.some((candidate) => candidate.placeId === placeId) ? [tripId] : [];
+    const relation = selectPlaceTripRelation(state, tripId, placeId);
+    return trip?.members.some((member) => member.userId === state.currentUserId) && relation.isCandidate ? [tripId] : [];
+  });
+  const scheduledTripIds = relationTripIds.flatMap((tripId) => {
+    const trip = state.tripsById[tripId];
+    const relation = selectPlaceTripRelation(state, tripId, placeId);
+    return trip?.members.some((member) => member.userId === state.currentUserId) && relation.isScheduled ? [tripId] : [];
   });
   const activeState = state.activeTripId ? selectCandidateStateForPlace(state, state.activeTripId, placeId) : "not-added";
   const categoryLabel = getPlaceCategoryLabel(place.category);
@@ -115,6 +140,7 @@ export function buildPlaceCardViewModel(state: PlaceSelectorState, placeId: Enti
     ...(place.distanceLabel ? { distanceLabel: place.distanceLabel } : {}),
     isSaved: savedIds.has(place.id),
     candidateTripIds,
+    scheduledTripIds,
     activeTripCandidateState: activeState,
   };
 }

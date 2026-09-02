@@ -1,4 +1,4 @@
-import type { Region, TripRoom, User } from "../src/domain";
+import type { Region, TripRoom, User, UserPreferenceResult } from "../src/domain";
 import {
   buildTripInviteUrl,
   createMockTripInviteCode,
@@ -7,7 +7,8 @@ import {
 } from "../src/features/invitations/logic/tripInviteLinks";
 import { buildWebInviteShareData } from "../src/features/invitations/logic/inviteShareMessage";
 import { calculateTripPreparationProgress } from "../src/features/trips/logic/calculateTripPreparationProgress";
-import { selectTripRoomCardViewModel } from "../src/features/trips/selectors";
+import { selectRoomPreferenceResponseSummary, selectTripRoomCardViewModel } from "../src/features/trips/selectors";
+import { PERSONAL_TEST_VERSION } from "../src/duri/preferences";
 import { getTripDayCount } from "../src/features/trips/utils/tripDateUtils";
 import { buildInitialTripDays, mapDraftToCreateTripRoomRequest } from "../src/features/trip-creation/mappers/createTripRoomMapper";
 import { createTripDraftEditCopy, getRegionSelectionPatch, getTripEditCommitPatch } from "../src/features/trip-creation/logic/tripDraftEditing";
@@ -18,6 +19,10 @@ import { normalizeCreateTripDraft } from "../src/features/trip-creation/store/us
 import { createRegionService, mapRegionToOption } from "../src/features/trip-creation/services/regionService";
 import { normalizeInvitedUserIds, validateCreateTripDraft } from "../src/features/trip-creation/validation/validateCreateTripDraft";
 import type { CreateTripDraft } from "../src/features/trip-creation/types";
+import { DEMO_MEMBER_ID } from "../src/features/auth/config";
+import { MOCK_FRIEND_IDS, mockFriendProfiles } from "../src/features/compatibility/config/mock-friends";
+import { resolveSavedFriendIds } from "../src/features/compatibility/logic/resolve-saved-friend-ids";
+import { filterEligibleCompanionUserIds, resolveEligibleCompanionUsers } from "../src/features/trip-creation/logic/eligibleCompanionMembers";
 import { CREATE_TRIP_DRAFT_VERSION } from "../src/features/trip-creation/types";
 import { selectCompletedTripsForCurrentUser, selectPlanningTripsForCurrentUser } from "../src/store/selectors";
 
@@ -79,6 +84,25 @@ async function main() {
   assert(validateCreateTripDraft(createDraft({ endCondition: { ...endCondition, travelMinutes: "" } }), validationContext)?.includes("이동시간"), "예상 이동시간은 빈 값일 수 없다");
   assert(validateCreateTripDraft(createDraft({ dateUndecided: true, startDate: null, endDate: null, endCondition }), validationContext)?.includes("종료 조건"), "날짜 미정 여행에는 종료 조건을 함께 저장하면 안 된다");
   assert(normalizeInvitedUserIds(["friend", "friend", "owner", "missing"], "owner", users).join(",") === "friend", "동행자는 중복·방장·없는 사용자를 제거해야 한다");
+
+  const companionDirectory: Record<string, User> = {
+    [DEMO_MEMBER_ID]: { id: DEMO_MEMBER_ID, name: "수민", initial: "수" },
+    ...mockFriendProfiles,
+    unrelated: { id: "unrelated", name: "무관 사용자", initial: "무" },
+    guest: { id: "guest", name: "게스트", initial: "게" },
+  };
+  const demoFriendIds = resolveSavedFriendIds({}, DEMO_MEMBER_ID);
+  assert(demoFriendIds.join(",") === MOCK_FRIEND_IDS.join(","), "데모 회원은 Friends 화면과 같은 명시적 친구 fixture를 사용해야 한다");
+  assert(resolveSavedFriendIds({}, "fresh-member").length === 0, "신규 회원은 명시적 관계가 없으면 동행 후보가 0명이어야 한다");
+  const eligibleCompanions = resolveEligibleCompanionUsers(demoFriendIds, DEMO_MEMBER_ID, companionDirectory);
+  assert(eligibleCompanions.map((user) => user.id).join(",") === MOCK_FRIEND_IDS.join(","), "동행 후보는 canonical 친구 관계의 사용자만 포함해야 한다");
+  const eligibleSelectedIds = filterEligibleCompanionUserIds(
+    ["guest", MOCK_FRIEND_IDS[0], "unrelated", DEMO_MEMBER_ID, MOCK_FRIEND_IDS[0]],
+    DEMO_MEMBER_ID,
+    demoFriendIds,
+  );
+  assert(eligibleSelectedIds.join(",") === MOCK_FRIEND_IDS[0], "stale·무관·게스트·방장 ID는 동행 선택 경계에서 제거해야 한다");
+  assert(normalizeInvitedUserIds(eligibleSelectedIds, DEMO_MEMBER_ID, companionDirectory).join(",") === MOCK_FRIEND_IDS[0], "최종 생성 payload에는 관계와 디렉터리를 모두 통과한 친구만 포함해야 한다");
 
   const migratedLegacyDraft = normalizeCreateTripDraft({ ...createDraft(), configVersion: 2, transport: "walking", budgetLevel: "premium", intensity: "packed" }).draft;
   assert(migratedLegacyDraft?.configVersion === CREATE_TRIP_DRAFT_VERSION && migratedLegacyDraft.transport === "public", "v2 walking 초안은 v3 대중교통·도보 사실값으로 이관해야 한다");
@@ -167,6 +191,31 @@ async function main() {
   assert(selectTripRoomCardViewModel(selectorSource, "missing") === undefined, "없는 tripId의 ViewModel은 undefined여야 한다");
   const card = selectTripRoomCardViewModel(selectorSource, "sooner", "2026-07-31");
   assert(card?.memberCount === 1 && card.timingLabel === "D-1" && card.destinationName === "부산", "카드 ViewModel은 관계와 D-day를 파생해야 한다");
+  const ownerPreferenceResult: UserPreferenceResult = {
+    userId: "owner",
+    answers: { pace: 1, budget: 1, mobility: 1, activity: 1, mealStyle: 1, planningStyle: 1 },
+    profileType: "legacy-owner-label",
+    traits: ["균형"],
+    preferredTags: ["산책"],
+    completedAt: "2026-08-30T12:00:00.000Z",
+    version: PERSONAL_TEST_VERSION,
+  };
+  const rawPreferenceSummary = selectRoomPreferenceResponseSummary({
+    ...selectorSource,
+    preferenceResultsByUserId: { owner: ownerPreferenceResult },
+  }, "sooner");
+  const canonicalPreferenceSummary = selectRoomPreferenceResponseSummary({
+    ...selectorSource,
+    canonicalPreferenceTitlesByUserId: { owner: "canonical-owner-label" },
+    preferenceResultsByUserId: { owner: ownerPreferenceResult },
+  }, "sooner");
+  assert(
+    rawPreferenceSummary.members[0]?.profileType === "legacy-owner-label"
+      && canonicalPreferenceSummary.members[0]?.profileType === "canonical-owner-label"
+      && canonicalPreferenceSummary.completedCount === rawPreferenceSummary.completedCount
+      && canonicalPreferenceSummary.coverage === rawPreferenceSummary.coverage,
+    "Trip Home 개인 label만 canonical presentation으로 교체하고 응답·그룹 coverage 계약은 유지해야 한다",
+  );
 
   const firstInvite = createTripInviteRecord("sooner", 1);
   const rotatedInvite = createTripInviteRecord("sooner", 2);

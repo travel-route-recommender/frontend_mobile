@@ -48,7 +48,7 @@ export function PlaceSearchInput({
     inputRef.current?.blur();
     onSearch?.();
   };
-  return <View onStartShouldSetResponderCapture={() => { onFocus?.(); return false; }} style={[styles.searchWrap, expanded && styles.searchWrapExpanded]}><TextInput ref={inputRef} accessibilityLabel="장소 검색" value={value} onFocus={onFocus} onPressIn={onFocus} onBlur={onBlur} onChangeText={onChangeText} placeholder={placeholder} placeholderTextColor={colors.textMuted} returnKeyType="search" onSubmitEditing={submitSearch} autoCorrect={false} style={styles.searchInput} />{value ? <Pressable accessibilityRole="button" accessibilityLabel="검색어 지우기" onPress={onClear} style={styles.clearButton}><Text style={styles.clearText}>×</Text></Pressable> : null}{onSearch ? <Pressable accessibilityRole="button" accessibilityLabel="관광공사 API로 검색" onPress={submitSearch} style={styles.searchIconButton}><SearchGlyph /></Pressable> : null}{onFilterPress ? <Pressable accessibilityRole="button" accessibilityLabel="검색 필터 열기" accessibilityState={{ selected: filterActive }} onPress={onFilterPress} style={[styles.filterIconButton, filterActive && styles.filterButtonActive]}><FilterGlyph active={filterActive} /></Pressable> : null}</View>;
+  return <View onStartShouldSetResponderCapture={() => { onFocus?.(); return false; }} style={[styles.searchWrap, expanded && styles.searchWrapExpanded]}><TextInput ref={inputRef} accessibilityLabel="장소 검색" value={value} onFocus={onFocus} onPressIn={onFocus} onBlur={onBlur} onChangeText={onChangeText} placeholder={placeholder} placeholderTextColor={colors.textMuted} returnKeyType="search" onSubmitEditing={submitSearch} autoCorrect={false} style={styles.searchInput} />{value ? <Pressable accessibilityRole="button" accessibilityLabel="검색어 지우기" onPress={onClear} style={styles.clearButton}><Text style={styles.clearText}>×</Text></Pressable> : null}{onSearch ? <Pressable accessibilityRole="button" accessibilityLabel="장소 검색 실행" onPress={submitSearch} style={styles.searchIconButton}><SearchGlyph /></Pressable> : null}{onFilterPress ? <Pressable accessibilityRole="button" accessibilityLabel="검색 필터 열기" accessibilityState={{ selected: filterActive }} onPress={onFilterPress} style={[styles.filterIconButton, filterActive && styles.filterButtonActive]}><FilterGlyph active={filterActive} /></Pressable> : null}</View>;
 }
 
 function SearchGlyph() {
@@ -65,9 +65,9 @@ export function FilterChips<T extends string>({ label, items, selected, onSelect
 }
 
 export const EXPLORE_SORT_OPTIONS: readonly { value: PlaceSortOption; label: string; description: string }[] = [
-  { value: "popular", label: "인기순", description: "인기 점수 연동 예정" },
-  { value: "rating", label: "리뷰점수순", description: "평점이 높은 장소 먼저" },
-  { value: "distance", label: "거리순", description: "기준 장소와 가까운 순서" },
+  { value: "popular", label: "기본순", description: "기본 제공 순서" },
+  { value: "rating", label: "리뷰 높은 순", description: "평점이 높은 장소 먼저" },
+  { value: "distance", label: "가까운 순", description: "기준 장소와 가까운 순서" },
 ];
 
 export function ExploreSortMenu({ value, onChange }: { value: PlaceSortOption; onChange(value: PlaceSortOption): void }) {
@@ -237,6 +237,7 @@ type ExploreFilterSheetProps = {
   trips: readonly TripRoom[];
   regionsById: Record<EntityId, Region>;
   activeTripId: EntityId;
+  showTripTarget?: boolean;
   onApply(input: { category: string | "all"; categories: string[]; classification?: PlaceClassificationSelection; classifications: PlaceClassificationSelection[]; eventStartDate?: string; eventEndDate?: string; sort: PlaceSortOption; tripId?: EntityId }): void;
   onReset(): void;
   onClose(): void;
@@ -262,6 +263,7 @@ function ExploreFilterSheetContent({
   trips,
   regionsById,
   activeTripId,
+  showTripTarget = true,
   onApply,
   onReset,
   onClose,
@@ -364,7 +366,7 @@ function ExploreFilterSheetContent({
   return <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
     <View style={styles.filterSheetRoot}>
       <Pressable accessibilityRole="button" accessibilityLabel="검색 필터 닫기" onPress={onClose} style={styles.filterBackdropTouch}><Animated.View style={[styles.filterBackdropShade, { opacity: backdropOpacity }]} /></Pressable>
-      <Animated.View style={[styles.filterSheet, { transform: [{ translateY: combinedSheetTranslateY }] }]}>
+      <Animated.View style={[styles.filterSheet, styles.filterSheetWhite, { transform: [{ translateY: combinedSheetTranslateY }] }]}>
         <View {...filterSheetPanResponder.panHandlers} style={styles.sheetDragHandleArea}>
           <View style={styles.sheetHandle} />
         </View>
@@ -429,13 +431,13 @@ function ExploreFilterSheetContent({
               </View>
             </View> : null}
           </View>
-          <View style={styles.filterBlock}>
+          {showTripTarget ? <View style={styles.filterBlock}>
             <Text style={styles.filterTitle}>후보를 담을 여행방</Text>
             {trips.length ? trips.map((trip) => {
               const selected = draftTripId === trip.id;
               return <Pressable key={trip.id} accessibilityRole="radio" accessibilityState={{ checked: selected }} onPress={() => setDraftTripId((current) => current === trip.id ? undefined : trip.id)} style={[styles.tripRow, selected && styles.tripRowSelected]}><View style={styles.flex}><Text style={styles.bodyStrong}>{trip.title}</Text><Text style={styles.caption}>{regionsById[trip.regionId]?.name ?? "지역 미정"} · {formatTripDateRange(trip.startDate, trip.endDate)} · {trip.members.length}명</Text></View>{selected ? <Chip label="저장 대상" selected /> : <Text style={styles.link}>선택</Text>}</Pressable>;
             }) : <View style={styles.emptyBox}><Text style={styles.body}>후보를 담을 수 있는 진행 여행방이 없어요.</Text></View>}
-          </View>
+          </View> : null}
         </ScrollView>
         <View style={styles.filterActions}><SecondaryButton label="초기화" onPress={() => { onReset(); onClose(); }} /><PrimaryButton label="검색하기" onPress={() => { onApply({ category: "all", categories: [], classification: draftClassifications[0], classifications: draftClassifications, eventStartDate: festivalSelected ? draftEventStartDate : undefined, eventEndDate: festivalSelected ? draftEventEndDate : undefined, sort: sortOption, tripId: draftTripId }); onClose(); }} /></View>
       </Animated.View>
@@ -483,11 +485,19 @@ export function ActiveTripSelectorModal({ visible, trips, regionsById, activeTri
   return <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}><View style={styles.sheetOverlay}><Card style={styles.sheet}><Text style={styles.modalTitle}>후보를 담을 여행방</Text><Text style={styles.body}>참여 중인 진행 여행방을 선택하면 해당 지역으로 탐색 조건을 맞춰요.</Text>{trips.length ? trips.map((trip) => <Pressable key={trip.id} accessibilityRole="radio" accessibilityState={{ checked: trip.id === activeTripId }} onPress={() => onSelect(trip)} style={[styles.tripRow, trip.id === activeTripId && styles.tripRowSelected]}><View style={styles.flex}><Text style={styles.bodyStrong}>{trip.title}</Text><Text style={styles.caption}>{regionsById[trip.regionId]?.name ?? "지역 미정"} · {formatTripDateRange(trip.startDate, trip.endDate)} · {trip.members.length}명</Text></View>{trip.id === activeTripId ? <Chip label="현재" selected /> : <Text style={styles.link}>선택</Text>}</Pressable>) : <View style={styles.emptyBox}><Text style={styles.body}>후보를 담을 수 있는 진행 여행방이 없어요.</Text></View>}<SecondaryButton label="닫기" onPress={onClose} /></Card></View></Modal>;
 }
 
-export function AddCandidateTripPickerModal({ visible, place, trips, regionsById, getState, onSelect, onCreateTrip, createTripLabel = "새 여행 만들기", onClose }: { visible: boolean; place?: Place; trips: TripRoom[]; regionsById: Record<EntityId, Region>; getState(tripId: EntityId): PlaceCandidateState; onSelect(tripId: EntityId): void; onCreateTrip(): void; createTripLabel?: string; onClose(): void }) {
-  return <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}><View style={styles.sheetOverlay}><Card style={styles.sheet}><Text style={styles.modalTitle}>여행방 후보에 담기</Text><Text style={styles.body}>{place ? `${place.name}을(를) 담을 여행방을 선택해 주세요.` : "장소 정보를 확인해 주세요."}</Text>{trips.length ? trips.map((trip) => { const state = place ? getState(trip.id) : "not-added"; const disabled = state !== "not-added"; return <Pressable key={trip.id} accessibilityRole="radio" accessibilityState={{ checked: false, disabled }} accessibilityLabel={`${trip.title}, ${state === "scheduled" ? "일정에 포함됨" : state === "candidate" ? "후보에 담김" : "선택 가능"}`} disabled={disabled} onPress={() => onSelect(trip.id)} style={[styles.tripRow, disabled && styles.tripRowDisabled]}><View style={styles.flex}><Text style={styles.bodyStrong}>{trip.title}</Text><Text style={styles.caption}>{regionsById[trip.regionId]?.name ?? "지역 미정"} · {formatTripDateRange(trip.startDate, trip.endDate)} · {trip.members.length}명</Text></View><Chip label={state === "scheduled" ? "일정 포함" : state === "candidate" ? "담김" : "선택"} selected={state === "not-added"} /></Pressable>; }) : <View style={styles.emptyBox}><Text style={styles.bodyStrong}>추가 가능한 여행방이 없어요</Text><Text style={styles.caption}>새 여행방을 만든 뒤 후보를 담아보세요.</Text><PrimaryButton label={createTripLabel} onPress={onCreateTrip} /></View>}<SecondaryButton label="계속 탐색" onPress={onClose} /></Card></View></Modal>;
+export function AddCandidateTripPickerModal({ visible, place, trips, regionsById, getState, onSelect, onCreateTrip, onClose }: { visible: boolean; place?: Place; trips: TripRoom[]; regionsById: Record<EntityId, Region>; getState(tripId: EntityId): PlaceCandidateState; onSelect(tripId: EntityId): void; onCreateTrip(): void; onClose(): void }) {
+  const hasSelectableTrip = Boolean(place) && trips.some((trip) => getState(trip.id) === "not-added");
+  return <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}><View style={styles.sheetOverlay}><Card style={styles.sheet}><Text style={styles.modalTitle}>여행방 후보에 담기</Text><Text style={styles.body}>{place ? `${withObjectParticle(place.name)} 담을 여행방을 선택해 주세요.` : "장소 정보를 확인해 주세요."}</Text>{trips.map((trip) => { const state = place ? getState(trip.id) : "not-added"; const disabled = state !== "not-added"; return <Pressable key={trip.id} accessibilityRole="radio" accessibilityState={{ checked: false, disabled }} accessibilityLabel={`${trip.title}, ${state === "scheduled" ? "일정에 포함됨" : state === "candidate" ? "후보에 담김" : "선택 가능"}`} disabled={disabled} onPress={() => onSelect(trip.id)} style={[styles.tripRow, disabled && styles.tripRowDisabled]}><View style={styles.flex}><Text style={styles.bodyStrong}>{trip.title}</Text><Text style={styles.caption}>{regionsById[trip.regionId]?.name ?? "지역 미정"} · {formatTripDateRange(trip.startDate, trip.endDate)} · {trip.members.length}명</Text></View><Chip label={state === "scheduled" ? "일정 포함" : state === "candidate" ? "담김" : "선택"} selected={state === "not-added"} /></Pressable>; })}{!hasSelectableTrip ? <View style={styles.emptyBox}><Text style={styles.bodyStrong}>{trips.length ? "지금 선택할 수 있는 여행방이 없어요" : "추가 가능한 여행방이 없어요"}</Text><Text style={styles.caption}>{trips.length ? "기존 여행방에는 이미 후보로 담겼거나 일정에 포함되어 있어요." : "새 여행방을 만든 뒤 후보를 담아보세요."}</Text><PrimaryButton label="새 여행 만들기" onPress={onCreateTrip} /></View> : null}<SecondaryButton label="계속 탐색" onPress={onClose} /></Card></View></Modal>;
+}
+
+function withObjectParticle(value: string) {
+  const lastCode = value.charCodeAt(value.length - 1);
+  if (lastCode >= 0xac00 && lastCode <= 0xd7a3) return `${value}${(lastCode - 0xac00) % 28 ? "을" : "를"}`;
+  return `${value}을(를)`;
 }
 
 const styles = StyleSheet.create({
+  filterSheetWhite: { backgroundColor: colors.surface },
   searchWrap: { minHeight: 52, flexDirection: "row", alignItems: "center", borderRadius: radius.md, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.surface, overflow: "hidden" }, searchWrapExpanded: { borderBottomLeftRadius: 0, borderBottomRightRadius: 0 }, searchInput: { flex: 1, height: 52, paddingHorizontal: spacing.md, paddingTop: 15, paddingBottom: 15, textAlignVertical: "center", ...typography.body, color: colors.text }, clearButton: { width: 42, height: 52, alignItems: "center", justifyContent: "center" }, clearText: { fontSize: 26, lineHeight: 28, textAlign: "center", color: colors.textSecondary }, searchIconButton: { alignSelf: "stretch", width: 50, alignItems: "center", justifyContent: "center", borderLeftWidth: 1, borderLeftColor: colors.border }, filterIconButton: { alignSelf: "stretch", width: 52, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface, borderLeftWidth: 1, borderLeftColor: colors.border }, filterButtonActive: { backgroundColor: colors.primary, borderLeftColor: colors.primary }, symbolIcon: { width: 24, height: 24 },
   filterSection: { gap: spacing.xs }, filterLabel: { ...typography.caption, color: colors.textSecondary }, chipScroll: { gap: spacing.xs, paddingRight: spacing.lg }, filterChip: { minHeight: 40, justifyContent: "center", paddingHorizontal: spacing.md, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface }, filterChipSelected: { borderColor: colors.primary, backgroundColor: colors.primary }, filterChipText: { ...typography.caption, color: colors.textSecondary }, filterChipTextSelected: { color: colors.white },
   sortButton: { minHeight: 40, justifyContent: "center", paddingHorizontal: spacing.md, borderRadius: radius.pill, backgroundColor: colors.surface }, sortText: { ...typography.caption, color: colors.text },

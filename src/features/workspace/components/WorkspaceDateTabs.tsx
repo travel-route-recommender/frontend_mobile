@@ -13,7 +13,7 @@ import { colors, radius, sizes, spacing, typography } from "../../../theme/token
 import { resolveDayDragTargetIndex } from "../logic/workspaceDayDrag";
 import type { WorkspaceDate } from "../types";
 
-const DAY_TAB_WIDTH = 112;
+const DAY_TAB_WIDTH = 104;
 const DAY_TAB_GAP = spacing.sm;
 const DAY_TAB_STEP = DAY_TAB_WIDTH + DAY_TAB_GAP;
 const DRAG_LONG_PRESS_MS = 360;
@@ -147,13 +147,13 @@ export function WorkspaceDateTabs({
           style={({ pressed }) => [styles.addTab, addDisabled && styles.disabled, pressed && !addDisabled && styles.pressed]}
         >
           <Text style={styles.addSymbol}>+</Text>
-          <Text style={styles.addLabel}>DAY 추가</Text>
+          <Text style={styles.addLabel}>날짜 추가</Text>
         </Pressable>
       </ScrollView>
     </GestureDetector>
     <View style={styles.compactGuide}>
-      <Text numberOfLines={managementDisabledReason ? 2 : 1} style={styles.dragGuide}>{managementDisabledReason ?? (dragging ? "원하는 순서에서 손을 떼세요" : "⠿ 길게 누르고 좌우로 드래그")}</Text>
-      <Pressable accessibilityRole="button" accessibilityLabel="선택한 DAY 관리" disabled={addDisabled} onPress={() => setManageOpen(true)} style={({ pressed }) => [styles.manageTrigger, addDisabled && styles.disabled, pressed && !addDisabled && styles.pressed]}><Text style={styles.manageTriggerText}>DAY 관리 ···</Text></Pressable>
+      <Text numberOfLines={managementDisabledReason ? 2 : 1} style={styles.dragGuide}>{managementDisabledReason ?? (dragging ? "원하는 순서에서 손을 떼세요" : "길게 눌러 DAY 순서 변경")}</Text>
+      <Pressable accessibilityRole="button" accessibilityLabel="선택한 DAY 관리" disabled={addDisabled} onPress={() => setManageOpen(true)} style={({ pressed }) => [styles.manageTrigger, addDisabled && styles.disabled, pressed && !addDisabled && styles.pressed]}><Text style={styles.manageTriggerText}>DAY 관리</Text></Pressable>
     </View>
     <DayManagementModal
       visible={manageOpen}
@@ -273,9 +273,9 @@ function DayManagementModal({
 
 const styles = StyleSheet.create({
   wrap: { marginHorizontal: -spacing.lg },
-  content: { gap: DAY_TAB_GAP, paddingHorizontal: spacing.lg, paddingVertical: spacing.xs },
-  tab: { width: DAY_TAB_WIDTH, minHeight: sizes.touch, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: 2, overflow: "hidden" },
-  tabSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
+  content: { gap: DAY_TAB_GAP, paddingHorizontal: spacing.lg, paddingVertical: spacing.xxs },
+  tab: { width: DAY_TAB_WIDTH, minHeight: 72, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, paddingHorizontal: spacing.sm, paddingVertical: spacing.sm, gap: 1, overflow: "hidden" },
+  tabSelected: { backgroundColor: colors.primary, borderColor: colors.primary, outlineStyle: "solid", outlineWidth: 0 },
   day: { ...typography.caption, color: colors.primary },
   date: { ...typography.bodyStrong, color: colors.text },
   count: { ...typography.caption, color: colors.textMuted },
@@ -283,10 +283,10 @@ const styles = StyleSheet.create({
   textSelected: { color: colors.white },
   dragHandle: { position: "absolute", top: spacing.xs, right: spacing.xs, fontSize: 17, lineHeight: 20, color: colors.textMuted },
   dragHandleSelected: { color: colors.primarySoft },
-  addTab: { width: 82, minHeight: sizes.touch, alignItems: "center", justifyContent: "center", borderRadius: radius.lg, borderWidth: 1, borderStyle: "dashed", borderColor: colors.primary, backgroundColor: colors.primarySoft, gap: 2 },
+  addTab: { width: 84, minHeight: 72, alignItems: "center", justifyContent: "center", borderRadius: radius.lg, borderWidth: 1, borderStyle: "dashed", borderColor: "#9B91D2", backgroundColor: "#F4F1FF", gap: 2 },
   addSymbol: { fontSize: 22, lineHeight: 24, fontWeight: "900", color: colors.primary },
-  addLabel: { ...typography.caption, color: colors.primary },
-  compactGuide: { minHeight: 34, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.lg, paddingTop: spacing.xxs },
+  addLabel: { ...typography.caption, color: "#7569BE" },
+  compactGuide: { minHeight: 30, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.lg },
   dragGuide: { ...typography.caption, color: colors.textSecondary, flex: 1 },
   manageTrigger: { minHeight: 30, justifyContent: "center", borderRadius: radius.pill, backgroundColor: colors.surface, paddingHorizontal: spacing.sm },
   manageTriggerText: { ...typography.caption, color: colors.primary },

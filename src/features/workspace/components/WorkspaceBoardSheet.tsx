@@ -16,8 +16,10 @@ import {
   clampWorkspaceBoardHeight,
   getInitialWorkspaceBoardHeight,
   getWorkspaceBoardHeightBounds,
+  getWorkspaceBoardSnapState,
   isWorkspaceBoardCollapsed,
   resizeWorkspaceBoardHeight,
+  snapWorkspaceBoardHeight,
   stepWorkspaceBoardHeight,
 } from "../logic/workspaceBoardLayout";
 
@@ -42,6 +44,8 @@ export function WorkspaceBoardSheet({
   const heightRef = useRef(panelHeight);
   const dragStartRef = useRef(panelHeight);
   const collapsed = isWorkspaceBoardCollapsed(panelHeight, bounds);
+  const snapState = getWorkspaceBoardSnapState(panelHeight, bounds);
+  const snapLabel = snapState === "peek" ? "미리보기" : snapState === "half" ? "절반" : "전체";
 
   const updateHeight = useCallback((height: number) => {
     const next = clampWorkspaceBoardHeight(height, boundsRef.current);
@@ -69,6 +73,12 @@ export function WorkspaceBoardSheet({
       onPanResponderMove: (_event, gesture) => {
         updateHeight(resizeWorkspaceBoardHeight(dragStartRef.current, gesture.dy, boundsRef.current));
       },
+      onPanResponderRelease: (_event, gesture) => {
+        updateHeight(snapWorkspaceBoardHeight(heightRef.current, gesture.vy, boundsRef.current));
+      },
+      onPanResponderTerminate: () => {
+        updateHeight(snapWorkspaceBoardHeight(heightRef.current, 0, boundsRef.current));
+      },
       onPanResponderTerminationRequest: () => false,
       onShouldBlockNativeResponder: () => true,
     });
@@ -94,39 +104,31 @@ export function WorkspaceBoardSheet({
       accessible
       accessibilityRole="adjustable"
       accessibilityLabel="후보 보드 높이 조절"
-      accessibilityHint="위로 끌어 펼치고 아래로 끝까지 끌어 손잡이만 남기거나 접근성 조절 동작을 사용하세요"
+      accessibilityHint="위아래로 끌어 미리보기, 절반, 전체 상태를 선택하거나 접근성 조절 동작을 사용하세요"
       accessibilityState={{ expanded: !collapsed }}
       accessibilityValue={{
-        min: Math.round(bounds.minHeight),
-        max: Math.round(bounds.maxHeight),
-        now: Math.round(panelHeight),
-        text: `${Math.round(panelHeight)}픽셀`,
+        text: `${snapLabel} 상태`,
       }}
       accessibilityActions={[
-        { name: "increment", label: "후보 보드 높이 20픽셀 늘리기" },
-        { name: "decrement", label: "후보 보드 높이 20픽셀 줄이기" },
+        { name: "increment", label: "후보 보드 한 단계 펼치기" },
+        { name: "decrement", label: "후보 보드 한 단계 접기" },
       ]}
       onAccessibilityAction={(event) => {
         if (event.nativeEvent.actionName === "increment") adjustHeight(1);
         if (event.nativeEvent.actionName === "decrement") adjustHeight(-1);
       }}
-      style={styles.dragZone}
+      style={[styles.dragZone, !collapsed && styles.dragZoneExpanded]}
       testID="workspace-board-sheet-handle"
     >
       <View style={styles.handle} />
-    </View>
-    <View
-      accessibilityElementsHidden={collapsed}
-      importantForAccessibility={collapsed ? "no-hide-descendants" : "auto"}
-      pointerEvents={collapsed ? "none" : "auto"}
-      style={styles.body}
-    >
-      <View style={styles.sheetHeading}>
-        <View style={styles.sheetHeadingCopy}>
-          <Text style={styles.eyebrow}>CANDIDATE BOARD</Text>
-          <Text style={styles.sheetTitle}>미배치 {unscheduledCandidateCount}곳</Text>
+      <View style={styles.peekHeading}>
+        <View style={styles.peekCopy}>
+          <Text style={styles.peekEyebrow}>후보 장소</Text>
+          <Text style={styles.peekTitle}>미배치 {unscheduledCandidateCount}곳</Text>
         </View>
       </View>
+    </View>
+    {!collapsed ? <View style={styles.body}>
       <Text style={styles.candidateGuide}>후보를 일정에 추가한 뒤, 위 시간표에서 위치와 체류시간을 조절하세요.</Text>
       <ScrollView
         style={styles.content}
@@ -139,20 +141,21 @@ export function WorkspaceBoardSheet({
       >
         {candidateBoard}
       </ScrollView>
-    </View>
+    </View> : null}
   </View>;
 }
 
 const styles = StyleSheet.create({
   sheet: { position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 40, elevation: 20, overflow: "hidden", borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl, borderWidth: 1, borderBottomWidth: 0, borderColor: colors.border, backgroundColor: colors.surface, ...shadows.floating },
-  dragZone: { minHeight: 44, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface, paddingHorizontal: spacing.lg, paddingVertical: spacing.xs },
-  handle: { width: 46, height: 5, alignSelf: "center", borderRadius: radius.pill, backgroundColor: colors.borderStrong },
+  dragZone: { minHeight: 116, alignItems: "center", justifyContent: "flex-start", backgroundColor: colors.surface, paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.md },
+  dragZoneExpanded: { minHeight: 72, paddingBottom: spacing.sm },
+  handle: { width: 44, height: 5, alignSelf: "center", borderRadius: radius.pill, backgroundColor: colors.borderStrong },
+  peekHeading: { width: "100%", flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.sm },
+  peekCopy: { flex: 1, minWidth: 0 },
+  peekEyebrow: { ...typography.caption, color: colors.textSecondary },
+  peekTitle: { ...typography.subtitle, color: colors.text },
   body: { flex: 1, minHeight: 0 },
-  sheetHeading: { minHeight: 64, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingTop: spacing.sm, paddingHorizontal: spacing.lg },
-  sheetHeadingCopy: { flex: 1, minWidth: 0 },
-  eyebrow: { ...typography.caption, color: colors.primary },
-  sheetTitle: { ...typography.subtitle, color: colors.text },
-  candidateGuide: { ...typography.caption, color: colors.textSecondary, marginHorizontal: spacing.lg, borderRadius: radius.md, backgroundColor: colors.surfaceMuted, paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
+  candidateGuide: { ...typography.caption, color: colors.textSecondary, marginHorizontal: spacing.lg, borderRadius: radius.md, backgroundColor: colors.surfaceMuted, paddingHorizontal: spacing.md, paddingVertical: spacing.xs },
   content: { flex: 1, marginTop: spacing.sm },
   contentContainer: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xxl },
 });

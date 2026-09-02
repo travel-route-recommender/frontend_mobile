@@ -1,7 +1,8 @@
 import type { ItineraryItem, Place, Region, TripCandidate, TripRoom, User } from "../../../domain";
 import { getPlaceCategoryLabel, normalizeSearchKeyword } from "../../places/logic/placeSearch";
+import { selectPlaceTripRelation } from "../../places/selectors/placeSelectors";
 import type { SessionKind } from "../../auth/types";
-import { canEditTripWorkspace } from "../logic/workspaceCapabilities";
+import { buildWorkspaceMutationPermissions } from "../logic/workspaceCapabilities";
 import {
   buildTripDateRange,
   findTimeConflictsForDate,
@@ -27,22 +28,8 @@ export interface WorkspaceSelectorState {
   itineraryByTripId: Readonly<Record<string, ItineraryItem[]>>;
 }
 
-export function buildCandidateScheduleLookup(items: readonly ItineraryItem[]) {
-  const lookup: Record<string, string[]> = {};
-  items.forEach((item) => {
-    if (!item.placeId || !isValidDateOnly(item.date)) return;
-    const dates = lookup[item.placeId] ?? [];
-    if (!dates.includes(item.date)) lookup[item.placeId] = [...dates, item.date].sort();
-  });
-  return lookup;
-}
-
-export function selectCandidateScheduleState(
-  lookup: Readonly<Record<string, string[]>>,
-  placeId: string,
-  selectedDate: string,
-): CandidateScheduleState {
-  const dates = lookup[placeId] ?? [];
+function selectCandidateScheduleState(scheduledDates: readonly string[], selectedDate: string): CandidateScheduleState {
+  const dates = scheduledDates;
   if (!dates.length) return "unscheduled";
   return dates.includes(selectedDate) ? "scheduled-on-selected-date" : "scheduled-on-other-date";
 }
@@ -96,9 +83,8 @@ export function buildWorkspaceViewModel(
   if (!rawDates.length) return null;
   const dateValues = rawDates.map((date) => date.date);
   const selectedDate = resolveWorkspaceSelectedDate(dateValues, requestedDate, itinerary, today);
-  const scheduleLookup = buildCandidateScheduleLookup(itinerary);
-  const scheduledCandidateCount = candidates.filter((candidate) => (scheduleLookup[candidate.placeId] ?? []).length > 0).length;
-  const edit = canEditTripWorkspace({ sessionKind, currentUserId: state.currentUserId, trip });
+  const scheduledCandidateCount = candidates.filter((candidate) => selectPlaceTripRelation(state, tripId, candidate.placeId).isScheduled).length;
+  const { decision, permissions } = buildWorkspaceMutationPermissions({ sessionKind, currentUserId: state.currentUserId, trip });
   return {
     tripId: trip.id,
     title: trip.title || "이름 없는 여행방",
@@ -112,8 +98,9 @@ export function buildWorkspaceViewModel(
     scheduledCandidateCount,
     itineraryCount: itinerary.length,
     memberCount: trip.members.length,
-    canEdit: edit.allowed,
-    ...(!edit.allowed ? { readOnlyReason: edit.reason } : {}),
+    permissions,
+    canEdit: permissions.canEditSchedule,
+    ...(!decision.allowed ? { readOnlyReason: decision.reason } : {}),
   };
 }
 
@@ -131,11 +118,19 @@ export function buildCandidatePlaceViewModels(
   tripId: string,
   selectedDate: string,
 ): CandidatePlaceViewModel[] {
-  const itinerary = state.itineraryByTripId[tripId] ?? [];
-  const lookup = buildCandidateScheduleLookup(itinerary);
+  const trip = state.tripsById[tripId];
+  const dayLabelByDate = new Map(
+    trip?.startDate && trip.endDate
+      ? buildTripDateRange(trip.startDate, trip.endDate).map((date) => [date.date, date.dayLabel] as const)
+      : [],
+  );
   return dedupeCandidates(state.candidatesByTripId[tripId] ?? []).map((candidate) => {
     const place = state.placesById[candidate.placeId];
     const addedByNames = candidate.addedByUserIds.flatMap((userId) => state.usersById[userId]?.name ? [state.usersById[userId].name] : []);
+    const relation = selectPlaceTripRelation(state, tripId, candidate.placeId);
+    const scheduledDates = [...new Set(relation.scheduledItems
+      .map((item) => item.date)
+      .filter(isValidDateOnly))].sort();
     return {
       tripId,
       placeId: candidate.placeId,
@@ -148,8 +143,19 @@ export function buildCandidatePlaceViewModels(
       addedByNames,
       addedByCount: candidate.addedByUserIds.length,
       recommendedByDuri: candidate.recommendedByDuri,
-      scheduleState: selectCandidateScheduleState(lookup, candidate.placeId, selectedDate),
-      scheduledDates: [...(lookup[candidate.placeId] ?? [])],
+      scheduleState: selectCandidateScheduleState(scheduledDates, selectedDate),
+      scheduledCount: relation.scheduledCount,
+      scheduledDates,
+      scheduledPlacements: relation.scheduledItems
+        .filter((item) => isValidDateOnly(item.date))
+        .sort((left, right) => left.date.localeCompare(right.date) || left.startTime.localeCompare(right.startTime) || left.id.localeCompare(right.id))
+        .map((item) => ({
+          itemId: item.id,
+          date: item.date,
+          dayLabel: dayLabelByDate.get(item.date) ?? item.date,
+          startTime: item.startTime,
+          endTime: getItineraryEndTime(item),
+        })),
       placeMissing: !place,
     };
   });
