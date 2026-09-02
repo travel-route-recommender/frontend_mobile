@@ -28,6 +28,7 @@ import type { TripPreparationStepId } from "../types";
 export function ApiTripDetailContent({ tripId, created }: { tripId: string; created: boolean }) {
   const router = useRouter();
   const currentUserId = useAuthSessionStore((state) => state.currentSessionUserId);
+  const sessionKind = useAuthSessionStore((state) => state.sessionKind);
   const [inviteOpen, setInviteOpen] = useState(false);
   const startTripExplore = useExploreSearchStore((state) => state.startTripExplore);
   const syncActiveTripRegion = useExploreSearchStore((state) => state.syncActiveTripRegion);

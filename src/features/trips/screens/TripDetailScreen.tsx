@@ -52,6 +52,7 @@ function ApiTripDetailRoute() {
 
 function MockTripHomeScreen() {
   const router = useRouter();
+  const sessionKind = useAuthSessionStore((state) => state.sessionKind);
   const params = useLocalSearchParams<{ tripId?: string | string[]; created?: string | string[] }>();
   const tripId = Array.isArray(params.tripId) ? params.tripId[0] : params.tripId;
   const created = (Array.isArray(params.created) ? params.created[0] : params.created) === "1";

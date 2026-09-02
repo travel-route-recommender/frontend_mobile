@@ -6,7 +6,7 @@ import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import { AuthErrorBanner, AuthTextField, PasswordField } from "../components/AuthControls";
 import { AuthLayout } from "../components/AuthLayout";
 import { useAuthFlow } from "../hooks/useAuthFlow";
-import { authService } from "../services/authService";
+import { authCapabilities, authService } from "../services/authService";
 import { useAuthSessionStore } from "../store/useAuthSessionStore";
 import { useDuriStore } from "../../../store/useDuriStore";
 import { normalizeEmail, validateEmail, validatePassword, validatePasswordConfirmation } from "../validation";
@@ -32,7 +32,7 @@ export function GuestRoomLimitScreen() {
       />
       {!canContinueGuest ? <Text style={styles.helper}>기존 방 정보가 없거나 게스트 로그인 정보가 만료됐어요. 먼저 로그인해 주세요.</Text> : null}
       <SecondaryButton label="회원 계정으로 로그인" onPress={() => router.push("/(auth)/login")} />
-      <SecondaryButton label="게스트 계정 업그레이드" disabled={sessionKind !== "guest"} onPress={() => router.push("/(auth)/guest-upgrade" as never)} />
+      {authCapabilities.guestUpgrade ? <SecondaryButton label="게스트 계정 업그레이드" disabled={sessionKind !== "guest"} onPress={() => router.push("/(auth)/guest-upgrade" as never)} /> : null}
     </View>
   </AuthLayout>;
 }
@@ -79,6 +79,17 @@ export function GuestUpgradeScreen() {
     return <AuthLayout title="게스트 계정 업그레이드" onBack={() => router.back()}>
       <Card style={styles.notice}><Text style={styles.noticeTitle}>게스트 세션이 필요해요</Text><Text style={styles.noticeBody}>{sessionKind === "member" ? "이미 회원 계정으로 이용 중이에요." : "참여 중인 게스트 데이터를 유지하려면 해당 게스트 세션으로 먼저 접속해 주세요."}</Text></Card>
       <PrimaryButton label={sessionKind === "member" ? "여행 목록으로 이동" : "로그인"} onPress={() => router.replace(sessionKind === "member" ? "/(tabs)/trips" : "/(auth)/login")} />
+    </AuthLayout>;
+  }
+
+  if (!authCapabilities.guestUpgrade) {
+    return <AuthLayout title="게스트 계정 업그레이드" onBack={() => router.back()}>
+      <Card style={styles.notice}>
+        <Text style={styles.noticeTitle}>현재 서버에서는 지원하지 않아요</Text>
+        <Text style={styles.noticeBody}>게스트 데이터를 유지한 회원 전환 API가 추가된 뒤 사용할 수 있어요. 지금은 별도 회원 계정으로 로그인하거나 가입해 주세요.</Text>
+      </Card>
+      <PrimaryButton label="회원가입" onPress={() => router.replace("/(auth)/signup-email")} />
+      <SecondaryButton label="로그인" onPress={() => router.replace("/(auth)/login")} />
     </AuthLayout>;
   }
 

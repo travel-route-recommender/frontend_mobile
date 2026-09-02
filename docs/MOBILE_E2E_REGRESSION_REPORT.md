@@ -138,7 +138,7 @@ owner 누락, 누락된 user/place/date/result는 의미를 추정할 수 없어
 ## 11. 실제 API 연동 전 필요한 backend 자료
 
 - OpenAPI 문서와 환경별 base URL, 오류 envelope, pagination/filter/sort 규칙.
-- access/refresh token 발급·갱신·폐기·만료·logout 계약과 소셜 로그인 redirect scheme.
+- access/refresh token 발급·갱신·폐기·만료·logout 계약과 소셜 로그인 OIDC challenge/client 설정.
 - User/TripRoom/TripMember/Region/Place/Candidate/Itinerary/Preference ID 및 version/updatedAt 계약.
 - Rooms 생성/초대/role/완료 상태 권한표와 guest→member 전환 정책.
 - Schedule batch mutation의 optimistic concurrency, idempotency key, rollback 및 conflict 응답.

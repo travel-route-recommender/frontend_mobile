@@ -15,7 +15,12 @@ async function main() {
   const loginResponse = await fetch(`${baseUrl}/auth/login`, {
     method: "POST",
     headers: { Accept: "application/json", "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({
+      email,
+      password,
+      installationId: "duri-api-contract-verifier",
+      platform: "unknown",
+    }),
   });
   assert(loginResponse.ok, `fixture 로그인 실패: HTTP ${loginResponse.status}`);
   const login = await loginResponse.json() as { accessToken?: unknown; user?: { id?: unknown } };
