@@ -1,8 +1,10 @@
 import { useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useQueryClient } from "@tanstack/react-query";
 import { router } from "expo-router";
 import { AppHeader, Card, PrimaryButton, Screen, SecondaryButton } from "../../../components/common";
 import { EmptyState, ErrorState } from "../../../components/feedback";
+import { queryKeys } from "../../../query/keys";
 import { useDuriStore } from "../../../store/useDuriStore";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import { useAuthSessionStore } from "../../auth/store/useAuthSessionStore";
@@ -15,7 +17,7 @@ import {
   isPreferenceStepComplete,
   validateTravelPreferenceSurvey,
 } from "../logic/travel-preference-survey";
-import { preferenceResultService } from "../services/preferenceSubmissionService";
+import { createPreferenceResultService, preferenceResultService } from "../services/preferenceSubmissionService";
 import { isSameDraftOwner, usePersonalPreferenceDraftStore } from "../store/usePersonalPreferenceDraftStore";
 import type { PreferenceDraftOwner } from "../types";
 
@@ -26,6 +28,7 @@ function getOwner(sessionKind: SessionKind | null, userId: string | null): Prefe
 }
 
 export function PersonalReviewScreen() {
+  const queryClient = useQueryClient();
   const sessionKind = useAuthSessionStore((state) => state.sessionKind);
   const sessionUserId = useAuthSessionStore((state) => state.currentSessionUserId);
   const owner = useMemo(() => getOwner(sessionKind, sessionUserId), [sessionKind, sessionUserId]);
@@ -57,29 +60,35 @@ export function PersonalReviewScreen() {
       editQuestion(validation.firstInvalidStepIndex, validation.message);
       return;
     }
+    if (sessionKind !== "anonymous" && (!sessionUserId || !currentUserExists || domainCurrentUserId !== sessionUserId)) {
+      setErrorMessage("현재 사용자 정보를 확인할 수 없어 결과를 저장하지 못했어요.");
+      return;
+    }
     setSubmitting(true);
     setErrorMessage(null);
     try {
       const completedAt = new Date().toISOString();
       const submissionUserId = sessionKind === "anonymous" ? "anonymous-preview" : sessionUserId ?? "";
-      const prepared = await preferenceResultService.calculate({ userId: submissionUserId, answers: validation.answers, completedAt });
+      const resultService = sessionKind === "anonymous" ? createPreferenceResultService("mock") : preferenceResultService;
+      const prepared = await resultService.calculate({ userId: submissionUserId, answers: validation.answers, completedAt });
       if (prepared.status === "error") { setErrorMessage(prepared.message); return; }
+      const resultCompletedAt = prepared.result.completedAt;
       if (sessionKind === "anonymous") {
-        setCompletedSurvey({ owner, answers: validation.answers, completedAt });
+        setCompletedSurvey({ owner, answers: prepared.result.answers, completedAt: resultCompletedAt });
         resetDraft();
         router.replace("/tests/personal/result");
         return;
       }
-      if (!sessionUserId || !currentUserExists || domainCurrentUserId !== sessionUserId) {
-        setErrorMessage("현재 사용자 정보를 확인할 수 없어 결과를 저장하지 못했어요.");
-        return;
-      }
-      const legacyProjection = calculateLegacyPreferenceProjection(sessionUserId, prepared.result.answers, completedAt);
-      const saved = saveResult(sessionUserId, legacyProjection.answers, completedAt, buildDuriPreferenceSignals(prepared.result));
-      if (!saved) { setErrorMessage("기존 결과는 유지했지만 새 결과를 저장하지 못했어요. 다시 시도해 주세요."); return; }
-      setCompletedSurvey({ owner, answers: validation.answers, completedAt });
+      if (!sessionUserId) return;
+      const legacyProjection = calculateLegacyPreferenceProjection(sessionUserId, prepared.result.answers, resultCompletedAt);
+      const saved = saveResult(sessionUserId, legacyProjection.answers, resultCompletedAt, buildDuriPreferenceSignals(prepared.result));
+      if (!saved && prepared.source === "local-mock") { setErrorMessage("기존 결과는 유지했지만 새 결과를 저장하지 못했어요. 다시 시도해 주세요."); return; }
+      setCompletedSurvey({ owner, answers: prepared.result.answers, completedAt: resultCompletedAt });
       setPreferenceCompleted(true);
       setIntroSeen(true);
+      if (prepared.source === "backend") {
+        await queryClient.invalidateQueries({ queryKey: queryKeys.preferences.profile(sessionUserId) }).catch(() => undefined);
+      }
       resetDraft();
       router.replace("/tests/personal/result");
     } finally {

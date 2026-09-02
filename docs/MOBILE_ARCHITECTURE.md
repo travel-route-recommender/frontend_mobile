@@ -81,7 +81,7 @@ Workspace Candidates/Schedule은 `workspaceScheduleService` 정책을 사용한�
 
 개인 성향 결과, 그룹 진단, GroupPlanningProfile, 일정 분석, suggestion fingerprint, preview와 적용 함수는 React와 Store를 import하지 않는 순수 함수다. 같은 normalized 입력에 대해 웹과 같은 분석 결과를 내도록 기준 구현을 유지한다.
 
-개인 성향 질문 config, 도메인 타입과 결과 계산 파일은 `Frontend_new` 기준과 동일하다. 화면은 `preferenceSubmissionService`를 통해 제출하며 mock만 local 계산을 허용한다. api/hybrid는 Quiz 계약 전까지 네트워크를 호출하거나 local 결과로 fallback하지 않는다.
+개인 성향 질문 config, 도메인 타입과 결과 계산 파일은 `Frontend_new` 기준과 동일하다. 화면은 `preferenceSubmissionService`를 통해 제출한다. mock과 익명 체험은 local 계산을 사용하고, api/hybrid의 인증 세션은 설문·알고리즘 버전과 현재 8단계 원본 답변을 Quiz 세션 API에 전송한다. 서버 제출 실패를 local 성공으로 처리하지 않는다.
 
 그룹 응답 상태와 진단은 `TripMember.userId -> usersById -> preferenceResultsByUserId` 관계에서 파생한다. `TripMember`에 완료 flag를 저장하지 않는다. selector가 version과 6개 필수 답변을 검증하고, Duri group domain이 웹 기준 5개 계획 차원의 spread와 GroupPlanningProfile을 계산한다. completion rate, coverage, match rate, tag 집계와 그룹 프로필은 persist하지 않는다.
 
