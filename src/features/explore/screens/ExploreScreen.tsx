@@ -217,12 +217,12 @@ export function ExploreScreen() {
     setSearchFocused(false);
     setSortMenuOpen(false);
     snapMapSheetTo("half");
-    setDisplayMode("map");
+    setIsMapMode(true);
   }, [snapMapSheetTo]);
   const showList = useCallback(() => {
     setSearchFocused(false);
     setSortMenuOpen(false);
-    setDisplayMode("list");
+    setIsMapMode(false);
   }, []);
   const mapSheetHandleLabel = mapSheetTargetPosition === "collapsed"
     ? "검색 결과 시트 중간 높이로 펼치기"
@@ -266,7 +266,7 @@ export function ExploreScreen() {
   useFocusEffect(useCallback(() => {
     if (Platform.OS !== "android") return undefined;
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-      if (displayMode === "map") {
+      if (isMapMode) {
         showList();
         return true;
       }
@@ -275,7 +275,7 @@ export function ExploreScreen() {
       return true;
     });
     return () => subscription.remove();
-  }, [displayMode, returnToTrip, showList, tripExploreContext]));
+  }, [isMapMode, returnToTrip, showList, tripExploreContext]));
 
   const clearBlurTimer = useCallback(() => {
     if (!blurTimerRef.current) return;
@@ -849,7 +849,7 @@ export function ExploreScreen() {
         <SymbolView name={{ ios: "slider.horizontal.3", android: "tune", web: "tune" }} tintColor={filterActive ? colors.white : colors.primary} size={17} weight={{ ios: "semibold", android: mediumSymbolWeight }} style={styles.listControlIcon} />
         <Text style={[styles.listControlText, filterActive && styles.listControlTextActive]}>필터{activeFilterBadges.length ? ` ${activeFilterBadges.length}` : ""}</Text>
       </Pressable>
-      <Pressable accessibilityRole="button" accessibilityLabel="지도 보기" onPress={() => { setSearchFocused(false); setSortMenuOpen(false); setIsMapMode(true); }} style={({ pressed }) => [styles.listControlButton, pressed && styles.pressed]}>
+      <Pressable accessibilityRole="button" accessibilityLabel="지도 보기" onPress={showMap} style={({ pressed }) => [styles.listControlButton, pressed && styles.pressed]}>
         <SymbolView name={{ ios: "map.fill", android: "map", web: "map" }} tintColor={colors.primary} size={17} weight={{ ios: "semibold", android: mediumSymbolWeight }} style={styles.listControlIcon} />
         <Text style={styles.listControlText}>지도</Text>
       </Pressable>
@@ -907,7 +907,7 @@ export function ExploreScreen() {
           <ExploreHeader onBack={tripExploreContext ? returnToTrip : undefined} compact />
           {searchHeader}
           {tripExploreContext && tripContextTrip ? <TripContextBar title={tripContextTrip.title} regionName={source.regionsById[tripContextTrip.regionId]?.name} candidateCount={tripContextCandidateCount} scheduledCount={tripContextScheduledCount} compact /> : null}
-          <View style={styles.mapModeSwitchRow}><Text style={styles.mapModeTitle}>지도에서 장소 보기</Text><Pressable accessibilityRole="button" accessibilityLabel="장소 목록으로 돌아가기" onPress={() => setIsMapMode(false)} style={({ pressed }) => [styles.mapModeListButton, pressed && styles.pressed]}><Text style={styles.mapModeListText}>목록 보기</Text></Pressable></View>
+          <View style={styles.mapModeSwitchRow}><Text style={styles.mapModeTitle}>지도에서 장소 보기</Text><Pressable accessibilityRole="button" accessibilityLabel="장소 목록으로 돌아가기" onPress={showList} style={({ pressed }) => [styles.mapModeListButton, pressed && styles.pressed]}><Text style={styles.mapModeListText}>목록 보기</Text></Pressable></View>
         </View>
         <Animated.View style={[styles.mapResultsSheet, mapSheetTargetPosition === "expanded" && styles.mapResultsSheetExpanded, { height: mapSheetSnapPoints.expanded }, mapSheetAnimatedStyle]}>
           <GestureDetector gesture={mapSheetDragGesture}>
