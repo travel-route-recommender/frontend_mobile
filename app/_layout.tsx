@@ -111,6 +111,7 @@ function SessionAwareNavigator() {
       <Stack.Screen name="places/[placeId]" />
     </Stack.Protected>
     <Stack.Protected guard={member}>
+      <Stack.Screen name="account" />
       <Stack.Screen name="trips/new" />
     </Stack.Protected>
   </Stack></>;

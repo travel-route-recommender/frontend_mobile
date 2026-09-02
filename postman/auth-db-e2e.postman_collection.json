@@ -1,0 +1,210 @@
+{
+  "info": {
+    "_postman_id": "4ff66255-2c03-4dbd-96e2-d03b8973761a",
+    "name": "TripMatch Auth DB E2E",
+    "description": "Live Swagger contract checks, member DB creation, and an interactive Kakao identity-link flow.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "if (!pm.environment.get('runId')) {",
+          "  const runId = `${Date.now()}-${pm.variables.replaceIn('{{$randomInt}}')}`;",
+          "  pm.environment.set('runId', runId);",
+          "  pm.environment.set('e2eEmail', `postman.e2e.${runId}@example.com`);",
+          "  pm.environment.set('installationId', `postman-installation-${runId}`);",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Member DB creation",
+      "item": [
+        {
+          "name": "Verify live Swagger auth contract",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{swaggerUrl}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Swagger JSON is available', () => pm.response.to.have.status(200));",
+                  "const document = pm.response.json();",
+                  "pm.test('Social challenge is documented', () => pm.expect(document.paths['/api/v1/auth/social/challenge']).to.be.an('object'));",
+                  "pm.test('Kakao identity link is documented', () => pm.expect(document.paths['/api/v1/auth/identities/link/{provider}']).to.be.an('object'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create member",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nickname\": \"Postman E2E\",\n  \"email\": \"{{e2eEmail}}\",\n  \"password\": \"{{e2ePassword}}\",\n  \"installationId\": \"{{installationId}}\",\n  \"platform\": \"unknown\",\n  \"deviceName\": \"Postman Newman\",\n  \"appVersion\": \"e2e\"\n}"
+            },
+            "url": "{{baseUrl}}/auth/signup"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Member is created', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('Member session is returned', () => {",
+                  "  pm.expect(body.accessToken).to.be.a('string').and.not.empty;",
+                  "  pm.expect(body.refreshToken).to.be.a('string').and.not.empty;",
+                  "  pm.expect(body.user.id).to.be.a('string').and.not.empty;",
+                  "  pm.expect(body.user.isGuest).to.eql(false);",
+                  "});",
+                  "pm.environment.set('accessToken', body.accessToken);",
+                  "pm.environment.set('refreshToken', body.refreshToken);",
+                  "pm.environment.set('createdUserId', body.user.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Read created member",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/users/me"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Created member is persisted', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Persisted user ID and email match', () => {",
+                  "  pm.expect(body.id).to.eql(pm.environment.get('createdUserId'));",
+                  "  pm.expect(body.email).to.eql(pm.environment.get('e2eEmail'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login returns the same member",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{e2eEmail}}\",\n  \"password\": \"{{e2ePassword}}\",\n  \"installationId\": \"{{installationId}}\",\n  \"platform\": \"unknown\",\n  \"deviceName\": \"Postman Newman\",\n  \"appVersion\": \"e2e\"\n}"
+            },
+            "url": "{{baseUrl}}/auth/login"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Existing member can log in', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('Login does not create a duplicate member', () => pm.expect(body.user.id).to.eql(pm.environment.get('createdUserId')));",
+                  "pm.environment.set('accessToken', body.accessToken);",
+                  "pm.environment.set('refreshToken', body.refreshToken);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Kakao identity link",
+      "description": "Run the challenge, issue a Kakao OIDC ID token with the returned nonce, set kakaoIdToken, and then run the link request.",
+      "item": [
+        {
+          "name": "Create Kakao challenge",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"provider\": \"kakao\",\n  \"installationId\": \"{{installationId}}\"\n}"
+            },
+            "url": "{{baseUrl}}/auth/social/challenge"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Kakao challenge is created', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.environment.set('challengeId', body.challengeId);",
+                  "pm.environment.set('kakaoNonce', body.nonce);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Link Kakao identity",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idToken\": \"{{kakaoIdToken}}\",\n  \"challengeId\": \"{{challengeId}}\",\n  \"installationId\": \"{{installationId}}\",\n  \"platform\": \"unknown\",\n  \"deviceName\": \"Postman\",\n  \"appVersion\": \"e2e\"\n}"
+            },
+            "url": "{{baseUrl}}/auth/identities/link/kakao"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Kakao identity is linked', () => pm.response.to.have.status(201));",
+                  "pm.test('Link response is explicit', () => pm.expect(pm.response.json().linked).to.eql(true));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    { "key": "baseUrl", "value": "http://127.0.0.1:3000/api/v1" },
+    { "key": "swaggerUrl", "value": "http://127.0.0.1:3000/api/docs-json" },
+    { "key": "e2ePassword", "value": "Postman-E2E-Password-2026" },
+    { "key": "kakaoIdToken", "value": "" }
+  ]
+}

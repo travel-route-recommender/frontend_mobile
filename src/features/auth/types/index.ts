@@ -41,6 +41,9 @@ export type AuthSuccess = {
 export type AuthFailureCode =
   | "invalid-credentials"
   | "invalid-invite"
+  | "invite-expired"
+  | "room-unavailable"
+  | "room-full"
   | "contract-unavailable"
   | "provider-unavailable"
   | "account-exists"
@@ -58,3 +61,7 @@ export type AuthFailure = {
 };
 
 export type AuthResult = AuthSuccess | AuthFailure;
+
+export type SocialLinkResult =
+  | { status: "success"; provider: SocialProvider; linked: true }
+  | AuthFailure;

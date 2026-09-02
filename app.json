@@ -8,9 +8,11 @@
     "scheme": "tripmatch",
     "userInterfaceStyle": "light",
     "ios": {
-      "icon": "./assets/expo.icon"
+      "icon": "./assets/expo.icon",
+      "bundleIdentifier": "com.tripmatch.app.dev"
     },
     "android": {
+      "package": "com.tripmatch.app.dev",
       "adaptiveIcon": {
         "backgroundColor": "#EFF5FF",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -38,7 +40,17 @@
       "expo-image",
       "expo-status-bar",
       "expo-web-browser",
-      "expo-sharing"
+      "expo-sharing",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "extraMavenRepos": [
+              "https://devrepo.kakao.com/nexus/content/groups/public/"
+            ]
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

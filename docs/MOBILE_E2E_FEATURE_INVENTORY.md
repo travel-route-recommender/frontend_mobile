@@ -7,8 +7,8 @@
 | Route | Screen component | 입력 데이터 | Store field | Selector / 파생 | Action | 권한 | mock / api·hybrid | Loading | Empty | Error | 다음 route |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | `/` (`app/index.tsx`) | `SessionBootstrapScreen` | hydration 완료 세션 | auth session, `usersById` | session/user 존재, profile/intro 분기 | `logout` | 모두 | 모드 공통 bootstrap | hydration 대기 | 비로그인→login | 세션-user 불일치 | login, profile, intro, home |
-| `/(auth)/login` (`/login`) | `LoginScreen` | email/password 또는 Kakao mock | auth session, domain current user | 입력 validation | login, anonymous 시작, user upsert | 비로그인 중심; 직접 접근 가능 | mock 성공, api/hybrid 계약 오류 | 제출 잠금 | 해당 없음 | 자격/계약 오류 banner | home, profile, signup, invite, terms |
-| `/(auth)/signup-choice` | `SignupChoiceScreen` | 가입 방식 | auth session | 없음 | Kakao mock login | 모두 | mock만 성공 | 제출 잠금 | 해당 없음 | provider/계약 오류 | signup-email, login, profile/home |
+| `/(auth)/login` (`/login`) | `LoginScreen` | email/password 또는 Google/Kakao | auth session, domain current user | 입력 validation | login, social challenge, anonymous 시작, user upsert | 비로그인 중심; 직접 접근 가능 | mock 성공, api/hybrid Auth 호출 | 제출 잠금 | 해당 없음 | 자격/계약/provider 오류 banner | home, profile, signup, invite, terms |
+| `/(auth)/signup-choice` | `SignupChoiceScreen` | 가입 방식 | auth session | 없음 | Google/Kakao social login | 모두 | mock 성공, api/hybrid Auth 호출 | 제출 잠금 | 해당 없음 | provider/계약 오류 | signup-email, login, profile/home |
 | `/(auth)/signup-email` | `SignupEmailScreen` | email/password/약관 | auth session, `usersById` | 필드 validation | signup, user upsert | 모두 | mock 생성, api/hybrid 계약 오류 | 제출 잠금 | 해당 없음 | 입력/계약 오류 | profile, terms |
 | `/(auth)/invite` | `InviteJoinScreen` | `code?: string|string[]` | auth session, users/trips | invite validation | guest session, user upsert, trip member 추가 | 모두 | mock code만 성공, api/hybrid 계약 오류 | 제출 잠금 | 해당 없음 | 잘못된 code/계약 오류 | profile, login |
 | `/invite/[code]` | `InviteCodeRoute` | deep-link code 배열/undefined | 없음 | 첫 param 선택 | 없음 | 모두 | 모드 공통 redirect | 즉시 redirect | 빈 code도 invite validation으로 전달 | 없음 | auth invite `replace` |

@@ -1,5 +1,6 @@
 import type { User } from "../../../domain";
-import { DEMO_MEMBER_ID } from "../../auth/config";
+
+export const MOCK_FRIEND_FIXTURE_OWNER_ID = "user-soomin";
 
 export const MOCK_FRIEND_IDS = ["user-jiyoon", "user-minjae", "user-hyunho", "user-suhyeon"] as const;
 export const NEW_MOCK_FRIEND_IDS = ["user-hyunho", "user-suhyeon"] as const;
@@ -7,7 +8,7 @@ export const NEW_MOCK_FRIEND_IDS = ["user-hyunho", "user-suhyeon"] as const;
 export type MockFriendId = (typeof MOCK_FRIEND_IDS)[number];
 
 export const MOCK_SAVED_FRIEND_IDS_BY_USER_ID: Readonly<Record<string, readonly MockFriendId[]>> = {
-  [DEMO_MEMBER_ID]: MOCK_FRIEND_IDS,
+  [MOCK_FRIEND_FIXTURE_OWNER_ID]: MOCK_FRIEND_IDS,
 };
 
 const EMPTY_MOCK_FRIEND_IDS: readonly MockFriendId[] = [];

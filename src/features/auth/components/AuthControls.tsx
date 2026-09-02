@@ -1,8 +1,9 @@
-import { forwardRef, useRef, useState } from "react";
+import { forwardRef, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { TextInputProps } from "react-native";
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
-import { colors, radius, sizes, spacing, typography } from "../../../theme/tokens";
+import { colors, radius, shadows, sizes, spacing, typography } from "../../../theme/tokens";
+import { toKoreanAuthErrorMessage } from "../services/authErrorMessage";
 
 type AuthTextFieldProps = TextInputProps & { label: string; error?: string; helperText?: string; trailing?: ReactNode };
 
@@ -25,21 +26,21 @@ export const PasswordField = forwardRef<TextInput, Omit<AuthTextFieldProps, "sec
   return <AuthTextField ref={ref} {...props} secureTextEntry={!visible} trailing={<Pressable accessibilityRole="button" accessibilityLabel={visible ? "비밀번호 숨기기" : "비밀번호 보기"} hitSlop={8} onPress={() => setVisible((value) => !value)} style={styles.trailingButton}><Text style={styles.trailingText}>{visible ? "숨김" : "보기"}</Text></Pressable>} />;
 });
 
-export function SocialButton({ provider, onPress, disabled = false }: { provider: "kakao" | "google"; onPress: () => void | Promise<void>; disabled?: boolean }) {
+export function SocialButton({ provider, onPress, disabled = false, label: customLabel, testID }: { provider: "kakao" | "google"; onPress: () => void | Promise<void>; disabled?: boolean; label?: string; testID?: string }) {
   const lock = useRef(false);
   const [pending, setPending] = useState(false);
-  const label = provider === "kakao" ? "카카오로 계속하기" : "Google로 계속하기";
+  const label = customLabel ?? (provider === "kakao" ? "카카오로 계속하기" : "Google로 계속하기");
   const blocked = disabled || pending;
   const handlePress = async () => {
     if (blocked || lock.current) return;
     lock.current = true; setPending(true);
     try { await onPress(); } finally { setPending(false); lock.current = false; }
   };
-  return <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ disabled: blocked, busy: pending }} disabled={blocked} onPress={handlePress} style={({ pressed }) => [styles.social, provider === "kakao" ? styles.kakao : styles.google, blocked && styles.disabled, pressed && styles.pressed]}>{pending ? <ActivityIndicator color="#191919" /> : <Text style={[styles.socialMark, provider === "google" && styles.googleMark]}>{provider === "kakao" ? "●" : "G"}</Text>}<Text style={styles.socialText}>{label}</Text></Pressable>;
+  return <Pressable testID={testID} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ disabled: blocked, busy: pending }} disabled={blocked} onPress={handlePress} style={({ pressed }) => [styles.social, provider === "kakao" ? styles.kakao : styles.google, blocked && styles.disabled, pressed && styles.pressed]}>{pending ? <ActivityIndicator color="#191919" /> : <Text style={[styles.socialMark, provider === "google" && styles.googleMark]}>{provider === "kakao" ? "●" : "G"}</Text>}<Text style={styles.socialText}>{label}</Text></Pressable>;
 }
 
-export function KakaoButton({ onPress, disabled = false }: { onPress: () => void | Promise<void>; disabled?: boolean }) {
-  return <SocialButton provider="kakao" onPress={onPress} disabled={disabled} />;
+export function KakaoButton({ onPress, disabled = false, label, testID }: { onPress: () => void | Promise<void>; disabled?: boolean; label?: string; testID?: string }) {
+  return <SocialButton provider="kakao" onPress={onPress} disabled={disabled} label={label} testID={testID} />;
 }
 
 export function GoogleButton({ onPress, disabled = false }: { onPress: () => void | Promise<void>; disabled?: boolean }) {
@@ -63,7 +64,18 @@ export function AuthDivider({ label = "또는" }: { label?: string }) {
 }
 
 export function AuthErrorBanner({ message }: { message?: string | null }) {
-  return message ? <View accessibilityLiveRegion="assertive" style={styles.errorBanner}><Text style={styles.errorBannerText}>{message}</Text></View> : null;
+  return message ? <View accessibilityLiveRegion="assertive" style={styles.errorBanner}><Text style={styles.errorBannerText}>{toKoreanAuthErrorMessage(message)}</Text></View> : null;
+}
+
+export function AuthErrorToast({ message, onDismiss, duration = 3000 }: { message?: string | null; onDismiss: () => void; duration?: number }) {
+  useEffect(() => {
+    if (!message) return undefined;
+    const timer = setTimeout(onDismiss, duration);
+    return () => clearTimeout(timer);
+  }, [duration, message, onDismiss]);
+
+  if (!message) return null;
+  return <View testID="auth-error-toast" accessibilityLiveRegion="assertive" accessibilityRole="alert" style={styles.errorToast}><Text style={styles.errorToastText}>{toKoreanAuthErrorMessage(message)}</Text><Pressable accessibilityRole="button" accessibilityLabel="오류 메시지 닫기" hitSlop={8} onPress={onDismiss} style={styles.errorToastClose}><Text style={styles.errorToastCloseText}>×</Text></Pressable></View>;
 }
 
 export function OnboardingProgress({ current, total }: { current: number; total: number }) {
@@ -105,6 +117,10 @@ const styles = StyleSheet.create({
   dividerText: { ...typography.caption, color: colors.textMuted },
   errorBanner: { padding: spacing.sm, borderRadius: radius.sm, backgroundColor: colors.dangerSoft },
   errorBannerText: { ...typography.caption, color: colors.danger },
+  errorToast: { width: "100%", maxWidth: sizes.contentMaxWidth, minHeight: sizes.touch, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingLeft: spacing.md, borderRadius: radius.md, backgroundColor: colors.danger, ...shadows.floating },
+  errorToastText: { ...typography.bodyStrong, color: colors.white, flex: 1, paddingVertical: spacing.sm },
+  errorToastClose: { width: sizes.touch, minHeight: sizes.touch, alignItems: "center", justifyContent: "center" },
+  errorToastCloseText: { color: colors.white, fontSize: 24, lineHeight: 26 },
   progressTrack: { width: "100%", height: 6, borderRadius: radius.pill, backgroundColor: colors.primarySoft, overflow: "hidden" },
   progressFill: { height: "100%", borderRadius: radius.pill, backgroundColor: colors.primary },
   avatar: { width: 58, height: 58, borderRadius: radius.pill, backgroundColor: colors.surfaceMuted, borderWidth: 2, borderColor: colors.border, alignItems: "center", justifyContent: "center" },

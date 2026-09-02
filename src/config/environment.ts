@@ -19,17 +19,26 @@ const placesDataSource =
   parsePlacesDataSource(process.env.EXPO_PUBLIC_PLACES_DATA_SOURCE) ??
   (dataSource === "api" || dataSource === "hybrid" ? "api" : "mock");
 
+const platformApiBaseUrl = process.env.EXPO_OS === "android"
+  ? process.env.EXPO_PUBLIC_ANDROID_API_BASE_URL
+  : process.env.EXPO_OS === "ios"
+    ? process.env.EXPO_PUBLIC_IOS_API_BASE_URL
+    : process.env.EXPO_OS === "web"
+      ? process.env.EXPO_PUBLIC_WEB_API_BASE_URL
+      : undefined;
+const apiBaseUrl =
+  platformApiBaseUrl?.trim() ||
+  process.env.EXPO_PUBLIC_API_BASE_URL?.trim() ||
+  "http://localhost:3000/api/v1";
+
 export const environment = {
   dataSource,
   placesDataSource,
-  apiBaseUrl: process.env.EXPO_PUBLIC_API_BASE_URL ?? "http://localhost:3000/api/v1",
+  apiBaseUrl,
   duriEngine: parseDuriEngine(process.env.EXPO_PUBLIC_DURI_ENGINE),
+  googleWebClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
   googleIosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
-  googleAndroidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
-  googleIosRedirectUri: process.env.EXPO_PUBLIC_GOOGLE_IOS_REDIRECT_URI,
-  googleAndroidRedirectUri: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_REDIRECT_URI,
-  kakaoRestApiKey: process.env.EXPO_PUBLIC_KAKAO_REST_API_KEY,
+  kakaoNativeAppKey: process.env.EXPO_PUBLIC_KAKAO_NATIVE_APP_KEY,
   kakaoMapJavascriptKey: process.env.EXPO_PUBLIC_KAKAO_MAP_JAVASCRIPT_KEY,
-  kakaoMapBaseUrl: process.env.EXPO_PUBLIC_KAKAO_MAP_BASE_URL ?? "http://localhost:3000",
-  kakaoRedirectUri: process.env.EXPO_PUBLIC_KAKAO_REDIRECT_URI,
+  kakaoMapBaseUrl: process.env.EXPO_PUBLIC_KAKAO_MAP_BASE_URL ?? "https://localhost:3000",
 } as const;

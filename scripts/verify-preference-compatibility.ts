@@ -1,6 +1,9 @@
 import { createMockTravelPreferenceResults, getMockTravelPreferenceResult } from "../src/features/preferences/config/mock-travel-preference-results";
-import { MOCK_FRIEND_IDS, mockFriendProfiles } from "../src/features/compatibility/config/mock-friends";
-import { DEMO_MEMBER_ID } from "../src/features/auth/config";
+import {
+  MOCK_FRIEND_FIXTURE_OWNER_ID,
+  MOCK_FRIEND_IDS,
+  mockFriendProfiles,
+} from "../src/features/compatibility/config/mock-friends";
 import {
   calculateLegacyPreferenceProjection,
   calculateTravelPreferenceSurveyResult,
@@ -101,12 +104,15 @@ assert(
   "1-3d. 완료 시각이 같아도 owner가 다르면 같은 result pair가 아니어야 한다",
 );
 assert(
-  resolveSavedFriendIds({}, DEMO_MEMBER_ID).join(",") === MOCK_FRIEND_IDS.join(","),
+  resolveSavedFriendIds({}, MOCK_FRIEND_FIXTURE_OWNER_ID).join(",") === MOCK_FRIEND_IDS.join(","),
   "1-4. 데모 친구 fixture는 정확한 데모 회원 ID에만 연결되어야 한다",
 );
 assert(
   resolveSavedFriendIds({}, "newly-created-member").length === 0
-    && resolveSavedFriendIds({ [DEMO_MEMBER_ID]: [] }, DEMO_MEMBER_ID).length === 0,
+    && resolveSavedFriendIds(
+      { [MOCK_FRIEND_FIXTURE_OWNER_ID]: [] },
+      MOCK_FRIEND_FIXTURE_OWNER_ID,
+    ).length === 0,
   "1-5. 신규 회원에게 친구를 자동 생성하지 않고 명시적으로 저장한 빈 목록도 보존해야 한다",
 );
 assert(

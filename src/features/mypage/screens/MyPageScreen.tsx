@@ -8,7 +8,7 @@ import { useDuriStore } from "../../../store/useDuriStore";
 import { colors, radius, shadows, spacing, typography } from "../../../theme/tokens";
 import { AuthErrorBanner, AuthTextField, PasswordField } from "../../auth/components/AuthControls";
 import { clearAuthStores, useAuthFlow } from "../../auth/hooks/useAuthFlow";
-import { authService } from "../../auth/services/authService";
+import { authCapabilities, authService } from "../../auth/services/authService";
 import { useAuthSessionStore } from "../../auth/store/useAuthSessionStore";
 import { validateNickname } from "../../auth/validation";
 import { useTravelPreferenceSurveyResult } from "../../preferences/hooks/useTravelPreferenceSurveyResult";
@@ -34,14 +34,15 @@ type MenuRow = { icon: string; label: string; tone: MenuTone; onPress: () => voi
 export function MyPageScreen() {
   const sessionKind = useAuthSessionStore((session) => session.sessionKind);
   const provider = useAuthSessionStore((session) => session.provider);
+  const currentSessionUserId = useAuthSessionStore((session) => session.currentSessionUserId);
   const { logout } = useAuthFlow();
   const { width } = useWindowDimensions();
   const compact = width <= 370;
   const state = useDuriStore();
   const user = state.usersById[state.currentUserId];
-  const result = state.preferenceResultsByUserId[state.currentUserId];
+  const result = sessionKind === "member" ? state.preferenceResultsByUserId[state.currentUserId] : undefined;
   const preferenceOwner = useMemo(
-    () => sessionKind === "anonymous" ? null : ({ kind: "user", userId: state.currentUserId } as const),
+    () => sessionKind === "member" ? ({ kind: "user", userId: state.currentUserId } as const) : null,
     [sessionKind, state.currentUserId],
   );
   const detailedResult = useTravelPreferenceSurveyResult(preferenceOwner);

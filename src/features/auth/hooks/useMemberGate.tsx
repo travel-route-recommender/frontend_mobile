@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { router } from "expo-router";
 import { GuestPromptModal } from "../components/GuestPromptModal";
+import { authCapabilities } from "../services/authService";
 import { useAuthSessionStore } from "../store/useAuthSessionStore";
 
 export function useMemberGate() {
@@ -13,8 +14,9 @@ export function useMemberGate() {
   }, [sessionKind]);
 
   const closePrompt = useCallback(() => setPrompt({ visible: false }), []);
-  const go = useCallback((route: "/(auth)/login" | "/(auth)/signup-choice" | "/(auth)/guest-upgrade") => { closePrompt(); router.push(route as never); }, [closePrompt]);
-  const memberGatePrompt = <GuestPromptModal visible={prompt.visible} sessionKind={sessionKind} actionLabel={prompt.actionLabel} onClose={closePrompt} onLogin={() => go("/(auth)/login")} onSignup={() => go(sessionKind === "guest" ? "/(auth)/guest-upgrade" : "/(auth)/signup-choice")} />;
+  const go = useCallback((route: "/(auth)/login" | "/(auth)/signup-email" | "/(auth)/guest-upgrade") => { closePrompt(); router.push(route as never); }, [closePrompt]);
+  const canUpgradeGuest = sessionKind === "guest" && authCapabilities.guestUpgrade;
+  const memberGatePrompt = <GuestPromptModal visible={prompt.visible} sessionKind={sessionKind} actionLabel={prompt.actionLabel} guestUpgradeAvailable={authCapabilities.guestUpgrade} onClose={closePrompt} onLogin={() => go("/(auth)/login")} onSignup={() => go(canUpgradeGuest ? "/(auth)/guest-upgrade" : "/(auth)/signup-email")} />;
 
   return { isMember: sessionKind === "member", sessionKind, requireMember, memberGatePrompt, closePrompt };
 }

@@ -26,8 +26,11 @@ import { normalizeCreateTripDraft } from "../src/features/trip-creation/store/us
 import { createRegionService, mapRegionToOption } from "../src/features/trip-creation/services/regionService";
 import { normalizeInvitedUserIds, validateCreateTripDraft } from "../src/features/trip-creation/validation/validateCreateTripDraft";
 import type { CreateTripDraft } from "../src/features/trip-creation/types";
-import { DEMO_MEMBER_ID } from "../src/features/auth/config";
-import { MOCK_FRIEND_IDS, mockFriendProfiles } from "../src/features/compatibility/config/mock-friends";
+import {
+  MOCK_FRIEND_FIXTURE_OWNER_ID,
+  MOCK_FRIEND_IDS,
+  mockFriendProfiles,
+} from "../src/features/compatibility/config/mock-friends";
 import { resolveSavedFriendIds } from "../src/features/compatibility/logic/resolve-saved-friend-ids";
 import { filterEligibleCompanionUserIds, resolveEligibleCompanionUsers } from "../src/features/trip-creation/logic/eligibleCompanionMembers";
 import { CREATE_TRIP_DRAFT_VERSION } from "../src/features/trip-creation/types";
@@ -116,23 +119,23 @@ async function main() {
   assert(normalizeInvitedUserIds(["friend", "friend", "owner", "missing"], "owner", users).join(",") === "friend", "동행자는 중복·방장·없는 사용자를 제거해야 한다");
 
   const companionDirectory: Record<string, User> = {
-    [DEMO_MEMBER_ID]: { id: DEMO_MEMBER_ID, name: "수민", initial: "수" },
+    [MOCK_FRIEND_FIXTURE_OWNER_ID]: { id: MOCK_FRIEND_FIXTURE_OWNER_ID, name: "수민", initial: "수" },
     ...mockFriendProfiles,
     unrelated: { id: "unrelated", name: "무관 사용자", initial: "무" },
     guest: { id: "guest", name: "게스트", initial: "게" },
   };
-  const demoFriendIds = resolveSavedFriendIds({}, DEMO_MEMBER_ID);
+  const demoFriendIds = resolveSavedFriendIds({}, MOCK_FRIEND_FIXTURE_OWNER_ID);
   assert(demoFriendIds.join(",") === MOCK_FRIEND_IDS.join(","), "데모 회원은 Friends 화면과 같은 명시적 친구 fixture를 사용해야 한다");
   assert(resolveSavedFriendIds({}, "fresh-member").length === 0, "신규 회원은 명시적 관계가 없으면 동행 후보가 0명이어야 한다");
-  const eligibleCompanions = resolveEligibleCompanionUsers(demoFriendIds, DEMO_MEMBER_ID, companionDirectory);
+  const eligibleCompanions = resolveEligibleCompanionUsers(demoFriendIds, MOCK_FRIEND_FIXTURE_OWNER_ID, companionDirectory);
   assert(eligibleCompanions.map((user) => user.id).join(",") === MOCK_FRIEND_IDS.join(","), "동행 후보는 canonical 친구 관계의 사용자만 포함해야 한다");
   const eligibleSelectedIds = filterEligibleCompanionUserIds(
-    ["guest", MOCK_FRIEND_IDS[0], "unrelated", DEMO_MEMBER_ID, MOCK_FRIEND_IDS[0]],
-    DEMO_MEMBER_ID,
+    ["guest", MOCK_FRIEND_IDS[0], "unrelated", MOCK_FRIEND_FIXTURE_OWNER_ID, MOCK_FRIEND_IDS[0]],
+    MOCK_FRIEND_FIXTURE_OWNER_ID,
     demoFriendIds,
   );
   assert(eligibleSelectedIds.join(",") === MOCK_FRIEND_IDS[0], "stale·무관·게스트·방장 ID는 동행 선택 경계에서 제거해야 한다");
-  assert(normalizeInvitedUserIds(eligibleSelectedIds, DEMO_MEMBER_ID, companionDirectory).join(",") === MOCK_FRIEND_IDS[0], "최종 생성 payload에는 관계와 디렉터리를 모두 통과한 친구만 포함해야 한다");
+  assert(normalizeInvitedUserIds(eligibleSelectedIds, MOCK_FRIEND_FIXTURE_OWNER_ID, companionDirectory).join(",") === MOCK_FRIEND_IDS[0], "최종 생성 payload에는 관계와 디렉터리를 모두 통과한 친구만 포함해야 한다");
 
   const migratedLegacyDraft = normalizeCreateTripDraft({ ...createDraft(), configVersion: 2, transport: "walking", budgetLevel: "premium", intensity: "packed" }).draft;
   assert(migratedLegacyDraft?.configVersion === CREATE_TRIP_DRAFT_VERSION && migratedLegacyDraft.transport === "public", "v2 walking 초안은 v3 대중교통·도보 사실값으로 이관해야 한다");

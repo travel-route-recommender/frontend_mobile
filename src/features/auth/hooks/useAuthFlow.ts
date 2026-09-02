@@ -5,6 +5,7 @@ import { useDuriAnalysisStore } from "../../duri/store/useDuriAnalysisStore";
 import type { AuthSuccess } from "../types";
 import { authService } from "../services/authService";
 import { activateLocalPrivateDataForUser, deactivateLocalPrivateData, transferLocalPrivateDataForVerifiedUpgrade } from "../services/localPrivateData";
+import { clearSocialProviderSession } from "../services/socialProviderSession";
 import { useAuthSessionStore } from "../store/useAuthSessionStore";
 
 export async function applyAuthSuccessToStores(
@@ -48,8 +49,14 @@ export function useAuthFlow() {
   }, []);
 
   const logout = useCallback(async () => {
+    const provider = useAuthSessionStore.getState().provider;
     useAuthSessionStore.getState().setAuthLoading();
-    try { await authService.logout(); } finally { clearAuthStores(); }
+    try {
+      await authService.logout();
+    } finally {
+      try { await clearSocialProviderSession(provider); } catch {}
+      clearAuthStores();
+    }
   }, []);
 
   return { applyAuthSuccess, logout };

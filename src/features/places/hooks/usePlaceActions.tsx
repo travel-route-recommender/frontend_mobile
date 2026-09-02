@@ -4,7 +4,7 @@ import { useShallow } from "zustand/react/shallow";
 import type { EntityId } from "../../../domain";
 import { environment } from "../../../config/environment";
 import { queryKeys } from "../../../query/keys";
-import { apiClient } from "../../../services/apiClient";
+import { ApiError, apiClient } from "../../../services/apiClient";
 import { useDuriStore } from "../../../store/useDuriStore";
 import { useAuthSessionStore } from "../../auth/store/useAuthSessionStore";
 import { useMemberGate } from "../../auth/hooks/useMemberGate";
@@ -122,7 +122,16 @@ export function usePlaceActions() {
         void queryClient.invalidateQueries({ queryKey: queryKeys.trips.all });
         void queryClient.invalidateQueries({ queryKey: queryKeys.trips.detail(tripId, sessionUserId) });
       }).catch((reason: unknown) => {
-        setFeedback({ message: reason instanceof Error ? reason.message : "서버 여행방 후보에 추가하지 못했어요." });
+        const message = reason instanceof ApiError && reason.status === 401
+          ? "로그인 정보가 만료됐어요. 다시 로그인해 주세요."
+          : reason instanceof ApiError && reason.status === 403
+            ? "참여 중인 여행방에만 후보를 담을 수 있어요."
+            : reason instanceof ApiError && ["DUPLICATE_CANDIDATE", "CANDIDATE_ALREADY_EXISTS"].includes(reason.code ?? "")
+              ? "이미 이 여행방 후보에 담긴 장소예요."
+              : reason instanceof ApiError && ["ROOM_CLOSED", "ROOM_NOT_ONGOING"].includes(reason.code ?? "")
+                ? "완료된 여행방에는 후보를 담을 수 없어요."
+              : reason instanceof Error ? reason.message : "서버 여행방 후보에 추가하지 못했어요.";
+        setFeedback({ message });
       });
       return;
     }
