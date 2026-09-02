@@ -149,7 +149,9 @@ export class NativeApiClient implements ApiClient {
       }
       if (retried.response.ok) return retried.payload as ResponseBody;
       const retriedError = apiError(retried.response, retried.payload);
-      if (isTerminalAccessAuthError(retriedError)) {
+      // 새 Access Token으로 동일 요청을 다시 보냈는데도 401이면 더 이상
+      // 복구할 수 없는 세션이다. code가 없는 현재 Backend 응답도 포함한다.
+      if (retriedError.status === 401 || isTerminalAccessAuthError(retriedError)) {
         await authBindings.onSessionInvalidated(retriedError);
       }
       throw retriedError;

@@ -8,6 +8,9 @@ import { sortItineraryItemsByDateAndTime } from "../../../../utils/schedule";
 import type { RoomPreferenceResponseSummary } from "../../selectors";
 import type { TripPreparationProgress } from "../../types";
 import { formatTripDurationLabel, getTripTimingLabel } from "../../utils/tripDateUtils";
+import type { TripHomeDuriState } from "../../logic/selectTripHomeDuriState";
+
+export type { TripHomeDuriState } from "../../logic/selectTripHomeDuriState";
 
 const CONTINUE_SCHEDULE_IMAGE = require("../../../../../assets/images/duri/trip-home/continue-schedule.png");
 const DURI_ANALYSIS_IMAGE = require("../../../../../assets/images/duri/trip-home/duri-analysis.png");
@@ -40,14 +43,6 @@ export type TripNextAction = {
   label: string;
   onPress(): void;
 };
-
-export type TripHomeDuriState =
-  | { kind: "no-itinerary" }
-  | { kind: "ready" }
-  | { kind: "loading" }
-  | { kind: "existing"; issueCount: number }
-  | { kind: "stale" }
-  | { kind: "unavailable"; message?: string };
 
 export function TripHomeHero({ trip, region, usersById, currentUserId, onBack }: { trip: TripHomePresentation; region?: Region; usersById: Record<EntityId, User>; currentUserId: EntityId; onBack(): void }) {
   const owner = trip.members.find((member) => member.role === "owner");

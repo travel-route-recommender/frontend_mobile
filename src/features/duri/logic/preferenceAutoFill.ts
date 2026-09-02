@@ -12,7 +12,11 @@ import { getTripDates, minutesToTimeString, timeStringToMinutes } from "../../..
 import { DURI_SUGGESTION_VERSION } from "../constants";
 import type { DuriAnalysisSession, DuriSuggestionEnvelope } from "../types";
 import { isUsableConfirmedScheduleConstraint, itineraryItemCoversConfirmedTime } from "./confirmedScheduleConstraint";
-import { parseRecommendedDurationMinutes } from "./placeConstraintAnalysis";
+import {
+  parseRecommendedDurationMinutes,
+  placeOperatingAvailabilityForDate,
+  type PlaceOperatingAvailability,
+} from "./placeConstraintAnalysis";
 import { analyzeTripEndCondition, buildTripEndConditionTimelineEntry } from "../../workspace/logic/tripEndCondition";
 import {
   findSharedCandidateSignalConflicts,
@@ -32,6 +36,12 @@ const HEURISTIC_EXPANSION_BUDGET = 40_000;
 const MIN_BEAM_WIDTH = 6;
 const LOCAL_SEARCH_ROUND_LIMIT = 8;
 const EXACT_DURATION_PACKING_STATE_LIMIT = 40_000;
+const EXACT_ROUTE_SEQUENCE_ITEM_LIMIT = 11;
+// 데이터가 전혀 없는 cold-start에서만 쓰는 편집 가능한 초안이다. 실제 영업
+// 사실이나 체류시간으로 가장하지 않고 항상 preview-only/low-confidence로 남긴다.
+const PROVISIONAL_DAY_START_MINUTES = 10 * 60;
+const PROVISIONAL_DAY_END_MINUTES = 20 * 60;
+const PROVISIONAL_VISIT_DURATION_MINUTES = SLOT_MINUTES * 6;
 
 export type AutoFillPreferenceEvidenceSource = "preference-result" | "shared-room-evidence" | "travel-type-snapshot" | "candidate-selection";
 
@@ -50,6 +60,11 @@ export type PreferenceAutoFillRequest = {
    * 상세 설문 결과가 있는 참여자는 상세 결과가 우선하며 두 값을 합쳐 꾸미지 않는다.
    */
   supplementalPreferenceEvidenceByMemberId?: Readonly<Record<EntityId, AutoFillSupplementalPreferenceEvidence | undefined>>;
+  /**
+   * 현재 요청에서만 지역 검색으로 보탠 장소다. 저장된 DURI 추천 후보와
+   * 혼동하지 않도록 화면 계층이 실제 발견 ID만 전달한다.
+   */
+  transientDiscoveryPlaceIds?: readonly EntityId[];
 };
 
 export type PreferenceAutoFillDefaults = {
@@ -60,6 +75,9 @@ export type PreferenceAutoFillDefaults = {
   preferredDailyScheduledMinutes?: number;
   /** 0도 관측된 하루 일정량에서 계산된 유효 결과다. undefined와 구분한다. */
   derivedMaxNewItems?: number;
+  provisionalTemplateUsed?: boolean;
+  provisionalTimeWindowUsed?: boolean;
+  provisionalDurationUsed?: boolean;
   sources: string[];
 };
 
@@ -102,13 +120,18 @@ export type PreferenceAutoFillDurationEvidence = {
     | "content-type"
     | "activity-taxonomy"
     | "exact-category"
+    | "trip-visit-median"
     | "group-schedule-consensus"
+    | "candidate-evidence-median"
     | "tour-recommended-minimum"
+    | "editable-template"
     | "user-fallback";
   durationMinutes: number;
   lowerMinutes: number;
   /** 공식 하한만 있는 경우 상한을 꾸며내지 않으므로 undefined다. */
   upperMinutes?: number;
+  /** 표본·측정폭이 부족해 양방향 참고 범위를 계산할 수 없는 중심 추정이다. */
+  rangeUnknown?: boolean;
   /** 통계 범위가 아니라 한쪽 방향의 공식 최소시간만 확보한 추정인지 구분한다. */
   lowerBoundOnly: boolean;
   officialMinimumMinutes?: number;
@@ -135,6 +158,8 @@ export type PreferenceAutoFillDurationEvidence = {
 };
 
 export type PreferenceAutoFillCertificate = {
+  selectionBasis: "preference-fairness" | "preference-with-neutral-supplement" | "neutral-structural" | "unavailable";
+  countBasis: "explicit-limit" | "observed-daily-volume" | "maximal-feasible-schedule" | "unavailable";
   selectionExact: boolean;
   exactScope: "candidate-bundle-and-duration-packing" | "candidate-bundle-only" | "none";
   searchMethod: "exhaustive" | "bounded-beam-and-one-swap";
@@ -153,6 +178,7 @@ export type PreferenceAutoFillCertificate = {
   sharedEvidenceMemberIds: EntityId[];
   mandatorySharedPlaceIds: EntityId[];
   excludedAvoidPlaceIds: EntityId[];
+  discoveryCandidatePlaceIds: EntityId[];
   localApplyEligible: boolean;
   localApplyBlockReasons: string[];
   dayAllocations: {
@@ -164,6 +190,7 @@ export type PreferenceAutoFillCertificate = {
   }[];
   minimumNormalizedSatisfaction?: number;
   normalizedSatisfactionByMember: Record<EntityId, number>;
+  fairnessNormalizationBasis: "feasible-schedule-exact" | "relaxed-candidate-bound" | "unavailable";
   fairness?: {
     minimumNormalizedSatisfaction: number;
     nashWelfare: number;
@@ -175,6 +202,48 @@ export type PreferenceAutoFillCertificate = {
   durationEstimates: PreferenceAutoFillDurationEvidence[];
   durationPackingExact: boolean;
   durationPackingExpandedStates: number;
+  feasibleCountRange?: {
+    minimum: number;
+    maximumConfirmed: number;
+    maximumCertified: boolean;
+    selected: number;
+    selectionPolicy: "maximal-feasible";
+  };
+  structuralSelection?: {
+    recognizedCategoryCount: number;
+    categoryConcentrationPairs: number;
+    comparableCoordinateCoverage: boolean;
+    mstDistanceMeters?: number;
+  };
+  geographicPlacement?: {
+    method: "haversine-gap-path";
+    comparableAssignmentCount: number;
+    totalInsertionDistanceMeters: number;
+    totalPathDistanceMeters: number;
+    optimizedGapCount: number;
+    exactSequence: boolean;
+  };
+  transitionBuffer: {
+    minutes: number;
+    basis: "observed-route-duration" | "editing-grid-placeholder";
+  };
+  operatingFacts: {
+    checkedAssignmentCount: number;
+    windowRestrictedAssignmentCount: number;
+    unknownAssignmentCount: number;
+    excludedClosedPlaceDateCount: number;
+  };
+  provisionalRhythm?: {
+    method: "even-slack-within-gap";
+    adjustedGapCount: number;
+  };
+  candidatePrefilter?: {
+    originalEligibleCount: number;
+    consideredCount: number;
+    omittedCount: number;
+    method: "mandatory-then-category-round-robin";
+  };
+  degradedEvidence: ("documents" | "planning" | "shared-preferences")[];
   assumptions: string[];
 };
 
@@ -186,6 +255,18 @@ export type PreferenceAutoFillPlan = {
   certificate: PreferenceAutoFillCertificate;
   limitations: string[];
 };
+
+export function shouldAugmentPreferenceAutoFillWithDiscovery(
+  plan: PreferenceAutoFillPlan,
+  request: PreferenceAutoFillRequest,
+) {
+  if (plan.status === "no-candidates" || plan.status === "insufficient-data") return true;
+  if (plan.status === "no-space") return request.maxNewItems === undefined;
+  return plan.status === "preview-only"
+    && plan.certificate.countBasis === "maximal-feasible-schedule"
+    && plan.certificate.selectedCount === plan.certificate.candidateCount
+    && plan.certificate.selectedCount < plan.certificate.slotCapacity;
+}
 
 type PreferenceEvidence = {
   memberId: EntityId;
@@ -207,14 +288,41 @@ type CandidateModel = {
   numericPreferenceScore: number;
   sharedPreferenceStrengthScore: number;
   mandatory: boolean;
+  structuralCategoryKey: string;
+  structuralCoordinates?: StructuralCoordinates;
+  operatingAvailabilityByDate: Readonly<Record<string, PlaceOperatingAvailability>>;
   durationEvidence: PreferenceAutoFillDurationEvidence;
 };
 
+type CandidateModelDiagnostics = {
+  candidatePlaceIds: EntityId[];
+  scheduledPlaceIds: EntityId[];
+  fixedUnlinkedPlaceIds: EntityId[];
+  missingPlaceIds: EntityId[];
+  wrongRegionPlaceIds: EntityId[];
+  conflictedPlaceIds: EntityId[];
+  validUnscheduledPlaceIds: EntityId[];
+};
+
+type StructuralCoordinates = { latitude: number; longitude: number };
 type PlacementSlot = { date: string; startMinute: number };
-type PlacementGap = { date: string; startMinute: number; endMinute: number };
-type PackedCandidatePlacement = { candidateIndex: number; date: string; startMinute: number };
+type PlacementGap = {
+  date: string;
+  startMinute: number;
+  endMinute: number;
+  requiresStartTransition: boolean;
+  requiresEndTransition: boolean;
+  previousCoordinates?: StructuralCoordinates;
+  nextCoordinates?: StructuralCoordinates;
+};
+type PackedCandidatePlacement = { candidateIndex: number; date: string; startMinute: number; gapIndex: number };
 type Fraction = { numerator: bigint; denominator: bigint };
 type UtilityRange = { minimum: number; maximum: number };
+type BundleStructuralContext = {
+  candidates: readonly CandidateModel[];
+  distanceMatrix?: readonly (readonly number[])[];
+  mstDistanceByIndexKey: Map<string, number>;
+};
 
 type BundleEvaluation = {
   indexes: number[];
@@ -229,11 +337,18 @@ type BundleEvaluation = {
   explicitAversionCount: number;
   numericPreferenceScore: number;
   sharedPreferenceStrengthScore: number;
+  recognizedCategoryCount: number;
+  categoryConcentrationPairs: number;
+  mstDistanceMeters?: number;
+  mstDistanceResolved: boolean;
+  structuralContext: BundleStructuralContext;
   stableKey: string;
 };
 
 function emptyCertificate(): PreferenceAutoFillCertificate {
   return {
+    selectionBasis: "unavailable",
+    countBasis: "unavailable",
     selectionExact: false,
     exactScope: "none",
     searchMethod: "bounded-beam-and-one-swap",
@@ -250,13 +365,23 @@ function emptyCertificate(): PreferenceAutoFillCertificate {
     sharedEvidenceMemberIds: [],
     mandatorySharedPlaceIds: [],
     excludedAvoidPlaceIds: [],
+    discoveryCandidatePlaceIds: [],
     localApplyEligible: false,
     localApplyBlockReasons: [],
     dayAllocations: [],
     normalizedSatisfactionByMember: {},
+    fairnessNormalizationBasis: "unavailable",
     durationEstimates: [],
     durationPackingExact: false,
     durationPackingExpandedStates: 0,
+    transitionBuffer: { minutes: SLOT_MINUTES, basis: "editing-grid-placeholder" },
+    operatingFacts: {
+      checkedAssignmentCount: 0,
+      windowRestrictedAssignmentCount: 0,
+      unknownAssignmentCount: 0,
+      excludedClosedPlaceDateCount: 0,
+    },
+    degradedEvidence: [],
     assumptions: [],
   };
 }
@@ -293,18 +418,19 @@ function leastCommonMultiple(left: number, right: number) {
 }
 
 function uniqueNormalizedTags(tags: readonly string[]) {
-  const seen = new Set<string>();
-  const result: string[] = [];
+  const byNormalized = new Map<string, string>();
   for (const tag of tags) {
-    if (result.length >= MAX_PREFERENCE_TAGS_PER_MEMBER) break;
     const trimmed = tag.trim();
     if (trimmed.length > MAX_PREFERENCE_TAG_LENGTH) continue;
     const normalized = normalizeTrait(trimmed);
-    if (!normalized || seen.has(normalized)) continue;
-    seen.add(normalized);
-    result.push(trimmed);
+    if (!normalized) continue;
+    const previous = byNormalized.get(normalized);
+    if (!previous || compareText(trimmed, previous) < 0) byNormalized.set(normalized, trimmed);
   }
-  return result;
+  return [...byNormalized.entries()]
+    .sort(([left], [right]) => compareText(left, right))
+    .slice(0, MAX_PREFERENCE_TAGS_PER_MEMBER)
+    .map(([, value]) => value);
 }
 
 function validDetailedPreferenceResult(result: UserPreferenceResult | undefined, memberId: string) {
@@ -439,9 +565,38 @@ function occupiedMinutesOnDate(itinerary: readonly ItineraryItem[], date: string
   return total + (current ? current.end - current.start : 0);
 }
 
+function observedItineraryWindow(input: DuriAnalysisInput) {
+  const tripDates = new Set(getTripDates(input.trip.startDate, input.trip.endDate));
+  const byDate = new Map<string, { start: number; end: number }>();
+  input.itinerary.forEach((item) => {
+    const start = timeStringToMinutes(item.startTime);
+    const end = start + item.durationMinutes;
+    if (item.tripId !== input.trip.id
+      || !tripDates.has(item.date)
+      || !Number.isFinite(start)
+      || !Number.isInteger(item.durationMinutes)
+      || item.durationMinutes < 1
+      || end > 24 * 60) return;
+    const current = byDate.get(item.date);
+    byDate.set(item.date, current
+      ? { start: Math.min(current.start, start), end: Math.max(current.end, end) }
+      : { start, end });
+  });
+  const observations = [...byDate.values()];
+  if (!observations.length) return undefined;
+  return {
+    // 서로 다른 DAY의 극단값을 한 날의 활동 창처럼 합치지 않는다. 관측 날짜별
+    // 시작·종료를 각각 robust median으로 모아 공통 편집 기본값만 만든다.
+    start: median(observations.map((entry) => entry.start)),
+    end: median(observations.map((entry) => entry.end)),
+    observedDayCount: observations.length,
+  };
+}
+
 /**
- * 자동 기본값은 새 설문에서 사용자가 직접 그린 시간표의 관측값만 사용한다.
- * 기존 일정, 앱 상수, 미응답자의 중립값을 대체 근거로 쓰지 않는다.
+ * 설문 시간 관측을 우선하고, 부분 일정에서는 날짜별 실제 활동 범위의 중앙값을
+ * 사용한다. 둘 다 없는 cold-start는 생성 자체를 막지 않고 편집 가능한 낮은
+ * 신뢰도의 주간 여행 템플릿을 쓰되, 이를 관측 사실과 분리해 표시한다.
  */
 export function derivePreferenceAutoFillDefaults(input: DuriAnalysisInput): PreferenceAutoFillDefaults {
   const observations = detailedWindowObservations(input);
@@ -449,7 +604,23 @@ export function derivePreferenceAutoFillDefaults(input: DuriAnalysisInput): Pref
   const end = intervalConsensusValue(observations.flatMap((entry) => entry.end ? [{ userId: entry.userId, ...entry.end }] : []), 1, 24 * 60);
   const duration = intervalConsensusValue(observations.flatMap((entry) => entry.duration ? [{ userId: entry.userId, ...entry.duration }] : []), SLOT_MINUTES, 24 * 60);
   const daily = intervalConsensusValue(observations.flatMap((entry) => entry.daily ? [{ userId: entry.userId, ...entry.daily }] : []), 0, 24 * 60);
-  const snappedDuration = duration === undefined ? undefined : snapNearest(duration);
+  const itineraryWindow = observedItineraryWindow(input);
+  const itineraryStart = itineraryWindow
+    ? Math.floor(itineraryWindow.start / SLOT_MINUTES) * SLOT_MINUTES
+    : undefined;
+  const itineraryEnd = itineraryWindow
+    ? Math.ceil(itineraryWindow.end / SLOT_MINUTES) * SLOT_MINUTES
+    : undefined;
+  // 부분 일정의 첫/마지막 시각은 이미 채워진 작은 구간일 뿐 하루 전체 활동
+  // 가능 범위라는 뜻이 아니다. 설문이 없으면 공개된 10~20시 편집 템플릿을
+  // 기준으로 삼고, 실제 일정이 그 바깥에 있을 때만 범위를 확장한다.
+  const resolvedStart = start ?? Math.min(itineraryStart ?? PROVISIONAL_DAY_START_MINUTES, PROVISIONAL_DAY_START_MINUTES);
+  const resolvedEnd = end ?? Math.max(itineraryEnd ?? PROVISIONAL_DAY_END_MINUTES, PROVISIONAL_DAY_END_MINUTES);
+  const snappedDuration = duration === undefined
+    ? PROVISIONAL_VISIT_DURATION_MINUTES
+    : snapNearest(duration);
+  const provisionalTimeWindowUsed = start === undefined || end === undefined;
+  const provisionalTemplateUsed = provisionalTimeWindowUsed || duration === undefined;
   const tripDates = getTripDates(input.trip.startDate, input.trip.endDate);
   const unscheduledCandidateCount = input.candidates.filter((candidate) => !input.itinerary.some((item) => item.placeId === candidate.placeId)).length;
   const derivedMax = daily !== undefined && snappedDuration
@@ -460,15 +631,27 @@ export function derivePreferenceAutoFillDefaults(input: DuriAnalysisInput): Pref
     : undefined;
   const sources: string[] = [];
   if (start !== undefined && end !== undefined) sources.push(`설문 시간표 첫·마지막 활동 ${observations.filter((entry) => entry.start && entry.end).length}명 구간 minimax`);
+  if (provisionalTimeWindowUsed && itineraryWindow) {
+    sources.push(`편집 템플릿을 현재 일정 ${itineraryWindow.observedDayCount}일의 실제 첫·마지막 배치 범위까지 확장`);
+  }
   if (duration !== undefined) sources.push(`설문 비휴식 활동 블록 ${observations.filter((entry) => entry.duration).length}명 구간 minimax`);
   if (daily !== undefined) sources.push(`설문 하루 일정량 ${observations.filter((entry) => entry.daily).length}명 구간 minimax`);
+  if (provisionalTimeWindowUsed) {
+    sources.push(`설문 시간대가 없는 날짜의 편집 가능한 낮은 신뢰도 활동 창 ${minutesToTimeString(PROVISIONAL_DAY_START_MINUTES)}~${minutesToTimeString(PROVISIONAL_DAY_END_MINUTES)}`);
+  }
+  if (duration === undefined) {
+    sources.push(`장소별 근거가 모두 없을 때만 쓰는 편집 가능한 낮은 신뢰도 체류 블록 ${PROVISIONAL_VISIT_DURATION_MINUTES}분`);
+  }
   return {
-    ...(start === undefined ? {} : { dailyStartTime: minutesToTimeString(Math.max(0, Math.round(start / SLOT_MINUTES) * SLOT_MINUTES)) }),
-    ...(end === undefined ? {} : { dailyEndTime: minutesToTimeString(Math.min(24 * 60, Math.round(end / SLOT_MINUTES) * SLOT_MINUTES)) }),
-    ...(snappedDuration === undefined ? {} : { proposedVisitDurationMinutes: snappedDuration }),
+    dailyStartTime: minutesToTimeString(Math.max(0, Math.round(resolvedStart / SLOT_MINUTES) * SLOT_MINUTES)),
+    dailyEndTime: minutesToTimeString(Math.min(24 * 60, Math.round(resolvedEnd / SLOT_MINUTES) * SLOT_MINUTES)),
+    proposedVisitDurationMinutes: snappedDuration,
     ...(derivedMax === undefined || derivedMax < 1 ? {} : { maxNewItems: Math.min(derivedMax, MAX_AUTO_FILL_ITEMS) }),
     ...(derivedMax === undefined ? {} : { derivedMaxNewItems: Math.min(derivedMax, MAX_AUTO_FILL_ITEMS) }),
     ...(daily === undefined ? {} : { preferredDailyScheduledMinutes: daily }),
+    ...(provisionalTemplateUsed ? { provisionalTemplateUsed: true } : {}),
+    ...(provisionalTimeWindowUsed ? { provisionalTimeWindowUsed: true } : {}),
+    ...(duration === undefined ? { provisionalDurationUsed: true } : {}),
     sources,
   };
 }
@@ -479,6 +662,19 @@ function resolveRequest(input: DuriAnalysisInput, request: PreferenceAutoFillReq
   const endTime = request.dailyEndTime?.trim() || defaults.dailyEndTime;
   const duration = request.proposedVisitDurationMinutes ?? defaults.proposedVisitDurationMinutes;
   const maxNewItems = request.maxNewItems ?? defaults.maxNewItems;
+  const countBasis = request.maxNewItems !== undefined
+    ? "explicit-limit" as const
+    : defaults.derivedMaxNewItems !== undefined
+      ? "observed-daily-volume" as const
+      : "maximal-feasible-schedule" as const;
+  const provisionalTimeWindowUsed = Boolean(
+    defaults.provisionalTimeWindowUsed
+    && (!request.dailyStartTime?.trim() || !request.dailyEndTime?.trim()),
+  );
+  const provisionalDurationUsed = Boolean(
+    defaults.provisionalDurationUsed
+    && request.proposedVisitDurationMinutes === undefined,
+  );
   const start = startTime ? timeStringToMinutes(startTime) : Number.NaN;
   const end = endTime ? timeStringToMinutes(endTime) : Number.NaN;
   if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end > 24 * 60 || start >= end) {
@@ -503,12 +699,21 @@ function resolveRequest(input: DuriAnalysisInput, request: PreferenceAutoFillReq
           : "아직 일정에 없는 후보 장소가 없어요.",
       };
     }
-    return { valid: false as const, status: "invalid-request" as const, message: "하루 일정량 관측이 없어 장소 수를 자동으로 정할 수 없어요. 고급 설정에서 추가할 장소 수만 정해 주세요." };
   }
-  if (!Number.isInteger(maxNewItems) || maxNewItems < 1 || maxNewItems > MAX_AUTO_FILL_ITEMS) {
+  if (maxNewItems !== undefined && (!Number.isInteger(maxNewItems) || maxNewItems < 1 || maxNewItems > MAX_AUTO_FILL_ITEMS)) {
     return { valid: false as const, message: `추가할 장소 수는 1~${MAX_AUTO_FILL_ITEMS}개 사이의 정수로 입력해 주세요.` };
   }
-  return { valid: true as const, start, end, duration, maxNewItems, defaults };
+  return {
+    valid: true as const,
+    start,
+    end,
+    duration,
+    maxNewItems,
+    countBasis,
+    defaults,
+    provisionalTimeWindowUsed,
+    provisionalDurationUsed,
+  };
 }
 
 function compareFraction(left: Fraction, right: Fraction) {
@@ -524,6 +729,81 @@ function compareFractionVectors(left: readonly Fraction[], right: readonly Fract
   return left.length - right.length;
 }
 
+function distanceMeters(
+  left: { latitude: number; longitude: number },
+  right: { latitude: number; longitude: number },
+) {
+  const radians = (value: number) => value * Math.PI / 180;
+  const latitudeDelta = radians(right.latitude - left.latitude);
+  const longitudeDelta = radians(right.longitude - left.longitude);
+  const latitudeLeft = radians(left.latitude);
+  const latitudeRight = radians(right.latitude);
+  const a = Math.sin(latitudeDelta / 2) ** 2
+    + Math.cos(latitudeLeft) * Math.cos(latitudeRight) * Math.sin(longitudeDelta / 2) ** 2;
+  return 6_371_000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(Math.max(0, 1 - a)));
+}
+
+/**
+ * 실제 도로 경로가 아니라 후보 묶음의 지리적 흩어짐을 비교하는 보조 지표다.
+ * 모든 eligible 후보에 좌표가 있을 때만 호출하여 좌표 누락을 0거리로 꾸미지 않는다.
+ */
+function createBundleStructuralContext(candidates: readonly CandidateModel[]): BundleStructuralContext {
+  const coordinates = candidates.map((candidate) => candidate.structuralCoordinates);
+  if (coordinates.some((coordinate) => !coordinate)) {
+    return { candidates, mstDistanceByIndexKey: new Map() };
+  }
+  const located = coordinates as StructuralCoordinates[];
+  const distanceMatrix = located.map(() => Array<number>(located.length).fill(0));
+  for (let left = 0; left < located.length; left += 1) {
+    for (let right = left + 1; right < located.length; right += 1) {
+      const distance = distanceMeters(located[left], located[right]);
+      distanceMatrix[left][right] = distance;
+      distanceMatrix[right][left] = distance;
+    }
+  }
+  return { candidates, distanceMatrix, mstDistanceByIndexKey: new Map() };
+}
+
+function minimumSpanningTreeDistanceMeters(context: BundleStructuralContext, indexes: readonly number[]) {
+  if (indexes.length < 2) return 0;
+  const distanceMatrix = context.distanceMatrix;
+  if (!distanceMatrix) return undefined;
+  const indexKey = indexes.join(",");
+  const cached = context.mstDistanceByIndexKey.get(indexKey);
+  if (cached !== undefined) return cached;
+  const visited = new Set<number>([0]);
+  const bestEdge = indexes.map((candidateIndex, index) => (
+    index === 0 ? 0 : distanceMatrix[indexes[0]][candidateIndex]
+  ));
+  let total = 0;
+  while (visited.size < indexes.length) {
+    let next = -1;
+    for (let index = 0; index < indexes.length; index += 1) {
+      if (!visited.has(index) && (next < 0 || bestEdge[index] < bestEdge[next])) next = index;
+    }
+    if (next < 0 || !Number.isFinite(bestEdge[next])) return undefined;
+    total += bestEdge[next];
+    visited.add(next);
+    for (let index = 0; index < indexes.length; index += 1) {
+      if (visited.has(index)) continue;
+      bestEdge[index] = Math.min(bestEdge[index], distanceMatrix[indexes[next]][indexes[index]]);
+    }
+  }
+  context.mstDistanceByIndexKey.set(indexKey, total);
+  return total;
+}
+
+function resolvedMstDistanceMeters(evaluation: BundleEvaluation) {
+  if (!evaluation.mstDistanceResolved) {
+    evaluation.mstDistanceMeters = minimumSpanningTreeDistanceMeters(
+      evaluation.structuralContext,
+      evaluation.indexes,
+    );
+    evaluation.mstDistanceResolved = true;
+  }
+  return evaluation.mstDistanceMeters;
+}
+
 function compareBundle(left: BundleEvaluation, right: BundleEvaluation) {
   const minimum = compareFraction(left.sortedFractions[0] ?? { numerator: 0n, denominator: 1n }, right.sortedFractions[0] ?? { numerator: 0n, denominator: 1n });
   if (minimum !== 0) return minimum;
@@ -531,12 +811,21 @@ function compareBundle(left: BundleEvaluation, right: BundleEvaluation) {
   if (nash !== 0n) return nash < 0n ? -1 : 1;
   const leximin = compareFractionVectors(left.sortedFractions, right.sortedFractions);
   if (leximin !== 0) return leximin;
+  // 공정성 목적이 같은 경우 한 사람의 명시적 dislike를 다른 사람의 직접 담기나
+  // 태그 수로 상쇄하지 않는다. avoid는 앞 단계에서 이미 Hard 제외된다.
+  if (left.explicitAversionCount !== right.explicitAversionCount) return right.explicitAversionCount - left.explicitAversionCount;
   if (left.sharedPreferenceStrengthScore !== right.sharedPreferenceStrengthScore) return left.sharedPreferenceStrengthScore - right.sharedPreferenceStrengthScore;
   if (left.directSupportCount !== right.directSupportCount) return left.directSupportCount - right.directSupportCount;
   if (left.matchedTagCount !== right.matchedTagCount) return left.matchedTagCount - right.matchedTagCount;
-  if (left.explicitAversionCount !== right.explicitAversionCount) return right.explicitAversionCount - left.explicitAversionCount;
   if (left.explicitPreferenceCount !== right.explicitPreferenceCount) return left.explicitPreferenceCount - right.explicitPreferenceCount;
   if (left.numericPreferenceScore !== right.numericPreferenceScore) return left.numericPreferenceScore - right.numericPreferenceScore;
+  if (left.recognizedCategoryCount !== right.recognizedCategoryCount) return left.recognizedCategoryCount - right.recognizedCategoryCount;
+  if (left.categoryConcentrationPairs !== right.categoryConcentrationPairs) return right.categoryConcentrationPairs - left.categoryConcentrationPairs;
+  const leftMstDistance = resolvedMstDistanceMeters(left);
+  const rightMstDistance = resolvedMstDistanceMeters(right);
+  if (leftMstDistance !== undefined && rightMstDistance !== undefined && leftMstDistance !== rightMstDistance) {
+    return rightMstDistance - leftMstDistance;
+  }
   return -compareText(left.stableKey, right.stableKey);
 }
 
@@ -561,6 +850,7 @@ function evaluationFromTotals(
   sharedPreferenceStrengthScore: number,
   candidates: readonly CandidateModel[],
   utilityRanges: readonly UtilityRange[],
+  structuralContext: BundleStructuralContext,
 ): BundleEvaluation {
   const fractions = totals.map((total, memberIndex) => ({
     numerator: BigInt(total - utilityRanges[memberIndex].minimum),
@@ -574,6 +864,11 @@ function evaluationFromTotals(
     nashDenominator *= fraction.denominator;
   });
   const sortedIndexes = [...indexes].sort((left, right) => left - right);
+  const categoryCounts: Record<string, number> = {};
+  sortedIndexes.forEach((index) => {
+    const key = candidates[index].structuralCategoryKey;
+    categoryCounts[key] = (categoryCounts[key] ?? 0) + 1;
+  });
   return {
     indexes: sortedIndexes,
     totals: [...totals],
@@ -587,11 +882,21 @@ function evaluationFromTotals(
     explicitAversionCount,
     numericPreferenceScore,
     sharedPreferenceStrengthScore,
+    recognizedCategoryCount: Object.keys(categoryCounts).filter((key) => key !== "unknown").length,
+    categoryConcentrationPairs: Object.values(categoryCounts)
+      .reduce((sum, count) => sum + count * (count - 1) / 2, 0),
+    mstDistanceResolved: false,
+    structuralContext,
     stableKey: sortedIndexes.map((index) => candidates[index].place.id).join("\u0000"),
   };
 }
 
-function evaluateBundle(indexes: readonly number[], candidates: readonly CandidateModel[], utilityRanges: readonly UtilityRange[]): BundleEvaluation {
+function evaluateBundle(
+  indexes: readonly number[],
+  candidates: readonly CandidateModel[],
+  utilityRanges: readonly UtilityRange[],
+  structuralContext: BundleStructuralContext,
+): BundleEvaluation {
   const totals = utilityRanges.map((_, memberIndex) => indexes.reduce((sum, candidateIndex) => sum + candidates[candidateIndex].utilityByMember[memberIndex], 0));
   return evaluationFromTotals(
     indexes,
@@ -604,6 +909,7 @@ function evaluateBundle(indexes: readonly number[], candidates: readonly Candida
     indexes.reduce((sum, index) => sum + candidates[index].sharedPreferenceStrengthScore, 0),
     candidates,
     utilityRanges,
+    structuralContext,
   );
 }
 
@@ -620,6 +926,7 @@ function extendEvaluation(current: BundleEvaluation, added: number, candidates: 
     current.sharedPreferenceStrengthScore + candidate.sharedPreferenceStrengthScore,
     candidates,
     utilityRanges,
+    current.structuralContext,
   );
 }
 
@@ -637,6 +944,7 @@ function replaceEvaluation(current: BundleEvaluation, removed: number, added: nu
     current.sharedPreferenceStrengthScore - removedCandidate.sharedPreferenceStrengthScore + addedCandidate.sharedPreferenceStrengthScore,
     candidates,
     utilityRanges,
+    current.structuralContext,
   );
 }
 
@@ -651,27 +959,108 @@ function exactBundleSearch(
 ) {
   let evaluated = 0;
   let feasibilityExact = true;
-  let best: BundleEvaluation | undefined;
+  const feasibleKeys = new Set<string>();
+  const feasibleMinimums = utilityRanges.map(() => Number.POSITIVE_INFINITY);
+  const feasibleMaximums = utilityRanges.map(() => Number.NEGATIVE_INFINITY);
   const chosen: number[] = Array.from({ length: requiredIndexCount }, (_, index) => index);
-  const visit = (nextIndex: number) => {
+  const visitFeasibility = (nextIndex: number) => {
     if (chosen.length === selectedCount) {
       evaluated += 1;
       const checked = feasibility?.(chosen) ?? { feasible: true, exact: true };
       feasibilityExact &&= checked.exact;
       if (!checked.feasible) return;
-      const evaluation = evaluateBundle(chosen, candidates, utilityRanges);
+      feasibleKeys.add(chosen.join(","));
+      utilityRanges.forEach((_, memberIndex) => {
+        const total = chosen.reduce((sum, candidateIndex) => sum + candidates[candidateIndex].utilityByMember[memberIndex], 0);
+        feasibleMinimums[memberIndex] = Math.min(feasibleMinimums[memberIndex], total);
+        feasibleMaximums[memberIndex] = Math.max(feasibleMaximums[memberIndex], total);
+      });
+      return;
+    }
+    const needed = selectedCount - chosen.length;
+    for (let index = nextIndex; index <= candidates.length - needed; index += 1) {
+      chosen.push(index);
+      visitFeasibility(index + 1);
+      chosen.pop();
+    }
+  };
+  visitFeasibility(requiredIndexCount);
+
+  // Packing까지 정확히 판정한 작은 문제에서는 정규화의 L/H도 동일한
+  // 실행 가능 집합 F에서 다시 구한다. 닫힌 장소나 시간상 불가능한 후보를
+  // 개인 ideal에 넣으면 실제 최선안의 만족도가 낮아지고 max-min 선택도
+  // 뒤집힐 수 있다. Packing 탐색이 한도에 닿은 경우에는 과장하지 않고
+  // 기존의 느슨한 candidate bound를 탐색 내부 비교에만 사용한다.
+  const modeledUtilityIndexes = feasibilityExact
+    ? utilityRanges.flatMap((_, memberIndex) => (
+      feasibleMaximums[memberIndex] > feasibleMinimums[memberIndex] ? [memberIndex] : []
+    ))
+    : utilityRanges.map((_, memberIndex) => memberIndex);
+  const effectiveUtilityRanges = feasibilityExact
+    ? modeledUtilityIndexes.map((memberIndex) => ({
+      minimum: feasibleMinimums[memberIndex],
+      maximum: feasibleMaximums[memberIndex],
+    }))
+    : [...utilityRanges];
+  const evaluationCandidates = candidates.map((candidate) => ({
+    ...candidate,
+    utilityByMember: modeledUtilityIndexes.map((memberIndex) => candidate.utilityByMember[memberIndex]),
+  }));
+  const structuralContext = createBundleStructuralContext(evaluationCandidates);
+  let best: BundleEvaluation | undefined;
+  const visitEvaluation = (nextIndex: number) => {
+    if (chosen.length === selectedCount) {
+      if (!feasibleKeys.has(chosen.join(","))) return;
+      const evaluation = evaluateBundle(chosen, evaluationCandidates, effectiveUtilityRanges, structuralContext);
       if (!best || compareBundle(evaluation, best) > 0) best = evaluation;
       return;
     }
     const needed = selectedCount - chosen.length;
     for (let index = nextIndex; index <= candidates.length - needed; index += 1) {
       chosen.push(index);
-      visit(index + 1);
+      visitEvaluation(index + 1);
       chosen.pop();
     }
   };
-  visit(requiredIndexCount);
-  return { best, evaluated, beamWidth: undefined, localSearchConverged: undefined, feasibilityExact };
+  visitEvaluation(requiredIndexCount);
+  return {
+    best,
+    evaluated,
+    beamWidth: undefined,
+    localSearchConverged: undefined,
+    feasibilityExact,
+    modeledUtilityIndexes,
+    effectiveUtilityRanges,
+    evaluationCandidates,
+  };
+}
+
+function optimisticCompletionEvaluation(
+  bundle: BundleEvaluation,
+  candidates: readonly CandidateModel[],
+  selectedCount: number,
+  utilityRanges: readonly UtilityRange[],
+  topCompletionUtility: (memberIndex: number, nextCandidateIndex: number, needed: number) => number,
+) {
+  const needed = selectedCount - bundle.indexes.length;
+  if (needed <= 0) return bundle;
+  const nextIndex = (bundle.indexes[bundle.indexes.length - 1] ?? -1) + 1;
+  const optimisticTotals = bundle.totals.map((total, memberIndex) => (
+    total + topCompletionUtility(memberIndex, nextIndex, needed)
+  ));
+  return evaluationFromTotals(
+    bundle.indexes,
+    optimisticTotals,
+    bundle.directSupportCount,
+    bundle.matchedTagCount,
+    bundle.explicitPreferenceCount,
+    bundle.explicitAversionCount,
+    bundle.numericPreferenceScore,
+    bundle.sharedPreferenceStrengthScore,
+    candidates,
+    utilityRanges,
+    bundle.structuralContext,
+  );
 }
 
 function heuristicBundleSearch(
@@ -683,12 +1072,31 @@ function heuristicBundleSearch(
 ) {
   let evaluated = 0;
   let feasibilityExact = true;
+  const structuralContext = createBundleStructuralContext(candidates);
   const adaptiveBeamWidth = Math.min(BEAM_WIDTH, Math.max(
     MIN_BEAM_WIDTH,
     Math.floor(HEURISTIC_EXPANSION_BUDGET / Math.max(1, candidates.length * selectedCount)),
   ));
+  const suffixTopUtilitySums = utilityRanges.map((_, memberIndex) => {
+    const byStart: number[][] = Array.from({ length: candidates.length + 1 }, () => [0]);
+    let sortedUtilities: number[] = [];
+    for (let start = candidates.length - 1; start >= 0; start -= 1) {
+      const utility = candidates[start].utilityByMember[memberIndex];
+      let insertAt = 0;
+      while (insertAt < sortedUtilities.length && sortedUtilities[insertAt] >= utility) insertAt += 1;
+      sortedUtilities = [...sortedUtilities.slice(0, insertAt), utility, ...sortedUtilities.slice(insertAt)];
+      const prefix = [0];
+      sortedUtilities.forEach((value) => prefix.push(prefix[prefix.length - 1] + value));
+      byStart[start] = prefix;
+    }
+    return byStart;
+  });
+  const topCompletionUtility = (memberIndex: number, nextCandidateIndex: number, needed: number) => {
+    const prefix = suffixTopUtilitySums[memberIndex]?.[nextCandidateIndex] ?? [0];
+    return prefix[Math.min(needed, prefix.length - 1)] ?? 0;
+  };
   const requiredIndexes = Array.from({ length: requiredIndexCount }, (_, index) => index);
-  let beam: BundleEvaluation[] = [evaluateBundle(requiredIndexes, candidates, utilityRanges)];
+  let beam: BundleEvaluation[] = [evaluateBundle(requiredIndexes, candidates, utilityRanges, structuralContext)];
   if (requiredIndexCount === selectedCount) {
     const checked = feasibility?.(requiredIndexes) ?? { feasible: true, exact: true };
     feasibilityExact &&= checked.exact;
@@ -712,8 +1120,22 @@ function heuristicBundleSearch(
         return checked.feasible;
       })
       : expansions;
+    const complete = depth + 1 === selectedCount;
+    const optimisticCache = new Map<string, BundleEvaluation>();
+    const rankingEvaluation = (bundle: BundleEvaluation) => {
+      if (complete) return bundle;
+      const key = bundle.stableKey;
+      const cached = optimisticCache.get(key);
+      if (cached) return cached;
+      const optimistic = optimisticCompletionEvaluation(bundle, candidates, selectedCount, utilityRanges, topCompletionUtility);
+      optimisticCache.set(key, optimistic);
+      return optimistic;
+    };
     beam = feasibleExpansions
-      .sort((left, right) => -compareBundle(left, right))
+      .sort((left, right) => -compareBundle(
+        rankingEvaluation(left),
+        rankingEvaluation(right),
+      ))
       .slice(0, adaptiveBeamWidth);
     if (!beam.length) break;
   }
@@ -775,6 +1197,24 @@ function mappedActivities(place: Place) {
     (activityIdsByExactPlaceToken[token] ?? []).forEach((activity) => activities.add(activity));
   });
   return [...activities].sort(compareText);
+}
+
+function structuralCategoryKey(place: Place) {
+  const level2 = normalizeTrait(place.classification?.lclsSystm2Name ?? place.classification?.lclsSystm2 ?? "");
+  if (level2) return `l2:${level2}`;
+  if (place.contentTypeId !== undefined && Number.isFinite(place.contentTypeId)) return `content:${place.contentTypeId}`;
+  const activities = mappedActivities(place);
+  if (activities.length) return `activity:${activities.join("+")}`;
+  const category = normalizeTrait(place.category);
+  return category ? `category:${category}` : "unknown";
+}
+
+function structuralCoordinates(place: Place) {
+  if (!Number.isFinite(place.latitude) || !Number.isFinite(place.longitude)) return undefined;
+  const latitude = place.latitude as number;
+  const longitude = place.longitude as number;
+  if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180 || (latitude === 0 && longitude === 0)) return undefined;
+  return { latitude, longitude };
 }
 
 type DurationObservation = {
@@ -871,12 +1311,15 @@ function combineDurationEvidence(
     value - (component.measurementHalfWidths[index] ?? 0),
     value + (component.measurementHalfWidths[index] ?? 0),
   ]));
+  const rangeUnknown = allValues.length === 1 && pooledDispersion === 0;
   return {
     placeId,
     source: components[0].source,
     durationMinutes: snapNearest(rawDuration),
     lowerMinutes: snapDurationLower(Math.max(SLOT_MINUTES, rawDuration - combinedStandardError)),
-    upperMinutes: snapDurationUpper(Math.min(24 * 60, rawDuration + combinedStandardError)),
+    ...(rangeUnknown ? { rangeUnknown: true } : {
+      upperMinutes: snapDurationUpper(Math.min(24 * 60, rawDuration + combinedStandardError)),
+    }),
     lowerBoundOnly: false,
     sampleSize: allValues.length,
     effectiveSampleSize: effectiveSampleSizeDenominator > 0 ? 1 / effectiveSampleSizeDenominator : allValues.length,
@@ -903,6 +1346,7 @@ function estimateCandidateDuration(
   input: DuriAnalysisInput,
   place: Place,
   fallbackDurationMinutes?: number,
+  fallbackSource: "user-fallback" | "editable-template" = "user-fallback",
 ): PreferenceAutoFillDurationEvidence | undefined {
   const observations = input.itinerary.flatMap((item): DurationObservation[] => {
     if (item.itemType !== "place" || !item.placeId || !Number.isInteger(item.durationMinutes) || item.durationMinutes < 1) return [];
@@ -948,6 +1392,16 @@ function estimateCandidateDuration(
       supportingItemIds: disjointMatches.map((entry) => entry.itemId),
     });
   });
+  if (!components.length && observations.length) {
+    // taxonomy가 비어 있는 API 장소만 같은 여행의 전체 방문시간으로 fallback한다.
+    // 더 구체적인 cohort가 하나라도 있으면 섞어 장소별 적응값을 흐리지 않는다.
+    components.push({
+      source: "trip-visit-median",
+      values: observations.map((entry) => entry.durationMinutes),
+      measurementHalfWidths: observations.map(() => 0),
+      supportingItemIds: observations.map((entry) => entry.itemId),
+    });
+  }
   const durationObservations = detailedWindowObservations(input)
     .flatMap((entry) => entry.duration ? [{ userId: entry.userId, ...entry.duration }] : []);
   if (durationObservations.length) {
@@ -967,10 +1421,10 @@ function estimateCandidateDuration(
   const empiricalEstimate = components.length ? combineDurationEvidence(place.id, components) : undefined;
   const fallbackEstimate: PreferenceAutoFillDurationEvidence | undefined = fallbackDurationMinutes === undefined ? undefined : {
     placeId: place.id,
-    source: "user-fallback",
+    source: fallbackSource,
     durationMinutes: fallbackDurationMinutes,
     lowerMinutes: fallbackDurationMinutes,
-    upperMinutes: fallbackDurationMinutes,
+    rangeUnknown: true,
     lowerBoundOnly: false,
     sampleSize: 1,
     effectiveSampleSize: 1,
@@ -978,7 +1432,7 @@ function estimateCandidateDuration(
     maximumObservedDeviationMinutes: 0,
     shrinkageApplied: false,
     components: [{
-      source: "user-fallback",
+      source: fallbackSource,
       sampleSize: 1,
       centerMinutes: fallbackDurationMinutes,
       dispersionMinutes: 0,
@@ -997,14 +1451,14 @@ function estimateCandidateDuration(
   if (officialMinimumMinutes === undefined || officialMinimumMinutes > 24 * 60) return baseEstimate;
   const griddedOfficialMinimum = snapDurationUpper(officialMinimumMinutes);
   if (baseEstimate) {
-    const officialFloorExceededReferenceRange = baseEstimate.upperMinutes !== undefined
+    const officialFloorExceededReferenceRange = !baseEstimate.rangeUnknown && baseEstimate.upperMinutes !== undefined
       && griddedOfficialMinimum > baseEstimate.upperMinutes;
     const durationMinutes = Math.max(baseEstimate.durationMinutes, griddedOfficialMinimum);
     return {
       ...baseEstimate,
       durationMinutes,
       lowerMinutes: Math.max(baseEstimate.lowerMinutes, griddedOfficialMinimum),
-      upperMinutes: officialFloorExceededReferenceRange
+      upperMinutes: baseEstimate.rangeUnknown || officialFloorExceededReferenceRange
         ? undefined
         : Math.max(baseEstimate.upperMinutes ?? griddedOfficialMinimum, griddedOfficialMinimum),
       officialMinimumMinutes,
@@ -1035,6 +1489,51 @@ function estimateCandidateDuration(
     shrinkageApplied: false,
     components: [],
   };
+}
+
+function candidateMedianDurationEvidence(
+  placeId: EntityId,
+  evidence: readonly PreferenceAutoFillDurationEvidence[],
+): PreferenceAutoFillDurationEvidence | undefined {
+  if (!evidence.length) return undefined;
+  const values = evidence.map((entry) => entry.durationMinutes);
+  const center = median(values);
+  const absoluteDeviations = values.map((value) => Math.abs(value - center));
+  const dispersion = median(absoluteDeviations);
+  return {
+    placeId,
+    source: "candidate-evidence-median",
+    durationMinutes: snapNearest(center),
+    lowerMinutes: snapDurationLower(Math.max(SLOT_MINUTES, center - dispersion)),
+    upperMinutes: snapDurationUpper(Math.min(24 * 60, center + dispersion)),
+    lowerBoundOnly: false,
+    sampleSize: values.length,
+    effectiveSampleSize: values.length,
+    supportingItemIds: [...new Set(evidence.flatMap((entry) => entry.supportingItemIds))].sort(compareText),
+    maximumObservedDeviationMinutes: Math.max(...values.map((value) => Math.abs(value - center))),
+    shrinkageApplied: values.length > 1,
+    components: [{
+      source: "candidate-evidence-median",
+      sampleSize: values.length,
+      centerMinutes: center,
+      dispersionMinutes: dispersion,
+      normalizedPrecisionWeight: 1,
+    }],
+  };
+}
+
+function newestPlaceConstraintEvidence(input: DuriAnalysisInput, placeId: EntityId) {
+  return (input.placeConstraintEvidence ?? [])
+    .filter((entry) => entry.placeId === placeId && entry.provider === "tour-api")
+    .sort((left, right) => right.fetchedAt.localeCompare(left.fetchedAt))[0];
+}
+
+function operatingAvailabilityByDate(input: DuriAnalysisInput, placeId: EntityId) {
+  const evidence = newestPlaceConstraintEvidence(input, placeId);
+  return Object.fromEntries(getTripDates(input.trip.startDate, input.trip.endDate).map((date) => [
+    date,
+    evidence ? placeOperatingAvailabilityForDate(evidence, date) : { status: "unknown" as const },
+  ]));
 }
 
 function activitySignalsForMember(member: PreferenceEvidence, place: Place): PreferenceAutoFillCandidateEvidence["matchedActivitySignals"] {
@@ -1087,21 +1586,36 @@ function activitySignalsForMember(member: PreferenceEvidence, place: Place): Pre
 function buildCandidateModels(
   input: DuriAnalysisInput,
   evidence: readonly PreferenceEvidence[],
-  _maximumSelectedCount: number,
   fallbackDurationMinutes?: number,
+  fallbackSource: "user-fallback" | "editable-template" = "user-fallback",
+  conflictedPlaceIds: ReadonlySet<EntityId> = new Set(),
 ) {
   const scheduledPlaceIds = new Set(input.itinerary.flatMap((item) => item.placeId ? [item.placeId] : []));
   const fixedUnlinkedPlaceIds = new Set((input.confirmedScheduleConstraints ?? []).flatMap((constraint) => (
     constraint.placeId && !constraint.itineraryItemId ? [constraint.placeId] : []
   )));
   const tripMemberIds = new Set(input.trip.members.map((member) => member.userId));
+  const tripCandidates = input.candidates.filter((candidate) => candidate.tripId === input.trip.id);
+  const candidatePlaceIds = [...new Set(tripCandidates.map((candidate) => candidate.placeId))].sort(compareText);
+  const diagnostics: CandidateModelDiagnostics = {
+    candidatePlaceIds,
+    scheduledPlaceIds: candidatePlaceIds.filter((placeId) => scheduledPlaceIds.has(placeId)),
+    fixedUnlinkedPlaceIds: candidatePlaceIds.filter((placeId) => !scheduledPlaceIds.has(placeId) && fixedUnlinkedPlaceIds.has(placeId)),
+    missingPlaceIds: candidatePlaceIds.filter((placeId) => !input.placesById[placeId]),
+    wrongRegionPlaceIds: candidatePlaceIds.filter((placeId) => {
+      const place = input.placesById[placeId];
+      return Boolean(place && place.regionId !== input.trip.regionId);
+    }),
+    conflictedPlaceIds: candidatePlaceIds.filter((placeId) => conflictedPlaceIds.has(placeId)),
+    validUnscheduledPlaceIds: [],
+  };
   // 손상된 persisted state나 중복 API 행이 같은 장소를 두 번 배치하지 않도록
   // placeId 단위로 합치되, 실제로 기록된 담기 사용자만 합집합으로 보존한다.
   const rawByPlaceId = new Map<EntityId, { candidate: TripCandidate; place: Place }>();
-  input.candidates
-    .filter((candidate) => candidate.tripId === input.trip.id
-      && !scheduledPlaceIds.has(candidate.placeId)
-      && !fixedUnlinkedPlaceIds.has(candidate.placeId))
+  tripCandidates
+    .filter((candidate) => !scheduledPlaceIds.has(candidate.placeId)
+      && !fixedUnlinkedPlaceIds.has(candidate.placeId)
+      && !conflictedPlaceIds.has(candidate.placeId))
     .forEach((candidate) => {
       const place = input.placesById[candidate.placeId];
       if (!place || place.regionId !== input.trip.regionId) return;
@@ -1117,6 +1631,7 @@ function buildCandidateModels(
     });
   const raw = [...rawByPlaceId.values()]
     .sort((left, right) => compareText(left.place.id, right.place.id));
+  diagnostics.validUnscheduledPlaceIds = raw.map((entry) => entry.place.id);
   const rawModels = raw.map(({ candidate, place }) => {
     const placeTokens = new Set([place.category, ...place.tags].map(normalizeTrait).filter(Boolean));
     const memberEvidence = evidence.map((member): PreferenceAutoFillCandidateEvidence => {
@@ -1146,9 +1661,9 @@ function buildCandidateModels(
   // 후보마다 사용할 수 있는 수치 신호 수가 달라도 산술평균을 반올림하지 않도록
   // 관측된 분모의 최소공배수 척도로 정확히 정수화한다(현재 taxonomy 최대 9개).
   const numericMeanDenominator = numericSignalCounts.reduce(leastCommonMultiple, 1);
-  const preparedModelsWithOptionalDuration = eligibleRawModels.map((model) => ({
+  const modelsWithEmpiricalDuration = eligibleRawModels.map((model) => ({
     ...model,
-    durationEvidence: estimateCandidateDuration(input, model.place, fallbackDurationMinutes),
+    durationEvidence: estimateCandidateDuration(input, model.place),
     memberComponents: model.memberEvidence.map((entry) => {
       const explicitPreferenceCount = entry.matchedActivitySignals.filter((signal) => signal.direction === "preference").length;
       const explicitAversionCount = entry.matchedActivitySignals.filter((signal) => signal.direction === "aversion").length;
@@ -1160,6 +1675,30 @@ function buildCandidateModels(
       return { explicitPreferenceCount, explicitAversionCount, numericPreferenceScore, sharedPreferenceStrengthScore };
     }),
   }));
+  const candidateDurationReferenceByCategory = new Map<string, PreferenceAutoFillDurationEvidence[]>();
+  modelsWithEmpiricalDuration.forEach((model) => {
+    if (!model.durationEvidence) return;
+    const key = structuralCategoryKey(model.place);
+    if (key === "unknown") return;
+    candidateDurationReferenceByCategory.set(key, [
+      ...(candidateDurationReferenceByCategory.get(key) ?? []),
+      model.durationEvidence,
+    ]);
+  });
+  const preparedModelsWithOptionalDuration = modelsWithEmpiricalDuration.map((model) => ({
+    ...model,
+    durationEvidence: model.durationEvidence
+      // 관련 없는 한 장소의 극단 체류시간을 전체 후보에 복사하지 않는다.
+      // 명시적 structural taxonomy가 같고 독립 후보 근거가 2개 이상일 때만
+      // 후보 보드 내부 중앙값을 보조 추정으로 사용한다.
+      ?? candidateMedianDurationEvidence(
+        model.place.id,
+        (candidateDurationReferenceByCategory.get(structuralCategoryKey(model.place)) ?? []).length >= 2
+          ? candidateDurationReferenceByCategory.get(structuralCategoryKey(model.place)) ?? []
+          : [],
+      )
+      ?? estimateCandidateDuration(input, model.place, fallbackDurationMinutes, fallbackSource),
+  }));
   const missingDurationPlaceIds = preparedModelsWithOptionalDuration
     .filter((model) => !model.durationEvidence)
     .map((model) => model.place.id)
@@ -1170,7 +1709,16 @@ function buildCandidateModels(
   const maxNumericPreferenceScore = Math.max(0, ...preparedModels.flatMap((model) => model.memberComponents.map((component) => component.numericPreferenceScore)));
   const maxSharedPreferenceStrengthScore = Math.max(0, ...preparedModels.flatMap((model) => model.memberComponents.map((component) => component.sharedPreferenceStrengthScore)));
   if (![maxNumericPreferenceScore, maxSharedPreferenceStrengthScore].every(Number.isSafeInteger)) {
-    return { models: [] as CandidateModel[], unsafeUtilityScale: true, excludedAvoidPlaceIds, missingDurationPlaceIds };
+    return {
+      models: [] as CandidateModel[],
+      unsafeUtilityScale: true,
+      selectionBasis: "unavailable" as const,
+      excludedAvoidPlaceIds,
+      excludedAversionOnlyPlaceIds: [] as EntityId[],
+      missingDurationPlaceIds,
+      comparableCoordinateCoverage: false,
+      diagnostics,
+    };
   }
   const evidenceVector = (model: typeof preparedModels[number], memberIndex: number) => {
     const entry = model.memberEvidence[memberIndex];
@@ -1189,20 +1737,33 @@ function buildCandidateModels(
     }
     return left.length - right.length;
   };
-  const positiveModels = preparedModels.filter(({ memberEvidence, memberComponents }) => memberEvidence.some((entry, index) => (
+  const hasPositiveEvidence = ({ memberEvidence, memberComponents }: typeof preparedModels[number]) => memberEvidence.some((entry, index) => (
       entry.explicitlyAdded
       || entry.sharedCandidateSignal?.mustVisit === true
       || memberComponents[index].sharedPreferenceStrengthScore > 0
       || entry.matchedTags.length > 0
       || memberComponents[index].explicitPreferenceCount > 0
       || memberComponents[index].numericPreferenceScore > 0
-    )));
+    ));
+  // 명시적인 avoid만 Hard 제외다. 설문의 dislike는 Soft 순위 하락으로 남겨
+  // 후보가 부족한 방에서 사실상의 거부권으로 승격시키지 않는다.
+  const excludedAversionOnlyPlaceIds: EntityId[] = [];
+  const selectionPool = preparedModels;
+  const positiveModelCount = selectionPool.filter(hasPositiveEvidence).length;
+  const selectionBasis = positiveModelCount === 0
+    ? "neutral-structural" as const
+    : positiveModelCount < selectionPool.length
+      ? "preference-with-neutral-supplement" as const
+      : "preference-fairness" as const;
+  const comparableCoordinateCoverage = selectionPool.length > 0
+    && selectionPool.every((model) => Boolean(structuralCoordinates(model.place)));
   // 서로 단위가 다른 ordinal·tag·시간배분 신호를 임의 가중합하지 않는다.
   // 멤버별 사전식 evidence 순위를 만들고, 자신보다 명확히 낮은 후보 수를
   // Borda형 정수 효용으로 사용한다. 후보 입력 순서와 점수 단위에 불변이다.
-  const models = positiveModels.map(({ candidate, place, memberEvidence, memberComponents, durationEvidence }): CandidateModel => {
+  const models = selectionPool.map(({ candidate, place, memberEvidence, memberComponents, durationEvidence }): CandidateModel => {
     const model = { candidate, place, memberEvidence, memberComponents, durationEvidence };
-    const utilityByMember = memberEvidence.map((_, memberIndex) => positiveModels.reduce((count, other) => (
+    const coordinates = structuralCoordinates(place);
+    const utilityByMember = memberEvidence.map((_, memberIndex) => selectionPool.reduce((count, other) => (
       count + (compareEvidenceVector(evidenceVector(model, memberIndex), evidenceVector(other, memberIndex)) > 0 ? 1 : 0)
     ), 0));
     return {
@@ -1217,6 +1778,9 @@ function buildCandidateModels(
       numericPreferenceScore: memberComponents.reduce((sum, component) => sum + component.numericPreferenceScore, 0),
       sharedPreferenceStrengthScore: memberComponents.reduce((sum, component) => sum + component.sharedPreferenceStrengthScore, 0),
       mandatory: memberEvidence.some((entry) => entry.sharedCandidateSignal?.mustVisit === true),
+      structuralCategoryKey: structuralCategoryKey(place),
+      ...(coordinates ? { structuralCoordinates: coordinates } : {}),
+      operatingAvailabilityByDate: operatingAvailabilityByDate(input, place.id),
       durationEvidence,
     };
   }).map((candidate) => ({
@@ -1226,7 +1790,92 @@ function buildCandidateModels(
       addedByUserIds: [...new Set(candidate.candidate.addedByUserIds.filter((memberId) => tripMemberIds.has(memberId)))].sort(compareText),
     },
   }));
-  return { models, unsafeUtilityScale: false, excludedAvoidPlaceIds, missingDurationPlaceIds };
+  return {
+    models,
+    unsafeUtilityScale: false,
+    selectionBasis,
+    excludedAvoidPlaceIds,
+    excludedAversionOnlyPlaceIds,
+    missingDurationPlaceIds,
+    comparableCoordinateCoverage,
+    diagnostics,
+  };
+}
+
+function candidateBlockExplanation(
+  input: DuriAnalysisInput,
+  result: ReturnType<typeof buildCandidateModels>,
+) {
+  const diagnostics = result.diagnostics;
+  const placeNames = (placeIds: readonly EntityId[]) => placeIds
+    .map((placeId) => input.placesById[placeId]?.name ?? placeId)
+    .slice(0, 4)
+    .join(", ");
+  const limitations: string[] = [];
+  if (diagnostics.scheduledPlaceIds.length) limitations.push(`후보 중 이미 배치됨 ${diagnostics.scheduledPlaceIds.length}곳`);
+  if (diagnostics.fixedUnlinkedPlaceIds.length) limitations.push(`시간이 확정됐지만 일정과 연결되지 않음 ${diagnostics.fixedUnlinkedPlaceIds.length}곳`);
+  if (diagnostics.conflictedPlaceIds.length) limitations.push(`반드시 방문과 제외 의견이 충돌해 보류 ${diagnostics.conflictedPlaceIds.length}곳: ${placeNames(diagnostics.conflictedPlaceIds)}`);
+  if (result.excludedAvoidPlaceIds.length) limitations.push(`동행자의 명시적 제외 의견으로 제외 ${result.excludedAvoidPlaceIds.length}곳: ${placeNames(result.excludedAvoidPlaceIds)}`);
+  if (result.excludedAversionOnlyPlaceIds.length) limitations.push(`긍정 근거 없이 불호만 확인되어 제외 ${result.excludedAversionOnlyPlaceIds.length}곳: ${placeNames(result.excludedAversionOnlyPlaceIds)}`);
+  if (diagnostics.missingPlaceIds.length || diagnostics.wrongRegionPlaceIds.length) {
+    limitations.push(`장소 정보가 없거나 여행 지역과 맞지 않음 ${diagnostics.missingPlaceIds.length + diagnostics.wrongRegionPlaceIds.length}곳`);
+  }
+  if (result.missingDurationPlaceIds.length) limitations.push(`체류시간 근거가 없음 ${result.missingDurationPlaceIds.length}곳: ${placeNames(result.missingDurationPlaceIds)}`);
+
+  if (!diagnostics.candidatePlaceIds.length) {
+    return {
+      status: "no-candidates" as const,
+      message: "아직 여행방에 후보 장소가 없어요. 가고 싶은 장소를 후보에 담으면 성향과 동선을 비교해 초안을 만들 수 있어요.",
+      limitations,
+    };
+  }
+  if (!diagnostics.validUnscheduledPlaceIds.length) {
+    if (diagnostics.conflictedPlaceIds.length) {
+      return {
+        status: "insufficient-data" as const,
+        message: "남은 후보의 반드시 방문·제외 의견이 충돌해 해당 장소만 보류했어요. 의견을 정리하거나 다른 후보를 담아 주세요.",
+        limitations,
+      };
+    }
+    if (diagnostics.scheduledPlaceIds.length === diagnostics.candidatePlaceIds.length) {
+      return {
+        status: "no-candidates" as const,
+        message: `후보 ${diagnostics.candidatePlaceIds.length}곳이 모두 이미 일정에 들어가 있어 새로 배치할 장소가 없어요.`,
+        limitations,
+      };
+    }
+    if (diagnostics.fixedUnlinkedPlaceIds.length) {
+      return {
+        status: "insufficient-data" as const,
+        message: "남은 후보가 확정 예약과 연결돼 있지만 일정 항목이 없어요. 예약을 일정에 연결한 뒤 다시 초안을 만들어 주세요.",
+        limitations,
+      };
+    }
+    return {
+      status: "insufficient-data" as const,
+      message: "남은 후보의 장소 정보를 현재 여행방과 연결하지 못했어요. 후보를 새로고침한 뒤 다시 시도해 주세요.",
+      limitations,
+    };
+  }
+  if (result.missingDurationPlaceIds.length) {
+    return {
+      status: "insufficient-data" as const,
+      message: `미배치 후보 ${diagnostics.validUnscheduledPlaceIds.length}곳의 체류시간을 정할 관측 근거가 부족해요. 필요하면 ‘직접 제한 정하기’에서 예비 체류시간만 입력해 주세요.`,
+      limitations,
+    };
+  }
+  if (result.excludedAvoidPlaceIds.length || result.excludedAversionOnlyPlaceIds.length) {
+    return {
+      status: "no-candidates" as const,
+      message: `남은 후보 ${diagnostics.validUnscheduledPlaceIds.length}곳이 모두 동행자의 제외·불호 조건에 걸렸어요. 의견을 바꾸기 전에는 두리가 임의로 넣지 않아요.`,
+      limitations,
+    };
+  }
+  return {
+    status: "no-candidates" as const,
+    message: "현재 조건으로 안전하게 배치할 수 있는 후보가 없어요. 아래 제외 사유를 확인해 주세요.",
+    limitations,
+  };
 }
 
 function existingItineraryProblem(input: DuriAnalysisInput) {
@@ -1272,7 +1921,8 @@ function blockerRangesForDate(
     if (linkedItem && start === undefined) return;
     if (linkedItem && start !== undefined && end !== undefined) return;
     if (start === undefined) {
-      dayBlocked = true;
+      // 날짜만 확정된 사실은 all-day 예약이라는 뜻이 아니다. 연결 장소는 후보
+      // 풀에서 이미 고정 대상으로 제외하되, 다른 장소까지 하루 전체 차단하지 않는다.
       incompleteTimeConstraint = true;
     } else if (end === undefined) {
       // 종료 시각을 추정하지 않는다. 확인된 시작 시각 이후는 모두 Hard unknown으로
@@ -1298,11 +1948,62 @@ function hasMismatchedLinkedConstraint(
   });
 }
 
+function gapBoundaryCoordinates(
+  input: DuriAnalysisInput,
+  date: string,
+  startMinute: number,
+  endMinute: number,
+) {
+  const locatedItems = input.itinerary.flatMap((item) => {
+    if (item.date !== date || !item.placeId) return [];
+    const place = input.placesById[item.placeId];
+    if (!place) return [];
+    const coordinates = structuralCoordinates(place);
+    const start = timeStringToMinutes(item.startTime);
+    if (!coordinates || !Number.isFinite(start)) return [];
+    return [{ start, end: start + item.durationMinutes, coordinates }];
+  });
+  const previous = locatedItems
+    .filter((item) => item.end <= startMinute)
+    .sort((left, right) => right.end - left.end)[0];
+  const next = locatedItems
+    .filter((item) => item.start >= endMinute)
+    .sort((left, right) => left.start - right.start)[0];
+  return {
+    ...(previous ? { previousCoordinates: previous.coordinates } : {}),
+    ...(next ? { nextCoordinates: next.coordinates } : {}),
+  };
+}
+
+function gapTransitionBoundaries(
+  input: DuriAnalysisInput,
+  constraints: readonly ConfirmedScheduleConstraint[],
+  date: string,
+  startMinute: number,
+  endMinute: number,
+) {
+  const timedItems = input.itinerary.filter((item) => item.date === date && item.itemType !== "rest").map((item) => {
+    const start = timeStringToMinutes(item.startTime);
+    return { start, end: start + item.durationMinutes };
+  });
+  const timedConstraints = constraints.filter((constraint) => constraint.date === date).map((constraint) => ({
+    start: constraint.startTime ? timeStringToMinutes(constraint.startTime) : undefined,
+    end: constraint.endTime ? timeStringToMinutes(constraint.endTime) : undefined,
+  }));
+  return {
+    requiresStartTransition: timedItems.some((item) => item.end === startMinute)
+      || timedConstraints.some((constraint) => constraint.end === startMinute),
+    requiresEndTransition: timedItems.some((item) => item.start === endMinute)
+      || timedConstraints.some((constraint) => constraint.start === endMinute),
+  };
+}
+
 function buildPlacementSlots(
   input: DuriAnalysisInput,
   start: number,
   end: number,
   duration: number,
+  transitionBufferMinutes: number,
   constraints: readonly ConfirmedScheduleConstraint[],
   preferredDailyScheduledMinutes?: number,
 ) {
@@ -1341,12 +2042,20 @@ function buildPlacementSlots(
       cursor = Math.max(cursor, blocker.end);
     });
     if (cursor < limit) gaps.push({ start: cursor, end: limit });
+    const placementGaps = gaps.map((gap): PlacementGap => ({
+      date,
+      startMinute: Math.ceil(gap.start / SLOT_MINUTES) * SLOT_MINUTES,
+      endMinute: Math.floor(gap.end / SLOT_MINUTES) * SLOT_MINUTES,
+      ...gapTransitionBoundaries(input, constraints, date, gap.start, gap.end),
+      ...gapBoundaryCoordinates(input, date, gap.start, gap.end),
+    })).filter((gap) => gap.startMinute < gap.endMinute);
     const daySlots: PlacementSlot[] = [];
-    gaps.forEach((gap) => {
-      let slotStart = Math.ceil(gap.start / SLOT_MINUTES) * SLOT_MINUTES;
-      while (slotStart + duration <= gap.end) {
+    placementGaps.forEach((gap) => {
+      let slotStart = gap.startMinute + (gap.requiresStartTransition ? transitionBufferMinutes : 0);
+      const slotEnd = gap.endMinute - (gap.requiresEndTransition ? transitionBufferMinutes : 0);
+      while (slotStart + duration <= slotEnd) {
         daySlots.push({ date, startMinute: slotStart });
-        slotStart += duration;
+        slotStart += duration + transitionBufferMinutes;
       }
     });
     const existingMinutes = occupiedMinutesOnDate(input.itinerary, date);
@@ -1354,11 +2063,7 @@ function buildPlacementSlots(
       date,
       existingMinutes,
       ...(preferredDailyScheduledMinutes === undefined ? {} : { preferredDailyScheduledMinutes }),
-      gaps: gaps.map((gap) => ({
-        date,
-        startMinute: Math.ceil(gap.start / SLOT_MINUTES) * SLOT_MINUTES,
-        endMinute: Math.floor(gap.end / SLOT_MINUTES) * SLOT_MINUTES,
-      })).filter((gap) => gap.startMinute < gap.endMinute),
+      gaps: placementGaps,
       // 하루 선호 일정량은 Soft 목표다. 물리적으로 빈 슬롯을 지우지 않고
       // 날짜 분산 우선순위와 기본 추가 개수에만 사용한다.
       slots: daySlots,
@@ -1392,11 +2097,33 @@ function buildPlacementSlots(
   };
 }
 
+function observedTransitionBuffer(input: DuriAnalysisInput) {
+  const routeDurations = (input.routeLegEstimates ?? []).flatMap((estimate) => (
+    estimate.mode === input.trip.transport
+      && Number.isFinite(estimate.durationSeconds)
+      && estimate.durationSeconds > 0
+      ? [estimate.durationSeconds / 60]
+      : []
+  ));
+  if (!routeDurations.length) {
+    return { minutes: SLOT_MINUTES, basis: "editing-grid-placeholder" as const };
+  }
+  return {
+    minutes: Math.max(SLOT_MINUTES, snapDurationUpper(median(routeDurations))),
+    basis: "observed-route-duration" as const,
+  };
+}
+
 type DurationPackingResult = {
   feasible: boolean;
   exact: boolean;
   expandedStates: number;
   placements: PackedCandidatePlacement[];
+  comparableInsertionCount: number;
+  totalInsertionDistanceMeters: number;
+  totalPathDistanceMeters: number;
+  optimizedGapCount: number;
+  sequenceOptimizationExact: boolean;
 };
 
 type PlacementDayLoad = {
@@ -1404,45 +2131,502 @@ type PlacementDayLoad = {
   preferredDailyScheduledMinutes?: number;
 };
 
+function insertionDistanceForBin(
+  candidates: readonly CandidateModel[],
+  candidateIndex: number,
+  bin: PlacementGap & { lastCandidateIndex?: number },
+) {
+  const current = candidates[candidateIndex].structuralCoordinates;
+  if (!current) return undefined;
+  const previous = bin.lastCandidateIndex === undefined
+    ? bin.previousCoordinates
+    : candidates[bin.lastCandidateIndex].structuralCoordinates;
+  const next = bin.nextCoordinates;
+  if (previous && next) {
+    return Math.max(0, distanceMeters(previous, current) + distanceMeters(current, next) - distanceMeters(previous, next));
+  }
+  if (previous) return distanceMeters(previous, current);
+  if (next) return distanceMeters(current, next);
+  return undefined;
+}
+
+const ROUTE_DISTANCE_EPSILON_METERS = 1e-6;
+
+function candidateSequenceKey(candidates: readonly CandidateModel[], indexes: readonly number[]) {
+  return indexes.map((index) => candidates[index].place.id).join("\u001f");
+}
+
+function candidatePathDistanceMeters(
+  candidates: readonly CandidateModel[],
+  indexes: readonly number[],
+  gap: PlacementGap,
+) {
+  const coordinates = indexes.map((index) => candidates[index].structuralCoordinates);
+  if (coordinates.some((coordinate) => !coordinate)) return undefined;
+  const located = coordinates as StructuralCoordinates[];
+  let total = 0;
+  if (gap.previousCoordinates && located[0]) total += distanceMeters(gap.previousCoordinates, located[0]);
+  for (let index = 1; index < located.length; index += 1) {
+    total += distanceMeters(located[index - 1], located[index]);
+  }
+  if (gap.nextCoordinates && located.length) total += distanceMeters(located[located.length - 1], gap.nextCoordinates);
+  return total;
+}
+
+function candidateStartWithinOperatingFacts(
+  candidate: CandidateModel,
+  date: string,
+  earliestStart: number,
+  latestEnd: number,
+  preferredStart = earliestStart,
+) {
+  const availability = candidate.operatingAvailabilityByDate[date] ?? { status: "unknown" as const };
+  if (availability.status === "closed") return undefined;
+  const duration = candidate.durationEvidence.durationMinutes;
+  const nearestGridStart = (minimum: number, maximum: number) => {
+    if (minimum > maximum) return undefined;
+    const snapped = Math.round(preferredStart / SLOT_MINUTES) * SLOT_MINUTES;
+    return Math.max(minimum, Math.min(maximum, snapped));
+  };
+  if (availability.status === "unknown") {
+    return nearestGridStart(earliestStart, latestEnd - duration);
+  }
+  const choices = availability.windows.flatMap((window) => {
+    const minimum = Math.ceil(Math.max(earliestStart, window.startMinutes) / SLOT_MINUTES) * SLOT_MINUTES;
+    const maximum = Math.floor((Math.min(latestEnd, window.endMinutes) - duration) / SLOT_MINUTES) * SLOT_MINUTES;
+    const start = nearestGridStart(minimum, maximum);
+    return start === undefined ? [] : [start];
+  });
+  return choices.sort((left, right) => (
+    Math.abs(left - preferredStart) - Math.abs(right - preferredStart)
+    || left - right
+  ))[0];
+}
+
+function candidateLatestStartWithinOperatingFacts(
+  candidate: CandidateModel,
+  date: string,
+  earliestStart: number,
+  latestEnd: number,
+) {
+  const availability = candidate.operatingAvailabilityByDate[date] ?? { status: "unknown" as const };
+  if (availability.status === "closed") return undefined;
+  const duration = candidate.durationEvidence.durationMinutes;
+  if (availability.status === "unknown") {
+    const latest = Math.floor((latestEnd - duration) / SLOT_MINUTES) * SLOT_MINUTES;
+    return latest >= earliestStart ? latest : undefined;
+  }
+  const starts = availability.windows.flatMap((window) => {
+    const minimum = Math.ceil(Math.max(earliestStart, window.startMinutes) / SLOT_MINUTES) * SLOT_MINUTES;
+    const maximum = Math.floor((Math.min(latestEnd, window.endMinutes) - duration) / SLOT_MINUTES) * SLOT_MINUTES;
+    return minimum <= maximum ? [maximum] : [];
+  });
+  return starts.length ? Math.max(...starts) : undefined;
+}
+
+function scheduleCandidateSequence(
+  candidates: readonly CandidateModel[],
+  indexes: readonly number[],
+  gap: PlacementGap,
+  transitionBufferMinutes: number,
+  spreadSlack = false,
+) {
+  const placements: PackedCandidatePlacement[] = [];
+  const earliestBoundary = gap.startMinute + (gap.requiresStartTransition ? transitionBufferMinutes : 0);
+  let cursor = earliestBoundary;
+  const latestEnd = gap.endMinute - (gap.requiresEndTransition ? transitionBufferMinutes : 0);
+  const latestStarts: number[] = [];
+  if (spreadSlack) {
+    let nextStart = latestEnd;
+    for (let position = indexes.length - 1; position >= 0; position -= 1) {
+      const candidateIndex = indexes[position];
+      const candidateLatestEnd = nextStart - (position < indexes.length - 1 ? transitionBufferMinutes : 0);
+      const latestStart = candidateLatestStartWithinOperatingFacts(
+        candidates[candidateIndex],
+        gap.date,
+        earliestBoundary,
+        candidateLatestEnd,
+      );
+      if (latestStart === undefined) return undefined;
+      latestStarts[position] = latestStart;
+      nextStart = latestStart;
+    }
+  }
+  for (const [position, candidateIndex] of indexes.entries()) {
+    const earliest = cursor + (position ? transitionBufferMinutes : 0);
+    const duration = candidates[candidateIndex].durationEvidence.durationMinutes;
+    const targetCenter = earliestBoundary + (position + 1) * (latestEnd - earliestBoundary) / (indexes.length + 1);
+    const preferredStart = spreadSlack ? targetCenter - duration / 2 : earliest;
+    const candidateLatestEnd = spreadSlack ? latestStarts[position] + duration : latestEnd;
+    const startMinute = candidateStartWithinOperatingFacts(
+      candidates[candidateIndex],
+      gap.date,
+      earliest,
+      candidateLatestEnd,
+      preferredStart,
+    );
+    if (startMinute === undefined) return undefined;
+    placements.push({ candidateIndex, date: gap.date, startMinute, gapIndex: -1 });
+    cursor = startMinute + duration;
+  }
+  return placements;
+}
+
+function spreadProvisionalPlacementSlack(
+  candidates: readonly CandidateModel[],
+  placements: readonly PackedCandidatePlacement[],
+  gaps: readonly PlacementGap[],
+  transitionBufferMinutes: number,
+) {
+  const byGap = new Map<number, PackedCandidatePlacement[]>();
+  placements.forEach((placement) => {
+    byGap.set(placement.gapIndex, [...(byGap.get(placement.gapIndex) ?? []), placement]);
+  });
+  let adjustedGapCount = 0;
+  const spread = [...byGap.entries()].flatMap(([gapIndex, group]) => {
+    const original = [...group].sort((left, right) => (
+      left.startMinute - right.startMinute
+      || compareText(candidates[left.candidateIndex].place.id, candidates[right.candidateIndex].place.id)
+    ));
+    const gap = gaps[gapIndex];
+    if (!gap) return original;
+    const scheduled = scheduleCandidateSequence(
+      candidates,
+      original.map((placement) => placement.candidateIndex),
+      gap,
+      transitionBufferMinutes,
+      true,
+    );
+    if (!scheduled) return original;
+    if (scheduled.some((placement, index) => placement.startMinute !== original[index]?.startMinute)) {
+      adjustedGapCount += 1;
+    }
+    return scheduled.map((placement) => ({ ...placement, gapIndex }));
+  }).sort((left, right) => compareText(left.date, right.date) || left.startMinute - right.startMinute);
+  return { placements: spread, adjustedGapCount };
+}
+
+function routeIsBetter(
+  candidates: readonly CandidateModel[],
+  leftIndexes: readonly number[],
+  leftDistance: number,
+  rightIndexes: readonly number[] | undefined,
+  rightDistance: number,
+) {
+  if (!rightIndexes) return true;
+  if (leftDistance < rightDistance - ROUTE_DISTANCE_EPSILON_METERS) return true;
+  if (Math.abs(leftDistance - rightDistance) > ROUTE_DISTANCE_EPSILON_METERS) return false;
+  return compareText(candidateSequenceKey(candidates, leftIndexes), candidateSequenceKey(candidates, rightIndexes)) < 0;
+}
+
 /**
- * 서로 다른 체류시간을 빈 구간에 넣는 multiple-bin packing이다. 긴 장소부터
- * 배치하고 같은 잔여용량 상태는 memoize한다. 상태 한도 안에서 실패하면 정확한
- * infeasible 증명이고, 한도에 닿으면 false를 확정하지 않고 exact=false로 남긴다.
+ * 한 빈 구간 안의 장소 수가 작으면 Held-Karp 동적 계획법으로 양 끝 고정점을
+ * 포함한 최단 열린 경로를 정확히 찾는다. 거리 동률은 장소 ID 순으로 고정해
+ * 후보 입력 순서가 결과를 바꾸지 않게 한다.
+ */
+function exactGapRoute(
+  candidates: readonly CandidateModel[],
+  candidateIndexes: readonly number[],
+  gap: PlacementGap,
+) {
+  const count = candidateIndexes.length;
+  if (count < 2) {
+    return {
+      indexes: [...candidateIndexes],
+      distanceMeters: candidatePathDistanceMeters(candidates, candidateIndexes, gap) ?? 0,
+    };
+  }
+  const stateCount = 1 << count;
+  const costs = new Float64Array(stateCount * count);
+  costs.fill(Number.POSITIVE_INFINITY);
+  const keys = new Array<string | undefined>(stateCount * count);
+  const previous = new Int16Array(stateCount * count);
+  previous.fill(-2);
+  const coordinates = candidateIndexes.map((index) => candidates[index].structuralCoordinates as StructuralCoordinates);
+  for (let localIndex = 0; localIndex < count; localIndex += 1) {
+    const stateIndex = (1 << localIndex) * count + localIndex;
+    costs[stateIndex] = gap.previousCoordinates
+      ? distanceMeters(gap.previousCoordinates, coordinates[localIndex])
+      : 0;
+    keys[stateIndex] = candidates[candidateIndexes[localIndex]].place.id;
+    previous[stateIndex] = -1;
+  }
+  for (let mask = 1; mask < stateCount; mask += 1) {
+    for (let last = 0; last < count; last += 1) {
+      if (!(mask & (1 << last))) continue;
+      const stateIndex = mask * count + last;
+      const stateCost = costs[stateIndex];
+      const stateKey = keys[stateIndex];
+      if (!Number.isFinite(stateCost) || !stateKey) continue;
+      for (let next = 0; next < count; next += 1) {
+        if (mask & (1 << next)) continue;
+        const nextMask = mask | (1 << next);
+        const nextStateIndex = nextMask * count + next;
+        const nextCost = stateCost + distanceMeters(coordinates[last], coordinates[next]);
+        const nextKey = `${stateKey}\u001f${candidates[candidateIndexes[next]].place.id}`;
+        if (nextCost < costs[nextStateIndex] - ROUTE_DISTANCE_EPSILON_METERS
+          || (Math.abs(nextCost - costs[nextStateIndex]) <= ROUTE_DISTANCE_EPSILON_METERS
+            && compareText(nextKey, keys[nextStateIndex] ?? "\uffff") < 0)) {
+          costs[nextStateIndex] = nextCost;
+          keys[nextStateIndex] = nextKey;
+          previous[nextStateIndex] = last;
+        }
+      }
+    }
+  }
+  const fullMask = stateCount - 1;
+  let bestLast = -1;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  let bestKey: string | undefined;
+  for (let last = 0; last < count; last += 1) {
+    const stateIndex = fullMask * count + last;
+    const distance = costs[stateIndex] + (gap.nextCoordinates
+      ? distanceMeters(coordinates[last], gap.nextCoordinates)
+      : 0);
+    const key = keys[stateIndex];
+    if (!key) continue;
+    if (distance < bestDistance - ROUTE_DISTANCE_EPSILON_METERS
+      || (Math.abs(distance - bestDistance) <= ROUTE_DISTANCE_EPSILON_METERS
+        && compareText(key, bestKey ?? "\uffff") < 0)) {
+      bestLast = last;
+      bestDistance = distance;
+      bestKey = key;
+    }
+  }
+  const reversed: number[] = [];
+  let mask = fullMask;
+  let last = bestLast;
+  while (last >= 0) {
+    reversed.push(candidateIndexes[last]);
+    const stateIndex = mask * count + last;
+    const predecessor = previous[stateIndex];
+    mask ^= 1 << last;
+    last = predecessor;
+  }
+  return { indexes: reversed.reverse(), distanceMeters: bestDistance };
+}
+
+/**
+ * 큰 구간은 모든 순열을 만들지 않고 cheapest insertion 뒤 2-opt를 적용한다.
+ * 전역 최적 증명은 하지 않으며 계산 한도와 결정성을 우선한다.
+ */
+function heuristicGapRoute(
+  candidates: readonly CandidateModel[],
+  candidateIndexes: readonly number[],
+  gap: PlacementGap,
+) {
+  const remaining = [...candidateIndexes].sort((left, right) => compareText(candidates[left].place.id, candidates[right].place.id));
+  let route: number[] = [];
+  while (remaining.length) {
+    let bestRoute: number[] | undefined;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    let bestRemainingIndex = -1;
+    remaining.forEach((candidateIndex, remainingIndex) => {
+      for (let position = 0; position <= route.length; position += 1) {
+        const proposal = [...route.slice(0, position), candidateIndex, ...route.slice(position)];
+        const distance = candidatePathDistanceMeters(candidates, proposal, gap);
+        if (distance !== undefined && routeIsBetter(candidates, proposal, distance, bestRoute, bestDistance)) {
+          bestRoute = proposal;
+          bestDistance = distance;
+          bestRemainingIndex = remainingIndex;
+        }
+      }
+    });
+    if (!bestRoute || bestRemainingIndex < 0) break;
+    route = bestRoute;
+    remaining.splice(bestRemainingIndex, 1);
+  }
+  let routeDistance = candidatePathDistanceMeters(candidates, route, gap) ?? 0;
+  for (let round = 0; round < LOCAL_SEARCH_ROUND_LIMIT; round += 1) {
+    let bestRoute = route;
+    let bestDistance = routeDistance;
+    for (let left = 0; left < route.length - 1; left += 1) {
+      for (let right = left + 1; right < route.length; right += 1) {
+        const proposal = [...route.slice(0, left), ...route.slice(left, right + 1).reverse(), ...route.slice(right + 1)];
+        const distance = candidatePathDistanceMeters(candidates, proposal, gap);
+        if (distance !== undefined && routeIsBetter(candidates, proposal, distance, bestRoute, bestDistance)) {
+          bestRoute = proposal;
+          bestDistance = distance;
+        }
+      }
+    }
+    if (candidateSequenceKey(candidates, bestRoute) === candidateSequenceKey(candidates, route)) break;
+    route = bestRoute;
+    routeDistance = bestDistance;
+  }
+  return { indexes: route, distanceMeters: routeDistance };
+}
+
+function optimizePackedPlacements(
+  candidates: readonly CandidateModel[],
+  placements: readonly PackedCandidatePlacement[],
+  gaps: readonly PlacementGap[],
+  transitionBufferMinutes: number,
+) {
+  const byGap = new Map<number, PackedCandidatePlacement[]>();
+  placements.forEach((placement) => {
+    byGap.set(placement.gapIndex, [...(byGap.get(placement.gapIndex) ?? []), placement]);
+  });
+  const optimized: PackedCandidatePlacement[] = [];
+  let comparableInsertionCount = 0;
+  let totalInsertionDistanceMeters = 0;
+  let totalPathDistanceMeters = 0;
+  let optimizedGapCount = 0;
+  let sequenceOptimizationExact = true;
+  [...byGap.entries()].sort(([left], [right]) => left - right).forEach(([gapIndex, group]) => {
+    const countersBefore = {
+      comparableInsertionCount,
+      totalInsertionDistanceMeters,
+      totalPathDistanceMeters,
+      sequenceOptimizationExact,
+    };
+    const gap = gaps[gapIndex];
+    const original = [...group].sort((left, right) => left.startMinute - right.startMinute || compareText(candidates[left.candidateIndex].place.id, candidates[right.candidateIndex].place.id));
+    const candidateIndexes = original.map((placement) => placement.candidateIndex);
+    const orderedIndexes = [...candidateIndexes];
+    let optimizedThisGap = false;
+    if (gap) {
+      // 좌표가 없는 장소를 0거리로 취급하지 않는다. 대신 원래 자리에서 고정하고,
+      // 그 사이의 연속된 좌표 보유 구간만 독립적으로 최적화한다.
+      let runStart = 0;
+      while (runStart < candidateIndexes.length) {
+        if (!candidates[candidateIndexes[runStart]].structuralCoordinates) {
+          runStart += 1;
+          continue;
+        }
+        let runEnd = runStart + 1;
+        while (runEnd < candidateIndexes.length && candidates[candidateIndexes[runEnd]].structuralCoordinates) runEnd += 1;
+        const runIndexes = candidateIndexes.slice(runStart, runEnd);
+        const runGap: PlacementGap = {
+          ...gap,
+          ...(runStart === 0 && gap.previousCoordinates ? { previousCoordinates: gap.previousCoordinates } : { previousCoordinates: undefined }),
+          ...(runEnd === candidateIndexes.length && gap.nextCoordinates ? { nextCoordinates: gap.nextCoordinates } : { nextCoordinates: undefined }),
+        };
+        const hasComparableEdge = runIndexes.length > 1 || Boolean(runGap.previousCoordinates || runGap.nextCoordinates);
+        if (hasComparableEdge) {
+          const route = runIndexes.length <= EXACT_ROUTE_SEQUENCE_ITEM_LIMIT
+            ? { ...exactGapRoute(candidates, runIndexes, runGap), exact: true }
+            : { ...heuristicGapRoute(candidates, runIndexes, runGap), exact: false };
+          orderedIndexes.splice(runStart, runIndexes.length, ...route.indexes);
+          comparableInsertionCount += runIndexes.length;
+          totalPathDistanceMeters += route.distanceMeters;
+          const directBoundaryDistance = runGap.previousCoordinates && runGap.nextCoordinates
+            ? distanceMeters(runGap.previousCoordinates, runGap.nextCoordinates)
+            : 0;
+          totalInsertionDistanceMeters += Math.max(0, route.distanceMeters - directBoundaryDistance);
+          sequenceOptimizationExact &&= route.exact;
+          optimizedThisGap = true;
+        }
+        runStart = runEnd;
+      }
+    }
+    const scheduledOptimized = gap
+      ? scheduleCandidateSequence(candidates, orderedIndexes, gap, transitionBufferMinutes)
+      : undefined;
+    if (scheduledOptimized) {
+      optimized.push(...scheduledOptimized.map((placement) => ({ ...placement, gapIndex })));
+    } else {
+      // 거리상 더 짧아도 운영시간을 어기면 원래 exact packing 순서를 유지한다.
+      optimized.push(...original);
+      optimizedThisGap = false;
+      comparableInsertionCount = countersBefore.comparableInsertionCount;
+      totalInsertionDistanceMeters = countersBefore.totalInsertionDistanceMeters;
+      totalPathDistanceMeters = countersBefore.totalPathDistanceMeters;
+      sequenceOptimizationExact = countersBefore.sequenceOptimizationExact;
+    }
+    if (optimizedThisGap) {
+      optimizedGapCount += 1;
+    }
+  });
+  return {
+    placements: optimized.sort((left, right) => compareText(left.date, right.date) || left.startMinute - right.startMinute),
+    comparableInsertionCount,
+    totalInsertionDistanceMeters,
+    totalPathDistanceMeters,
+    optimizedGapCount,
+    sequenceOptimizationExact,
+  };
+}
+
+/**
+ * 서로 다른 체류시간과 장소별 운영시간을 빈 구간에 넣는 multiple-bin
+ * scheduling이다. 후보 순서를 고정하면 오전 마감 장소보다 긴 오후 장소가 먼저
+ * 선택되어 실행 가능한 일정을 놓칠 수 있으므로, 남은 후보와 bin을 함께
+ * backtracking한다. 상태 한도 안에서 실패하면 정확한 infeasible 증명이고,
+ * 한도에 닿으면 false를 확정하지 않고 exact=false로 남긴다.
  */
 function packCandidateDurations(
   candidates: readonly CandidateModel[],
   candidateIndexes: readonly number[],
   gaps: readonly PlacementGap[],
   dayLoadByDate: Readonly<Record<string, PlacementDayLoad>> = {},
+  transitionBufferMinutes = SLOT_MINUTES,
+  optimizeSequence = true,
 ): DurationPackingResult {
-  const ordered = [...candidateIndexes].sort((left, right) => (
+  const stableCandidateIndexes = [...candidateIndexes].sort((left, right) => compareText(
+    candidates[left].place.id,
+    candidates[right].place.id,
+  ));
+  const candidateOrderMatters = stableCandidateIndexes.some((candidateIndex) => (
+    Object.values(candidates[candidateIndex].operatingAvailabilityByDate)
+      .some((availability) => availability.status === "windowed")
+  ));
+  const initialRemaining = candidateOrderMatters ? stableCandidateIndexes : [...stableCandidateIndexes].sort((left, right) => (
     candidates[right].durationEvidence.durationMinutes - candidates[left].durationEvidence.durationMinutes
     || compareText(candidates[left].place.id, candidates[right].place.id)
   ));
-  const bins = gaps.map((gap) => ({
+  const bins = gaps.map((gap, gapIndex) => ({
     ...gap,
-    cursor: gap.startMinute,
-    remaining: gap.endMinute - gap.startMinute,
+    gapIndex,
+    cursor: gap.startMinute + (gap.requiresStartTransition ? transitionBufferMinutes : 0),
+    remaining: gap.endMinute
+      - (gap.requiresEndTransition ? transitionBufferMinutes : 0)
+      - (gap.startMinute + (gap.requiresStartTransition ? transitionBufferMinutes : 0)),
+    lastCandidateIndex: undefined as number | undefined,
   })).filter((gap) => gap.remaining > 0);
   const placements: PackedCandidatePlacement[] = [];
   const addedMinutesByDate: Record<string, number> = {};
   const failedStates = new Set<string>();
   let expandedStates = 0;
   let limitReached = false;
-  const visit = (position: number): boolean => {
-    if (position === ordered.length) return true;
+  const visit = (remaining: readonly number[]): boolean => {
+    if (!remaining.length) return true;
     if (expandedStates >= EXACT_DURATION_PACKING_STATE_LIMIT) {
       limitReached = true;
       return false;
     }
     expandedStates += 1;
-    const stateKey = `${position}|${bins.map((bin) => bin.remaining).sort((left, right) => right - left).join(",")}`;
+    const stateKey = `${remaining.join(",")}|${bins.map((bin) => `${bin.cursor}:${bin.lastCandidateIndex === undefined ? 0 : 1}`).join(",")}`;
     if (failedStates.has(stateKey)) return false;
-    const candidateIndex = ordered[position];
-    const duration = candidates[candidateIndex].durationEvidence.durationMinutes;
-    const binIndexes = bins.map((_, index) => index)
-      .filter((index) => bins[index].remaining >= duration)
-      .sort((left, right) => {
+    const choices = (candidateOrderMatters ? remaining : remaining.slice(0, 1)).map((candidateIndex) => {
+      const duration = candidates[candidateIndex].durationEvidence.durationMinutes;
+      const starts = new Map<number, number>();
+      bins.forEach((bin, binIndex) => {
+        const earliest = bin.cursor + (bin.lastCandidateIndex === undefined ? 0 : transitionBufferMinutes);
+        const latestEnd = bin.endMinute - (bin.requiresEndTransition ? transitionBufferMinutes : 0);
+        const startMinute = candidateStartWithinOperatingFacts(candidates[candidateIndex], bin.date, earliest, latestEnd);
+        if (startMinute !== undefined) starts.set(binIndex, startMinute);
+      });
+      const minimumSlack = [...starts.entries()].reduce((minimum, [binIndex, startMinute]) => (
+        Math.min(minimum, bins[binIndex].endMinute - startMinute - duration)
+      ), Number.POSITIVE_INFINITY);
+      return { candidateIndex, duration, starts, minimumSlack };
+    }).sort((left, right) => (
+      // 가장 선택지가 적고 마감 여유가 작은 장소부터 시도하면 오전 한정 장소를
+      // 먼저 보면서도, 실패 시 아래 반복에서 다른 후보 순서를 모두 탐색한다.
+      left.starts.size - right.starts.size
+      || left.minimumSlack - right.minimumSlack
+      || right.duration - left.duration
+      || compareText(candidates[left.candidateIndex].place.id, candidates[right.candidateIndex].place.id)
+    ));
+    // 운영 시간창이 하나도 없으면 item 순서는 용량·날짜 배정 가능성에 영향을
+    // 주지 않으므로 가장 제약적인 한 후보만 고정해 표준 bin-packing으로 줄인다.
+    // 시간창이 있으면 오전/오후 순서가 feasibility를 바꾸므로 모든 후보 순서를
+    // 상태 한도 안에서 탐색한다.
+    for (const choice of choices) {
+      const { candidateIndex, duration, starts } = choice;
+      if (!starts.size) continue;
+      const binIndexes = [...starts.keys()].sort((left, right) => {
         const loadScore = (binIndex: number) => {
           const bin = bins[binIndex];
           const day = dayLoadByDate[bin.date];
@@ -1451,37 +2635,64 @@ function packCandidateDurations(
             ? projected / day.preferredDailyScheduledMinutes
             : projected;
         };
-        return loadScore(left) - loadScore(right)
-        || (bins[left].remaining - duration) - (bins[right].remaining - duration)
+        const loadComparison = loadScore(left) - loadScore(right);
+        if (loadComparison !== 0) return loadComparison;
+        if (optimizeSequence) {
+          const leftDistance = insertionDistanceForBin(candidates, candidateIndex, bins[left]);
+          const rightDistance = insertionDistanceForBin(candidates, candidateIndex, bins[right]);
+          if (leftDistance !== undefined && rightDistance !== undefined && leftDistance !== rightDistance) {
+            return leftDistance - rightDistance;
+          }
+        }
+        return (bins[left].endMinute - (starts.get(left) ?? bins[left].cursor) - duration)
+          - (bins[right].endMinute - (starts.get(right) ?? bins[right].cursor) - duration)
         || compareText(bins[left].date, bins[right].date)
         || bins[left].cursor - bins[right].cursor;
       });
-    const triedRemaining = new Set<number>();
-    for (const binIndex of binIndexes) {
-      const bin = bins[binIndex];
-      if (triedRemaining.has(bin.remaining)) continue;
-      triedRemaining.add(bin.remaining);
-      const startMinute = bin.cursor;
-      bin.cursor += duration;
-      bin.remaining -= duration;
-      addedMinutesByDate[bin.date] = (addedMinutesByDate[bin.date] ?? 0) + duration;
-      placements.push({ candidateIndex, date: bin.date, startMinute });
-      if (visit(position + 1)) return true;
-      placements.pop();
-      addedMinutesByDate[bin.date] -= duration;
-      bin.cursor -= duration;
-      bin.remaining += duration;
+      for (const binIndex of binIndexes) {
+        const bin = bins[binIndex];
+        const startMinute = starts.get(binIndex);
+        if (startMinute === undefined) continue;
+        const previousCursor = bin.cursor;
+        const previousRemaining = bin.remaining;
+        const previousLastCandidateIndex = bin.lastCandidateIndex;
+        bin.cursor = startMinute + duration;
+        bin.remaining = bin.endMinute
+          - (bin.requiresEndTransition ? transitionBufferMinutes : 0)
+          - bin.cursor;
+        bin.lastCandidateIndex = candidateIndex;
+        addedMinutesByDate[bin.date] = (addedMinutesByDate[bin.date] ?? 0) + duration;
+        placements.push({ candidateIndex, date: bin.date, startMinute, gapIndex: bin.gapIndex });
+        const nextRemaining = remaining.filter((index) => index !== candidateIndex);
+        if (visit(nextRemaining)) return true;
+        placements.pop();
+        addedMinutesByDate[bin.date] -= duration;
+        bin.lastCandidateIndex = previousLastCandidateIndex;
+        bin.cursor = previousCursor;
+        bin.remaining = previousRemaining;
+        if (limitReached) break;
+      }
       if (limitReached) break;
     }
     if (!limitReached) failedStates.add(stateKey);
     return false;
   };
-  const feasible = visit(0);
+  const feasible = visit(initialRemaining);
+  const optimized = feasible && optimizeSequence
+    ? optimizePackedPlacements(candidates, placements, gaps, transitionBufferMinutes)
+    : {
+      placements: feasible ? [...placements] : [],
+      comparableInsertionCount: 0,
+      totalInsertionDistanceMeters: 0,
+      totalPathDistanceMeters: 0,
+      optimizedGapCount: 0,
+      sequenceOptimizationExact: true,
+    };
   return {
     feasible,
     exact: feasible || !limitReached,
     expandedStates,
-    placements: feasible ? [...placements] : [],
+    ...optimized,
   };
 }
 
@@ -1497,31 +2708,99 @@ function makeItemId(input: DuriAnalysisInput, placeId: string, date: string, sta
   return id;
 }
 
+function prefilterAutoFillCandidates(candidates: readonly CandidateModel[]) {
+  if (candidates.length <= MAX_AUTO_FILL_CANDIDATES) {
+    return { candidates: [...candidates], originalEligibleCount: candidates.length, omittedCount: 0 };
+  }
+  const compareCandidateEvidence = (left: CandidateModel, right: CandidateModel) => (
+    Number(right.mandatory) - Number(left.mandatory)
+    || left.explicitAversionCount - right.explicitAversionCount
+    || right.sharedPreferenceStrengthScore - left.sharedPreferenceStrengthScore
+    || right.directSupportCount - left.directSupportCount
+    || right.matchedTagCount - left.matchedTagCount
+    || right.explicitPreferenceCount - left.explicitPreferenceCount
+    || right.numericPreferenceScore - left.numericPreferenceScore
+    || compareText(left.place.id, right.place.id)
+  );
+  const mandatory = candidates.filter((candidate) => candidate.mandatory).sort(compareCandidateEvidence);
+  if (mandatory.length > MAX_AUTO_FILL_CANDIDATES) {
+    return { candidates: mandatory, originalEligibleCount: candidates.length, omittedCount: candidates.length - mandatory.length, mandatoryOverflow: true as const };
+  }
+  const grouped = new Map<string, CandidateModel[]>();
+  candidates.filter((candidate) => !candidate.mandatory).forEach((candidate) => {
+    grouped.set(candidate.structuralCategoryKey, [...(grouped.get(candidate.structuralCategoryKey) ?? []), candidate]);
+  });
+  const queues = [...grouped.entries()].map(([key, values]) => ({ key, values: values.sort(compareCandidateEvidence) }))
+    .sort((left, right) => compareCandidateEvidence(left.values[0], right.values[0]) || compareText(left.key, right.key));
+  const selected = [...mandatory];
+  while (selected.length < MAX_AUTO_FILL_CANDIDATES && queues.some((queue) => queue.values.length)) {
+    for (const queue of queues) {
+      const next = queue.values.shift();
+      if (next) selected.push(next);
+      if (selected.length >= MAX_AUTO_FILL_CANDIDATES) break;
+    }
+  }
+  return {
+    candidates: selected,
+    originalEligibleCount: candidates.length,
+    omittedCount: candidates.length - selected.length,
+  };
+}
+
+function durationCountUpperBound(
+  candidates: readonly CandidateModel[],
+  gaps: readonly PlacementGap[],
+  transitionBufferMinutes: number,
+) {
+  const placeableDurations = candidates.flatMap((candidate) => {
+    const canUseAnyGap = gaps.some((gap) => candidateStartWithinOperatingFacts(
+      candidate,
+      gap.date,
+      gap.startMinute + (gap.requiresStartTransition ? transitionBufferMinutes : 0),
+      gap.endMinute - (gap.requiresEndTransition ? transitionBufferMinutes : 0),
+    ) !== undefined);
+    return canUseAnyGap ? [candidate.durationEvidence.durationMinutes + transitionBufferMinutes] : [];
+  }).sort((left, right) => left - right);
+  // 각 사용 gap의 첫 장소에는 전환 여유가 필요 없으므로 모든 gap 수만큼의
+  // buffer credit을 준 느슨한 상한이다. 실제 feasibility를 거짓으로 낮추지 않으면서
+  // 긴 후보가 많은 입력에서 불가능한 count를 수십 번 탐색하는 일을 막는다.
+  const usableGapCapacities = gaps.map((gap) => Math.max(0,
+    gap.endMinute - gap.startMinute
+      - (gap.requiresStartTransition ? transitionBufferMinutes : 0)
+      - (gap.requiresEndTransition ? transitionBufferMinutes : 0),
+  )).filter((gapCapacity) => gapCapacity > 0);
+  const capacity = usableGapCapacities.reduce((sum, gapCapacity) => sum + gapCapacity, 0)
+    + transitionBufferMinutes * usableGapCapacities.length;
+  let used = 0;
+  let count = 0;
+  for (const duration of placeableDurations) {
+    if (used + duration > capacity) break;
+    used += duration;
+    count += 1;
+  }
+  return count;
+}
+
 export function planPreferenceAutoFill(input: DuriAnalysisInput, request: PreferenceAutoFillRequest = {}): PreferenceAutoFillPlan {
   const mode = input.itinerary.length ? "partial-itinerary" as const : "empty-itinerary" as const;
   const tripDates = getTripDates(input.trip.startDate, input.trip.endDate);
   if (!tripDates.length) return emptyPlan(input, "insufficient-data", "여행 날짜를 먼저 확정해 주세요.");
-  if (input.documentCollectionStatus === "unavailable") {
-    return emptyPlan(input, "insufficient-data", "문서·예약 잠금 상태를 확인하지 못해 자동 초안을 만들지 않았어요.", ["첨부 문서함을 다시 불러온 뒤 생성해야 합니다."]);
-  }
-  if (input.localPlanningFactsStatus === "unavailable") {
-    return emptyPlan(input, "insufficient-data", "여행방 planning을 읽지 못해 숨은 복귀 조건이 없다고 단정할 수 없어요. 다시 불러온 뒤 생성해 주세요.");
-  }
-  if (input.sharedPreferenceEvidenceStatus && input.sharedPreferenceEvidenceStatus !== "loaded") {
-    return emptyPlan(input, "insufficient-data", "공유 성향·후보 필수/제외 신호가 최신 상태인지 확인하지 못해 자동 초안을 만들지 않았어요.", ["여행방 성향 facts를 다시 불러온 뒤 생성해야 합니다."]);
-  }
-  if (input.sharedPreferenceEvidenceStatus === "loaded" && !getUsableSharedPreferenceEvidence(input)) {
-    return emptyPlan(input, "insufficient-data", "공유 성향 facts revision이 현재 여행방과 일치하지 않아 자동 초안을 만들지 않았어요.");
-  }
+  // 아래 세 원본을 못 읽어도 저장 불가능한 preview는 계속 만든다. 읽지 못한
+  // facts를 '없음'으로 확정하지 않고 certificate에 명시하며 자동 적용은 계속 막는다.
+  const degradedEvidence: PreferenceAutoFillCertificate["degradedEvidence"] = [
+    ...(input.documentCollectionStatus === "unavailable" ? ["documents" as const] : []),
+    ...(input.localPlanningFactsStatus === "unavailable" ? ["planning" as const] : []),
+    ...(input.sharedPreferenceEvidenceStatus && (
+      input.sharedPreferenceEvidenceStatus !== "loaded" || !getUsableSharedPreferenceEvidence(input)
+    ) ? ["shared-preferences" as const] : []),
+  ];
+  const currentMemberIds = new Set(input.trip.members.map((member) => member.userId));
+  const mobilityRequirementMembers = (getUsableSharedPreferenceEvidence(input)?.members ?? [])
+    .filter((member) => currentMemberIds.has(member.userId)
+      && member.mobilityConstraints.status === "present"
+      && member.mobilityConstraints.values.length > 0);
   const sharedSignalConflicts = findSharedCandidateSignalConflicts(input);
-  if (sharedSignalConflicts.length) {
-    return emptyPlan(
-      input,
-      "insufficient-data",
-      `후보 ${sharedSignalConflicts.length}곳에 반드시 방문과 제외 의견이 함께 있어 자동 생성을 중단했어요. 분석 리포트에서 충돌한 참여자를 확인해 주세요.`,
-      ["명시적 mustVisit/avoid 충돌은 평균 점수로 상쇄하지 않습니다."],
-    );
-  }
+  const conflictedPlaceIds = new Set(sharedSignalConflicts.map((conflict) => conflict.placeId));
   const itineraryProblem = existingItineraryProblem(input);
   if (itineraryProblem) {
     return emptyPlan(input, "insufficient-data", `${itineraryProblem} 먼저 기존 일정을 정리해 주세요. 자동 채우기는 기존 일정을 움직이지 않아요.`);
@@ -1537,9 +2816,6 @@ export function planPreferenceAutoFill(input: DuriAnalysisInput, request: Prefer
   if (!resolved.valid) return emptyPlan(input, resolved.status ?? "invalid-request", resolved.message);
   const preference = buildPreferenceEvidence(input, request);
   if (preference.tooMany) return emptyPlan(input, "insufficient-data", `참여자 ${MAX_AUTO_FILL_MEMBERS}명 한도를 넘어 기기에서 공정 선택을 실행하지 않았어요.`);
-  if (!preference.evidence.length) {
-    return emptyPlan(input, "insufficient-data", "실제 성향 응답·서버 성향 태그·후보 직접 담기 기록이 있는 참여자가 없어요. 미응답자를 중립값으로 채우지 않았습니다.");
-  }
   const constraints = input.confirmedScheduleConstraints ?? [];
   if (constraints.some((constraint) => !isUsableConfirmedScheduleConstraint(constraint, input.trip))) {
     return emptyPlan(input, "insufficient-data", "확정 예약 중 날짜·시각 계약이 올바르지 않은 항목이 있어 자동 초안을 만들지 않았어요.");
@@ -1550,29 +2826,32 @@ export function planPreferenceAutoFill(input: DuriAnalysisInput, request: Prefer
   const candidateModelResult = buildCandidateModels(
     input,
     preference.evidence,
-    resolved.maxNewItems,
     resolved.duration,
+    request.proposedVisitDurationMinutes !== undefined || !resolved.provisionalDurationUsed
+      ? "user-fallback"
+      : "editable-template",
+    conflictedPlaceIds,
   );
   if (candidateModelResult.unsafeUtilityScale) {
     return emptyPlan(input, "insufficient-data", "성향 효용 척도가 안전한 정수 범위를 넘어 기기 계산을 중단했어요. 후보·태그 범위를 줄인 뒤 다시 시도해 주세요.");
   }
-  let candidates = candidateModelResult.models;
-  if (candidates.length > MAX_AUTO_FILL_CANDIDATES) {
-    return emptyPlan(input, "insufficient-data", `성향 근거가 있는 미배치 후보가 ${MAX_AUTO_FILL_CANDIDATES}개를 넘어 기기 탐색을 시작하지 않았어요. 후보를 줄인 뒤 다시 시도해 주세요.`);
+  const prefiltered = prefilterAutoFillCandidates(candidateModelResult.models);
+  if (prefiltered.mandatoryOverflow) {
+    return emptyPlan(input, "insufficient-data", `반드시 방문 후보가 기기 비교 한도 ${MAX_AUTO_FILL_CANDIDATES}곳을 넘어 모두 보존할 수 없어요. 필수 표시를 먼저 정리해 주세요.`);
   }
-  if (!candidates.length) return emptyPlan(
-    input,
-    candidateModelResult.missingDurationPlaceIds.length ? "insufficient-data" : "no-candidates",
-    candidateModelResult.missingDurationPlaceIds.length
-      ? "장소별 체류시간을 추정할 실제 일정·설문 관측값이 없어요. 필요한 경우 고급 설정에서 체류시간 fallback을 입력해 주세요."
-      : "미배치 후보 중 직접 담기·정확한 선호 태그·명시적 선호·실제 수치 응답 근거가 있는 장소가 없어요.",
-  );
+  let candidates = prefiltered.candidates;
+  if (!candidates.length) {
+    const explanation = candidateBlockExplanation(input, candidateModelResult);
+    return emptyPlan(input, explanation.status, explanation.message, explanation.limitations);
+  }
   const referenceDuration = Math.min(...candidates.map((candidate) => candidate.durationEvidence.durationMinutes));
+  const transitionBuffer = observedTransitionBuffer(input);
   const { slots, hasIncompleteConstraint, dayPools, slotCapacityByDate } = buildPlacementSlots(
     input,
     resolved.start,
     resolved.end,
     referenceDuration,
+    transitionBuffer.minutes,
     constraints,
     resolved.defaults.preferredDailyScheduledMinutes,
   );
@@ -1584,7 +2863,28 @@ export function planPreferenceAutoFill(input: DuriAnalysisInput, request: Prefer
       preferredDailyScheduledMinutes: pool.preferredDailyScheduledMinutes,
     }),
   }]));
-  const maximumSelectedCount = Math.min(resolved.maxNewItems, slots.length, candidates.length);
+  const physicalCountCeiling = Math.min(
+    slots.length,
+    candidates.length,
+    durationCountUpperBound(candidates, placementGaps, transitionBuffer.minutes),
+  );
+  if (physicalCountCeiling === 0) {
+    const tripDateSet = new Set(tripDates);
+    const closedCandidates = candidates.filter((candidate) => {
+      const entries = Object.entries(candidate.operatingAvailabilityByDate)
+        .filter(([date]) => tripDateSet.has(date));
+      return entries.length > 0 && entries.every(([, availability]) => availability.status === "closed");
+    });
+    const named = closedCandidates.slice(0, 3).map((candidate) => candidate.place.name);
+    return emptyPlan(
+      input,
+      "no-space",
+      closedCandidates.length === candidates.length
+        ? `여행 날짜에 휴무·행사기간 밖으로 확인된 후보만 남아 있어요${named.length ? ` (${named.join(", ")}${closedCandidates.length > named.length ? " 외" : ""})` : ""}. 날짜나 후보를 바꾸면 다시 초안을 만들 수 있어요.`
+        : "후보별 운영시간·체류시간, 앞뒤 일정의 이동 여유를 함께 확인했지만 현재 빈 시간에 들어가는 장소가 없어요. 활동 시간이나 후보를 조정해 주세요.",
+    );
+  }
+  const maximumSelectedCount = Math.min(resolved.maxNewItems ?? MAX_AUTO_FILL_ITEMS, physicalCountCeiling);
   const mandatoryCandidates = candidates.filter((candidate) => candidate.mandatory);
   const missingMandatoryDurationPlaceIds = candidateModelResult.missingDurationPlaceIds.filter((placeId) => (
     preference.evidence.some((member) => getSharedCandidateSignal(input, placeId, member.memberId)?.mustVisit === true)
@@ -1607,24 +2907,27 @@ export function planPreferenceAutoFill(input: DuriAnalysisInput, request: Prefer
   const durationFeasibilityCache = new Map<string, { feasible: boolean; exact: boolean; expandedStates: number }>();
   let durationPackingExpandedStates = 0;
   const buildFeasibility = (searchCandidates: readonly CandidateModel[]): BundleFeasibilityCheck => (indexes) => {
-    const signature = indexes.map((index) => searchCandidates[index].durationEvidence.durationMinutes)
-      .sort((left, right) => right - left)
+    // 운영 가능 날짜가 후보마다 다르므로 duration만 같은 묶음을 동일 상태로
+    // 캐시하면 휴무 후보의 실패가 영업 후보에 전파된다. 후보 ID를 포함한다.
+    const signature = indexes.map((index) => `${searchCandidates[index].place.id}:${searchCandidates[index].durationEvidence.durationMinutes}`)
+      .sort(compareText)
       .join(",");
     const cached = durationFeasibilityCache.get(signature);
     if (cached) return cached;
-    const packed = packCandidateDurations(searchCandidates, indexes, placementGaps, placementDayLoadByDate);
+    const packed = packCandidateDurations(
+      searchCandidates,
+      indexes,
+      placementGaps,
+      placementDayLoadByDate,
+      transitionBuffer.minutes,
+      false,
+    );
     durationPackingExpandedStates += packed.expandedStates;
     const result = { feasible: packed.feasible, exact: packed.exact, expandedStates: packed.expandedStates };
     durationFeasibilityCache.set(signature, result);
     return result;
   };
-  let selectedCount = maximumSelectedCount;
-  let modeledEvidenceIndexes: number[] = [];
-  let utilityRanges: UtilityRange[] = [];
-  let searched: ReturnType<typeof exactBundleSearch> | ReturnType<typeof heuristicBundleSearch> | undefined;
-  let exactSearch = false;
-  let searchCandidates: CandidateModel[] = [];
-  for (; selectedCount >= Math.max(1, requiredCandidateCount); selectedCount -= 1) {
+  const runSelectionSearch = (selectedCount: number) => {
     const utilityRangesByEvidenceMember = preference.evidence.map((_, memberIndex): UtilityRange => {
       const requiredUtility = candidates.slice(0, requiredCandidateCount)
         .reduce((sum, candidate) => sum + candidate.utilityByMember[memberIndex], 0);
@@ -1639,33 +2942,121 @@ export function planPreferenceAutoFill(input: DuriAnalysisInput, request: Prefer
           : 0),
       };
     });
-    modeledEvidenceIndexes = utilityRangesByEvidenceMember
+    const relaxedModeledEvidenceIndexes = utilityRangesByEvidenceMember
       .flatMap((range, index) => range.maximum > range.minimum ? [index] : []);
-    searchCandidates = candidates.map((candidate) => ({
+    const relaxedSearchCandidates = candidates.map((candidate) => ({
       ...candidate,
-      utilityByMember: modeledEvidenceIndexes.map((index) => candidate.utilityByMember[index]),
+      utilityByMember: relaxedModeledEvidenceIndexes.map((index) => candidate.utilityByMember[index]),
     }));
-    utilityRanges = modeledEvidenceIndexes.map((index) => utilityRangesByEvidenceMember[index]);
+    const relaxedUtilityRanges = relaxedModeledEvidenceIndexes.map((index) => utilityRangesByEvidenceMember[index]);
     const optionalSelectedCount = selectedCount - requiredCandidateCount;
-    const combinationCount = combinationCountCapped(searchCandidates.length - requiredCandidateCount, optionalSelectedCount, EXACT_BUNDLE_EVALUATION_LIMIT);
-    const exactUtilityWork = combinationCount * BigInt(selectedCount * utilityRanges.length);
-    exactSearch = combinationCount <= EXACT_BUNDLE_EVALUATION_LIMIT
+    const combinationCount = combinationCountCapped(relaxedSearchCandidates.length - requiredCandidateCount, optionalSelectedCount, EXACT_BUNDLE_EVALUATION_LIMIT);
+    const exactUtilityWork = combinationCount * BigInt(selectedCount * relaxedUtilityRanges.length);
+    const exactSearch = combinationCount <= EXACT_BUNDLE_EVALUATION_LIMIT
       && exactUtilityWork <= EXACT_BUNDLE_UTILITY_WORK_LIMIT;
-    const feasibility = buildFeasibility(searchCandidates);
-    searched = exactSearch
-      ? exactBundleSearch(searchCandidates, selectedCount, utilityRanges, requiredCandidateCount, feasibility)
-      : heuristicBundleSearch(searchCandidates, selectedCount, utilityRanges, requiredCandidateCount, feasibility);
-    if (searched.best) break;
+    const feasibility = buildFeasibility(relaxedSearchCandidates);
+    if (exactSearch) {
+      const searched = exactBundleSearch(
+        relaxedSearchCandidates,
+        selectedCount,
+        relaxedUtilityRanges,
+        requiredCandidateCount,
+        feasibility,
+      );
+      const modeledEvidenceIndexes = searched.modeledUtilityIndexes
+        .map((index) => relaxedModeledEvidenceIndexes[index]);
+      return {
+        selectedCount,
+        modeledEvidenceIndexes,
+        utilityRanges: searched.effectiveUtilityRanges,
+        searchCandidates: searched.evaluationCandidates,
+        exactSearch: true as const,
+        fairnessNormalizationBasis: modeledEvidenceIndexes.length
+          ? searched.feasibilityExact
+            ? "feasible-schedule-exact" as const
+            : "relaxed-candidate-bound" as const
+          : "unavailable" as const,
+        searched,
+      };
+    }
+    const searched = heuristicBundleSearch(
+      relaxedSearchCandidates,
+      selectedCount,
+      relaxedUtilityRanges,
+      requiredCandidateCount,
+      feasibility,
+    );
+    return {
+      selectedCount,
+      modeledEvidenceIndexes: relaxedModeledEvidenceIndexes,
+      utilityRanges: relaxedUtilityRanges,
+      searchCandidates: relaxedSearchCandidates,
+      exactSearch: false as const,
+      fairnessNormalizationBasis: relaxedModeledEvidenceIndexes.length
+        ? "relaxed-candidate-bound" as const
+        : "unavailable" as const,
+      searched,
+    };
+  };
+  const minimumSelectedCount = Math.max(1, requiredCandidateCount);
+  // 장소 수 관측이 없을 때 후보 하나를 고르는 추천으로 축소하지 않는다. 사용자가
+  // 후보 보드에 남긴 장소 중 Hard blocker와 실제 체류시간 bin-packing을 통과하는
+  // 가장 큰 묶음을 찾고, 그 묶음 안에서 참여자 형평성과 동선을 최적화한다.
+  let maximumCertified = maximumSelectedCount === physicalCountCeiling;
+  let maximumFeasibleRun: ReturnType<typeof runSelectionSearch> | undefined;
+  for (let count = maximumSelectedCount; count >= minimumSelectedCount; count -= 1) {
+    const run = runSelectionSearch(count);
+    if (run.searched.best) {
+      maximumFeasibleRun = run;
+      break;
+    }
+    maximumCertified &&= run.exactSearch && run.searched.feasibilityExact;
   }
-  if (!searched?.best || !searchCandidates.length) return emptyPlan(input, "no-space", "장소별 체류시간과 현재 빈 구간을 함께 계산했지만 배치 가능한 후보 묶음을 찾지 못했어요.");
+  if (!maximumFeasibleRun?.searched.best || !maximumFeasibleRun.searchCandidates.length) {
+    return emptyPlan(input, "no-space", "장소별 체류시간과 현재 빈 구간을 함께 계산했지만 배치 가능한 후보 묶음을 찾지 못했어요.");
+  }
+  const feasibleCountRange = resolved.countBasis === "maximal-feasible-schedule"
+    ? {
+      minimum: minimumSelectedCount,
+      maximumConfirmed: maximumFeasibleRun.selectedCount,
+      maximumCertified,
+      selected: maximumFeasibleRun.selectedCount,
+      selectionPolicy: "maximal-feasible" as const,
+    }
+    : undefined;
+  const finalRun = maximumFeasibleRun;
+  const {
+    selectedCount,
+    modeledEvidenceIndexes,
+    searchCandidates,
+    exactSearch,
+    fairnessNormalizationBasis,
+    searched,
+  } = finalRun;
+  if (!searched.best) return emptyPlan(input, "no-space", "확인한 배치 가능 범위 안에서 초안 장소 수를 정했지만 안전한 후보 묶음을 만들지 못했어요.");
   candidates = searchCandidates;
   const exact = exactSearch && searched.feasibilityExact;
   const modeledEvidence = modeledEvidenceIndexes.map((index) => preference.evidence[index]);
   const unrepresentedPreferenceMemberIds = preference.evidence.filter((_, index) => !modeledEvidenceIndexes.includes(index)).map((entry) => entry.memberId);
-  const packedSelection = packCandidateDurations(candidates, searched.best.indexes, placementGaps, placementDayLoadByDate);
+  const packedSelection = packCandidateDurations(
+    candidates,
+    searched.best.indexes,
+    placementGaps,
+    placementDayLoadByDate,
+    transitionBuffer.minutes,
+  );
   durationPackingExpandedStates += packedSelection.expandedStates;
   if (!packedSelection.feasible) return emptyPlan(input, "no-space", "선택한 장소별 체류시간을 빈 구간에 안전하게 배치하지 못했어요.");
-  const placementByCandidateIndex = new Map(packedSelection.placements.map((placement) => [placement.candidateIndex, placement] as const));
+  const provisionalRhythm = resolved.provisionalTimeWindowUsed
+    ? spreadProvisionalPlacementSlack(
+      candidates,
+      packedSelection.placements,
+      placementGaps,
+      transitionBuffer.minutes,
+    )
+    : undefined;
+  const finalPlacements = provisionalRhythm?.placements ?? packedSelection.placements;
+  const placementByCandidateIndex = new Map(finalPlacements.map((placement) => [placement.candidateIndex, placement] as const));
   const selected = searched.best.indexes.map((candidateIndex) => ({
     candidateIndex,
     candidate: candidates[candidateIndex],
@@ -1703,10 +3094,20 @@ export function planPreferenceAutoFill(input: DuriAnalysisInput, request: Prefer
         })),
       };
     });
-  const normalizedSatisfactionByMember = Object.fromEntries(modeledEvidence.map((member, index) => [
-    member.memberId,
-    Number(searched.best?.fractions[index].numerator ?? 0n) / Number(searched.best?.fractions[index].denominator ?? 1n),
-  ]));
+  const transientDiscoveryPlaceIds = new Set(request.transientDiscoveryPlaceIds ?? []);
+  const discoveryCandidatePlaceIds = selected
+    .filter(({ candidate }) => transientDiscoveryPlaceIds.has(candidate.place.id))
+    .map(({ candidate }) => candidate.place.id)
+    .sort(compareText);
+  // 사용자에게 노출하는 퍼센트는 동일한 Hard Constraint에서 가능한 모든
+  // 묶음의 개인별 min/max를 확인한 경우에만 만든다. 큰 휴리스틱 문제의
+  // relaxed bound는 탐색 순서에만 쓰고 실제 만족도처럼 표시하지 않는다.
+  const normalizedSatisfactionByMember = fairnessNormalizationBasis === "feasible-schedule-exact"
+    ? Object.fromEntries(modeledEvidence.map((member, index) => [
+      member.memberId,
+      Number(searched.best?.fractions[index].numerator ?? 0n) / Number(searched.best?.fractions[index].denominator ?? 1n),
+    ]))
+    : {};
   const normalizedSatisfactionValues = Object.values(normalizedSatisfactionByMember);
   const normalizedRegrets = normalizedSatisfactionValues.map((score) => 1 - score);
   const fairness = normalizedSatisfactionValues.length ? {
@@ -1732,9 +3133,24 @@ export function planPreferenceAutoFill(input: DuriAnalysisInput, request: Prefer
     reference.kind !== "other"
     && reference.itineraryItemIds.length === 0
   ));
+  const selectedOperatingAvailability = selected.map(({ candidate, placement }) => (
+    candidate.operatingAvailabilityByDate[placement.date] ?? { status: "unknown" as const }
+  ));
+  const operatingFacts: PreferenceAutoFillCertificate["operatingFacts"] = {
+    checkedAssignmentCount: selectedOperatingAvailability.filter((availability) => availability.status !== "unknown").length,
+    windowRestrictedAssignmentCount: selectedOperatingAvailability.filter((availability) => availability.status === "windowed").length,
+    unknownAssignmentCount: selectedOperatingAvailability.filter((availability) => availability.status === "unknown").length,
+    excludedClosedPlaceDateCount: candidates.reduce((sum, candidate) => sum + Object.values(candidate.operatingAvailabilityByDate)
+      .filter((availability) => availability.status === "closed").length, 0),
+  };
   const localApplyBlockReasons = [
     "새 후보의 실제 앞뒤 이동시간 상한을 확인하지 못했습니다.",
-    "새 후보의 구조화된 운영·예약 시간창을 확인하지 못했습니다.",
+    ...(discoveryCandidatePlaceIds.length ? ["일부 장소는 아직 여행방 후보로 확정되지 않은 지역 발견 후보입니다."] : []),
+    ...(mobilityRequirementMembers.length ? ["동행자의 계단·경사·장거리 도보 접근 조건을 후보별 경로 데이터로 검증하지 못했습니다."] : []),
+    ...(operatingFacts.unknownAssignmentCount ? ["일부 새 후보의 구조화된 운영·휴무 시간창을 확인하지 못했습니다."] : []),
+    ...(degradedEvidence.includes("documents") ? ["첨부 문서·예약 잠금 목록을 최신 상태로 확인하지 못했습니다."] : []),
+    ...(degradedEvidence.includes("planning") ? ["여행방 이동수단·복귀 정보를 최신 상태로 확인하지 못했습니다."] : []),
+    ...(degradedEvidence.includes("shared-preferences") ? ["공유 성향과 필수·제외 의견을 최신 상태로 확인하지 못했습니다."] : []),
     ...(input.scheduleOverlayStatus === "unavailable" ? ["기기 잠금 overlay를 읽지 못했습니다."] : []),
     ...(hasIncompleteConstraint ? ["종료 시각이 없는 확정 예약이 있습니다."] : []),
     ...(unresolvedTimeSensitiveDocuments.length ? ["일정에 연결되지 않은 시간 민감 문서가 있습니다."] : []),
@@ -1763,32 +3179,66 @@ export function planPreferenceAutoFill(input: DuriAnalysisInput, request: Prefer
   )).map((allocation) => allocation.date);
   const officialDurationAssignmentCount = assignments.filter((assignment) => assignment.durationEvidence.officialMinimumMinutes !== undefined).length;
   const officialOnlyDurationAssignmentCount = assignments.filter((assignment) => assignment.durationEvidence.lowerBoundOnly).length;
+  const neutralSelection = candidateModelResult.selectionBasis === "neutral-structural";
+  const selectedMstDistanceMeters = resolvedMstDistanceMeters(searched.best);
+  const geographicPlacement = packedSelection.comparableInsertionCount > 0 ? {
+    method: "haversine-gap-path" as const,
+    comparableAssignmentCount: packedSelection.comparableInsertionCount,
+    totalInsertionDistanceMeters: packedSelection.totalInsertionDistanceMeters,
+    totalPathDistanceMeters: packedSelection.totalPathDistanceMeters,
+    optimizedGapCount: packedSelection.optimizedGapCount,
+    exactSequence: packedSelection.sequenceOptimizationExact,
+  } : undefined;
   const limitations = [
-    "후보 장소의 구조화된 운영시간·휴무일·예약 시간창을 확인하지 못해 Hard Constraint 충족으로 단정하지 않습니다.",
-    "새 후보와 앞뒤 일정 사이의 실제 이동시간·경로 상한이 없어 배치 순서와 도착 가능성을 최적화하지 않았습니다.",
+    ...(operatingFacts.checkedAssignmentCount
+      ? [`제안 ${operatingFacts.checkedAssignmentCount}곳은 TourAPI에서 명확히 해석된 운영시간·휴무·행사기간을 배치 가능 구간에 반영했습니다.${operatingFacts.unknownAssignmentCount ? ` 나머지 ${operatingFacts.unknownAssignmentCount}곳은 운영 사실을 확인하지 못했습니다.` : ""}`]
+      : ["후보 장소의 구조화된 운영시간·휴무일을 확인하지 못해 모든 운영 조건 충족으로 단정하지 않습니다."]),
+    `${transitionBuffer.minutes}분 전환 여유를 장소 사이에 확보했습니다. ${transitionBuffer.basis === "observed-route-duration" ? "같은 여행에서 조회된 실제 경로시간 중앙값을 15분 단위로 올려 사용했습니다." : "실제 이동시간 관측이 없어 15분 편집 격자 한 칸을 임시로 사용했으며 실제 이동시간을 뜻하지 않습니다."}`,
+    geographicPlacement
+      ? `좌표가 연결된 같은 빈 구간의 방문 순서는 Haversine 직선거리 경로를 줄이도록 다시 정렬했습니다.${geographicPlacement.exactSequence ? " 계산 범위 안에서는 해당 구간 순서를 모두 비교했습니다." : " 큰 구간은 cheapest insertion과 2-opt를 사용해 전역 최적을 보장하지 않습니다."} 실제 도로·대중교통 이동시간은 아닙니다.`
+      : "새 후보와 앞뒤 일정 사이의 좌표·실제 이동시간 근거가 없어 배치 순서와 도착 가능성을 최적화하지 않았습니다.",
     ...(officialDurationAssignmentCount
       ? [`${officialDurationAssignmentCount}개 장소는 TourAPI 안내 소요시간의 하한보다 짧아지지 않게 배치했습니다.${officialOnlyDurationAssignmentCount ? ` 이 중 ${officialOnlyDurationAssignmentCount}개는 상한을 알 수 없어 통계 범위로 표시하지 않았습니다.` : ""}`]
       : ["초안 체류시간은 같은 여행의 장소 분류 표본, 동행자 활동시간 합의, 사용자 예비 입력에서 추정했으며 공식 안내시간이 없는 장소에 임의의 업종별 고정값을 넣지 않았습니다."]),
-    ...(hasIncompleteConstraint ? ["시작 시각만 확인된 예약은 지속시간을 추정하지 않고 해당 시각 이후의 자동 배치를 모두 제외했습니다."] : []),
+    ...(hasIncompleteConstraint ? ["시각 구간이 완전하지 않은 확정 사실은 연결 장소를 자동 후보에서 제외했습니다. 시작 시각만 확인된 경우에는 그 시각 이후 배치도 제외했습니다."] : []),
     ...(input.localPlanningFactsStatus === "missing" ? ["여행방 planning이 미설정 상태라 입력되지 않은 복귀 조건을 만들어내지 않았습니다."] : []),
     ...(snapshotEvidenceMemberIds.length ? ["서버 여행 유형 태그는 상세 수치 설문보다 낮은 신뢰도의 정확 태그 일치 근거로만 사용했습니다."] : []),
     ...(candidateSelectionOnlyMemberIds.length ? ["성향 설문이 없는 참여자는 본인이 직접 담은 후보에 한해서만 효용을 모델링했습니다."] : []),
     ...(sharedEvidenceMemberIds.length ? ["서버 파생 축은 결측을 0으로 채우지 않았고, 장소 taxonomy와 의미가 직접 연결되는 대표 명소·로컬 축만 후보 효용에 사용했습니다."] : []),
     ...(candidateModelResult.excludedAvoidPlaceIds.length ? [`명시적으로 제외한 후보 ${candidateModelResult.excludedAvoidPlaceIds.length}곳은 자동 초안 후보군에서 제거했습니다.`] : []),
+    ...(sharedSignalConflicts.length ? [`반드시 방문과 제외 의견이 충돌한 후보 ${sharedSignalConflicts.length}곳만 보류하고, 충돌 없는 후보로 초안을 계속 만들었습니다.`] : []),
     ...(candidateModelResult.missingDurationPlaceIds.length ? [`체류시간 근거가 전혀 없는 후보 ${candidateModelResult.missingDurationPlaceIds.length}곳은 임의 상수로 채우지 않고 제외했습니다.`] : []),
+    ...(resolved.provisionalTimeWindowUsed || resolved.provisionalDurationUsed ? [
+      `관측 자료가 없는 ${[
+        ...(resolved.provisionalTimeWindowUsed ? ["활동 시간창(10:00~20:00)"] : []),
+        ...(resolved.provisionalDurationUsed ? ["체류 블록(90분)"] : []),
+      ].join("·")}은 편집 가능한 낮은 신뢰도 템플릿으로 채웠습니다. 사용자가 제한을 입력하면 즉시 대체됩니다.`,
+    ] : []),
+    ...(provisionalRhythm?.adjustedGapCount ? [`기본 활동 시간창의 남는 시간은 ${provisionalRhythm.adjustedGapCount}개 빈 구간 안에서 고르게 나눠 장소를 시작 시각부터 빽빽하게 붙이지 않았습니다. 운영시간·잠금·예약·복귀 조건은 그대로 유지했습니다.`] : []),
+    ...(prefiltered.omittedCount ? [`기기 탐색을 멈추지 않도록 ${prefiltered.originalEligibleCount}개 후보에서 필수 후보를 모두 보존하고 장소 분류별 순환 선택으로 ${MAX_AUTO_FILL_CANDIDATES}개를 비교했습니다. ${prefiltered.omittedCount}개는 이번 초안 비교에서 제외했습니다.`] : []),
+    ...(discoveryCandidatePlaceIds.length ? [`기존 여행방 후보만으로 초안을 만들 수 없어 지역 장소 목록에서 ${discoveryCandidatePlaceIds.length}곳을 발견 후보로 골랐습니다. 후보 보드나 일정에는 자동 저장하지 않았으며 사용자가 확인해야 합니다.`] : []),
+    ...(mobilityRequirementMembers.length ? [`동행자 ${mobilityRequirementMembers.length}명의 이동 접근 조건은 보존했지만, 장소·경로별 계단·경사 정보와 개인별 최대 도보 허용치가 없어 후보 점수나 자동 제외에 사용하지 않았습니다.`] : []),
+    ...(degradedEvidence.includes("documents") ? ["첨부 문서 목록을 읽지 못한 상태라 숨은 예약·잠금이 있을 수 있습니다. 초안은 저장되지 않습니다."] : []),
+    ...(degradedEvidence.includes("planning") ? ["여행 기본 정보를 읽지 못한 상태라 숨은 복귀 조건·이동수단이 있을 수 있습니다. 초안은 저장되지 않습니다."] : []),
+    ...(degradedEvidence.includes("shared-preferences") ? ["공유 성향 facts가 없거나 오래되어 해당 신호는 점수와 필수·제외 판단에서 빼고 초안을 만들었습니다."] : []),
     ...(fixedUnlinkedCandidatePlaceIds.length ? [`확정 사실에 일정 ID 없이 연결된 후보 ${fixedUnlinkedCandidatePlaceIds.length}개는 임의 시간에 배치하지 않고 제외했습니다.`] : []),
     ...(dailyPreferenceExceededDates.length ? [`사용자가 요청한 추가 개수를 보존해 ${dailyPreferenceExceededDates.join(", ")}은 설문 하루 일정량 Soft 목표를 넘습니다.`] : []),
+    ...(neutralSelection ? ["후보와 연결되는 직접 선호 근거가 없어 개인 만족도를 계산하지 않았습니다. 장소 분류 중복과 좌표가 완전한 경우의 직선거리 분산만 보조 기준으로 사용했습니다."] : []),
+    ...(feasibleCountRange ? [`하루 일정량 관측이 없어 운영시간·체류시간·전환 여유와 실제 빈 구간을 통과하는 가장 큰 묶음 ${feasibleCountRange.selected}곳을 구성했습니다.${feasibleCountRange.maximumCertified ? " 현재 비교 후보와 빈 시간 안에서 더 많은 장소를 넣을 수 없음을 확인했습니다." : " 기기 탐색 한도 때문에 추가 후보가 더 들어갈 가능성은 남아 있습니다."}`] : []),
     "Tour contentTypeId와 장소 category/tag의 명시적 taxonomy에 매핑되지 않는 상세 category 점수는 추정하지 않았습니다.",
-    "장소별 체류시간을 긴 순서로 보고 빈 구간 잔여시간이 가장 적게 남는 곳부터 배치해 일정 파편화를 줄였습니다.",
+    "장소별 운영 가능 구간·체류시간·전환 여유를 함께 packing한 뒤, 운영시간을 계속 만족하는 경우에만 같은 구간의 좌표 기반 방문 순서를 적용했습니다. 날짜별 부하 균형은 지리적 근접성보다 먼저 비교합니다.",
     ...(!exactSearch ? [`완전 탐색 한도(조합 ${EXACT_BUNDLE_EVALUATION_LIMIT.toString()}개·효용 누적 ${EXACT_BUNDLE_UTILITY_WORK_LIMIT.toString()}회)를 넘어 adaptive beam ${searched.beamWidth}개와 bounded 1-swap을 사용했습니다. ${searched.localSearchConverged ? "검사한 1-swap 이웃에서는 개선안이 없습니다." : `${LOCAL_SEARCH_ROUND_LIMIT}회 한도에서 끝나 local optimum도 보장하지 않습니다.`} 전역 최적 보장은 없습니다.`] : []),
     ...(exactSearch && !exact ? [`체류시간 bin-packing이 ${EXACT_DURATION_PACKING_STATE_LIMIT.toLocaleString()}개 상태 한도에 닿아 일부 후보 묶음의 배치 가능성을 증명하지 못했습니다. 반환한 배치는 실제로 겹치지 않지만 전체 최적 선택 보장은 없습니다.`] : []),
+    ...(fairnessNormalizationBasis === "relaxed-candidate-bound" && modeledEvidence.length ? ["참여자 조율 순서는 후보별 순위의 느슨한 상·하한으로 비교했지만, 실제 배치 가능한 개인별 최선·최악을 모두 증명하지 못해 만족도 퍼센트는 표시하지 않았습니다."] : []),
   ];
   return {
     status: "preview-only",
     mode,
-    message: `${assignments.length}개 후보를 기존 일정·잠금·확정 예약을 움직이지 않고 빈 시간에 배치한 검토용 초안이에요. 이동·운영시간은 Hard 충족으로 주장하지 않으며 사용자가 미리보기를 확인해야 합니다.`,
+    message: `${assignments.length}개 장소를 기존 일정·잠금·확정 예약을 움직이지 않고 DAY별 빈 시간에 배치한 여행 일정 초안이에요.${neutralSelection ? " 직접 선호 근거가 없어 장소 종류의 중복을 줄이는 중립 초안으로 구성했어요." : ""} 실제 이동·운영시간은 아직 모두 확인되지 않았으므로 적용 전에 미리보기를 확인해 주세요.`,
     assignments,
     certificate: {
+      selectionBasis: candidateModelResult.selectionBasis,
+      countBasis: resolved.countBasis,
       selectionExact: exact,
       exactScope: exact ? "candidate-bundle-and-duration-packing" : "none",
       searchMethod: exactSearch ? "exhaustive" : "bounded-beam-and-one-swap",
@@ -1809,15 +3259,17 @@ export function planPreferenceAutoFill(input: DuriAnalysisInput, request: Prefer
       sharedEvidenceMemberIds,
       mandatorySharedPlaceIds: mandatoryCandidates.map((candidate) => candidate.place.id).sort(compareText),
       excludedAvoidPlaceIds: [...candidateModelResult.excludedAvoidPlaceIds].sort(compareText),
+      discoveryCandidatePlaceIds,
       // 조건부 원자 저장은 연결됐지만, 새 후보의 경로·운영 시간창 Hard
       // 근거가 없으므로 local/API 모두 정상 일정이라고 표시하지 않는다.
       localApplyEligible: false,
       localApplyBlockReasons,
       dayAllocations,
-      minimumNormalizedSatisfaction: searched.best.sortedFractions.length
+      minimumNormalizedSatisfaction: fairnessNormalizationBasis === "feasible-schedule-exact" && searched.best.sortedFractions.length
         ? Number(searched.best.sortedFractions[0].numerator) / Number(searched.best.sortedFractions[0].denominator)
         : undefined,
       normalizedSatisfactionByMember,
+      fairnessNormalizationBasis,
       ...(fairness ? { fairness } : {}),
       durationEstimates: assignments.map((assignment) => ({
         ...assignment.durationEvidence,
@@ -1825,17 +3277,47 @@ export function planPreferenceAutoFill(input: DuriAnalysisInput, request: Prefer
       })),
       durationPackingExact: packedSelection.exact && searched.feasibilityExact,
       durationPackingExpandedStates,
+      ...(feasibleCountRange ? { feasibleCountRange } : {}),
+      transitionBuffer,
+      operatingFacts,
+      ...(provisionalRhythm?.adjustedGapCount ? { provisionalRhythm: {
+        method: "even-slack-within-gap" as const,
+        adjustedGapCount: provisionalRhythm.adjustedGapCount,
+      } } : {}),
+      ...(prefiltered.omittedCount ? { candidatePrefilter: {
+        originalEligibleCount: prefiltered.originalEligibleCount,
+        consideredCount: candidates.length,
+        omittedCount: prefiltered.omittedCount,
+        method: "mandatory-then-category-round-robin" as const,
+      } } : {}),
+      degradedEvidence,
+      structuralSelection: {
+        recognizedCategoryCount: searched.best.recognizedCategoryCount,
+        categoryConcentrationPairs: searched.best.categoryConcentrationPairs,
+        comparableCoordinateCoverage: candidateModelResult.comparableCoordinateCoverage,
+        ...(selectedMstDistanceMeters === undefined ? {} : { mstDistanceMeters: selectedMstDistanceMeters }),
+      },
+      ...(geographicPlacement ? { geographicPlacement } : {}),
       assumptions: [
-        "응답자 동일 가중치",
-        "mustVisit은 필수 포함, avoid는 후보 제외, 후보 preferenceStrength → 여행방 후보 직접 담기 → exact 선호 태그 → 명시 category ordinal → 수치 응답 평균 순으로 사전식 우선",
-        "명시 category는 like=+1, neutral=0, dislike=-1의 ordinal 개수이며, 배치·발견 0~100 수치는 후보·멤버별 가용 신호의 동일 가중 산술평균",
-        "서로 단위가 다른 근거를 임의 가중합하지 않고 참여자별 사전식 후보 순위를 Borda형 정수 효용으로 변환",
-        "멤버별 고정 k개 후보 순위효용을 bottom-k~top-k 범위로 정규화한 뒤 최저 만족도 → Nash 후생 → leximin 순으로 비교",
-        "공정성 목적값이 같은 안은 명시 불호 총량이 적은 안을 먼저 선택",
+        ...(modeledEvidence.length ? [
+          "응답자 동일 가중치",
+          "mustVisit은 필수 포함, avoid는 후보 제외, 후보 preferenceStrength → 여행방 후보 직접 담기 → exact 선호 태그 → 명시 category ordinal → 수치 응답 평균 순으로 사전식 우선",
+          "명시 category는 like=+1, neutral=0, dislike=-1의 ordinal 개수이며, 배치·발견 0~100 수치는 후보·멤버별 가용 신호의 동일 가중 산술평균",
+          "서로 단위가 다른 근거를 임의 가중합하지 않고 참여자별 사전식 후보 순위를 Borda형 정수 효용으로 변환",
+          ...(fairnessNormalizationBasis === "feasible-schedule-exact"
+            ? ["같은 Hard Constraint와 고정 k에서 실제 배치 가능한 모든 묶음의 개인별 최저~최고 순위효용으로 정규화한 뒤 최저 만족도 → Nash 후생 → leximin 순으로 비교"]
+            : ["큰 탐색에서는 고정 k개 후보의 bottom-k~top-k 완화 범위를 탐색 순서에만 사용하고, 실제 배치 가능한 개인 최선이 인증되지 않은 만족도 수치는 노출하지 않음"]),
+          "공정성 목적값이 같은 안은 명시 불호 총량이 적은 안을 먼저 선택",
+        ] : [
+          "후보와 연결되는 선호 근거가 없으므로 가상의 중립 점수나 만족도를 만들지 않음",
+          "같은 개수의 중립 후보 묶음은 확인 가능한 장소 분류 수 최대화 → 같은 분류 중복 쌍 최소화 → 모든 후보 좌표가 있을 때 MST 직선거리 최소화 순으로 비교",
+        ]),
+        ...(feasibleCountRange ? ["원하는 장소 수 관측이 없으면 mustVisit을 포함하고 Hard blocker·후보별 체류시간·실제 빈 구간을 만족하는 최대 크기 묶음을 먼저 선택"] : []),
         "미응답자와 후보 근거가 없는 응답자는 0점으로 넣지 않고 목적함수에서 제외",
         "scheduleDensity·challenging 파생 축은 장소별 의미 연결 데이터가 없어 후보 점수로 변환하지 않음",
-        "체류시간은 lcls3 → lcls2 → contentType → 활동 taxonomy → 정확 category의 겹치지 않는 cohort와 설문 interval을 표본수·MAD·평균절대편차·측정폭 기반 precision으로 계층 수축",
+        "체류시간은 lcls3 → lcls2 → contentType → 활동 taxonomy → 정확 category → 동일 여행 전체 방문의 겹치지 않는 cohort와 설문 interval을 표본수·MAD·평균절대편차·측정폭 기반 precision으로 계층 수축",
         "TourAPI가 해석 가능한 안내 소요시간을 제공하면 15분 단위로 올림한 하한을 위 추정값의 floor로 적용하며, 하한만 있는 경우 상한이나 통계 신뢰범위를 만들지 않음",
+        ...(geographicPlacement ? ["실제 경로 API가 없는 초안은 같은 빈 구간의 양 끝 기존 장소를 고정한 Haversine 열린 경로를 최소화하며, 11곳 이하는 Held-Karp 동적 계획법으로 정확 계산하고 그보다 큰 구간은 cheapest insertion과 bounded 2-opt 사용"] : []),
       ],
     },
     limitations,
@@ -1869,14 +3351,17 @@ export function buildPreferenceAutoFillSuggestionEnvelope(
   // 새 후보의 실제 경로·운영 시간창을 배치안별로 재검증하는 계약이 생기기 전에는
   // local/mock에서도 저장 가능한 정상 일정이라고 주장하지 않는다.
   const canApply = false;
+  const neutralSelection = plan.certificate.selectionBasis === "neutral-structural";
   const base = {
     tripId: session.tripId,
     sourceIssueIds: [],
     type: "add-preference-place" as const,
     priority: "medium" as const,
-    title: `성향 기반 일정 초안 ${plan.assignments.length}개`,
+    title: `${neutralSelection ? "중립 후보" : "성향 기반"} 일정 초안 ${plan.assignments.length}개`,
     summary: plan.message,
-    reason: `실제 성향 근거 ${responseCoverage} · ${exactText}. 기존 일정과 보호 항목은 변경하지 않았어요.`,
+    reason: neutralSelection
+      ? `후보와 연결되는 선호 근거가 없어 장소 분류·실제 빈 시간·체류시간 근거로 구성 · ${exactText}. 기존 일정과 보호 항목은 변경하지 않았어요.`
+      : `실제 성향 근거 ${responseCoverage} · ${exactText}. 기존 일정과 보호 항목은 변경하지 않았어요.`,
     affectedItemIds: plan.assignments.map((assignment) => assignment.itemId),
     affectedPlaceIds: plan.assignments.map((assignment) => assignment.placeId),
     changes,

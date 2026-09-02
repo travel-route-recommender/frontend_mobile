@@ -210,8 +210,8 @@ const scheduledStressKeys = new Set(
 const unplacedStressKeys = BUSAN_PLACE_SPECS
   .map((spec) => spec.key)
   .filter((key) => !scheduledStressKeys.has(key));
-assert.deepEqual(unplacedStressKeys.sort(), ["gukje", "huinnyeoul"]);
-assert.ok(unplacedStressKeys.length >= 2, "자동 채우기가 선택할 후보를 2개 이상 남겨야 한다");
+assert.deepEqual(unplacedStressKeys.sort(), ["gukje", "haedong", "haeundae", "huinnyeoul"]);
+assert.ok(unplacedStressKeys.length >= 4, "자동 채우기가 성향을 비교할 후보를 4개 이상 남겨야 한다");
 assert.equal(stressScenario.reservations.length, 2);
 assert.equal(stressScenario.lockItemIds.length, 3);
 assert.equal(stressScenario.todos.length, 4);

@@ -11,7 +11,7 @@ import { getTripDates, timeStringToMinutes } from "../../../utils/schedule";
 import type { DuriAnalysisSnapshot, DuriReportIssue } from "../types";
 import { buildScheduledRouteLegs } from "./routeEvidence";
 import { findUsableRouteEstimateForLeg } from "./scheduleConstraintAnalysis";
-import { findSharedCandidateSignalConflicts, getSharedAxisObservations } from "./sharedPreferenceEvidence";
+import { findSharedCandidateSignalConflicts, getSharedAxisObservations, getUsableSharedPreferenceEvidence } from "./sharedPreferenceEvidence";
 
 const dimensionLabels: Record<PreferenceDimension, string> = {
   pace: "일정 밀도",
@@ -39,6 +39,12 @@ const mobilityModeLabels: Record<string, string> = {
   subway: "지하철",
   train: "기차",
   walk: "도보",
+};
+
+const mobilityConstraintLabels: Record<string, string> = {
+  STAIRS: "계단 이동이 어려움",
+  STEEP_SLOPE: "급경사 이동이 어려움",
+  LONG_WALK: "긴 도보 이동이 어려움",
 };
 
 const budgetLabels: Record<string, string> = {
@@ -361,11 +367,13 @@ function analyzeScheduleRepresentation(snapshot: DuriAnalysisSnapshot): DuriRepo
 function analyzeMobilityChoices(snapshot: DuriAnalysisSnapshot): DuriReportIssue[] {
   if (snapshot.localPlanningFactsStatus && snapshot.localPlanningFactsStatus !== "loaded") return [];
   const compatible = snapshot.trip.transport === "car"
-    ? new Set(["ownCar", "rentalCar", "taxi"])
+    ? new Set(["ownCar", "rentalCar"])
     : new Set(["bus", "subway", "train", "walk"]);
   return detailedResults(snapshot).flatMap((result) => {
     const selected = result.detailedSignals.mobilityModes;
-    if (!selected.length || selected.some((mode) => compatible.has(mode))) return [];
+    // Backend planning에는 taxi 모드가 없어서 car/public 중 어느 쪽과도 불일치로
+    // 확정하지 않는다. false positive보다 사용자 확인 누락이 안전하다.
+    if (!selected.length || selected.includes("taxi") || selected.some((mode) => compatible.has(mode))) return [];
     const name = memberName(snapshot, result.userId);
     return [{
       id: `preference-mobility-mode-${result.userId}-${snapshot.trip.transport}`,
@@ -386,6 +394,43 @@ function analyzeMobilityChoices(snapshot: DuriAnalysisSnapshot): DuriReportIssue
       source: "mobile-context" as const,
     }];
   });
+}
+
+function analyzeSharedMobilityRequirements(snapshot: DuriAnalysisSnapshot): DuriReportIssue[] {
+  const currentMemberIds = new Set(tripMemberIds(snapshot));
+  const members = (getUsableSharedPreferenceEvidence(snapshot)?.members ?? []).flatMap((member) => {
+    if (!currentMemberIds.has(member.userId) || member.mobilityConstraints.status !== "present") return [];
+    const known = [...new Set(member.mobilityConstraints.values)]
+      .filter((value) => mobilityConstraintLabels[value])
+      .sort();
+    const unknown = [...new Set(member.mobilityConstraints.values)]
+      .filter((value) => !mobilityConstraintLabels[value])
+      .sort();
+    return known.length || unknown.length ? [{ member, known, unknown }] : [];
+  });
+  if (!members.length) return [];
+  return [{
+    id: `shared-mobility-requirements-${members.map(({ member }) => member.userId).sort().join("-")}`,
+    category: "preference",
+    severity: "low",
+    title: "동행자의 이동 접근 조건을 확인해 주세요",
+    summary: `동행자 ${members.length}명이 이동 불편 조건을 등록했어요. 요구가 있다는 사실은 신뢰할 수 있지만, 현재 장소·경로 데이터에는 계단·경사·개인별 최대 도보 허용치가 없어 위반 여부를 계산하거나 후보를 자동 제외하지 않아요. 방문 전 접근 경로를 확인해 주세요.`,
+    affectedItemIds: [],
+    affectedPlaceIds: [],
+    affectedMemberIds: members.map(({ member }) => member.userId).sort(),
+    evidence: members.map(({ member, known, unknown }) => ({
+      label: memberName(snapshot, member.userId),
+      value: [
+        ...known.map((value) => mobilityConstraintLabels[value]),
+        ...unknown.map((value) => `지원하지 않는 새 코드 ${value}`),
+      ].join(", "),
+      memberIds: [member.userId],
+    })),
+    suggestionSupported: false,
+    constraintType: "soft",
+    confidence: "high",
+    source: "external-evidence",
+  }];
 }
 
 function committedMinutesByDate(snapshot: DuriAnalysisSnapshot, analyzedAt: string) {
@@ -500,8 +545,13 @@ export function analyzePreferredAverageStay(snapshot: DuriAnalysisSnapshot): Dur
 
 function analyzeDetailedCategoryCoverage(snapshot: DuriAnalysisSnapshot): DuriReportIssue[] {
   return detailedResults(snapshot).flatMap((result) => {
-    const liked = Object.entries(result.detailedSignals.categoryScores)
-      .flatMap(([category, score]) => isSupportedCategory(category) && score >= 100 ? [category] : []);
+    const explicitLevels = result.detailedSignals.categoryPreferenceLevels;
+    const liked = explicitLevels
+      ? Object.entries(explicitLevels).flatMap(([category, level]) => (
+        isSupportedCategory(category) && level === "like" ? [category] : []
+      ))
+      : Object.entries(result.detailedSignals.categoryScores)
+        .flatMap(([category, score]) => isSupportedCategory(category) && score >= 100 ? [category] : []);
     if (!liked.length) return [];
     const missing = liked.filter((category) => !snapshot.itinerary.some((item) => {
       const place = item.placeId ? snapshot.placesById[item.placeId] : undefined;
@@ -518,8 +568,12 @@ function analyzeDetailedCategoryCoverage(snapshot: DuriAnalysisSnapshot): DuriRe
       id: `preference-category-coverage-${result.userId}-${missing.sort().join("-")}`,
       category: "preference" as const,
       severity: "low" as const,
-      title: `${name}님이 좋아한다고 답한 활동이 아직 없어요`,
-      summary: `직접 ‘좋아요’로 답한 ${missingLabels.join(", ")} 유형을 현재 장소 분류·태그에서 찾지 못했어요. 분류가 부정확할 수 있어 Soft 제약으로만 안내해요.`,
+      title: explicitLevels
+        ? `${name}님이 좋아한다고 답한 활동이 아직 없어요`
+        : `${name}님이 높은 비중을 둔 활동이 아직 없어요`,
+      summary: explicitLevels
+        ? `직접 ‘좋아요’로 답한 ${missingLabels.join(", ")} 유형을 현재 장소 분류·태그에서 찾지 못했어요. 분류가 부정확할 수 있어 Soft 제약으로만 안내해요.`
+        : `이전 설문에서 상대적으로 높은 시간을 배분한 ${missingLabels.join(", ")} 유형을 현재 장소 분류·태그에서 찾지 못했어요. 직접 ‘좋아요’ 응답으로 해석하지 않고 Soft 참고로만 보여줘요.`,
       affectedItemIds: [],
       affectedPlaceIds: [...new Set(candidatePlaceIds)],
       affectedMemberIds: [result.userId],
@@ -546,7 +600,7 @@ function analyzeSharedCandidateSignalConflicts(snapshot: DuriAnalysisSnapshot): 
       category: "preference" as const,
       severity: "high" as const,
       title: `${place?.name ?? "후보 장소"}의 필수·제외 의견이 충돌해요`,
-      summary: `${mustNames.join(", ")}님은 반드시 방문으로, ${avoidNames.join(", ")}님은 피할 장소로 명시했어요.${selfConflictNames.length ? ` ${selfConflictNames.join(", ")}님에게는 두 신호가 동시에 저장되어 있어 먼저 정정해야 해요.` : ""} 이 충돌은 수치 평균으로 없애지 않고 동행자가 결정할 때까지 자동 일정 생성·적용을 막아요.`,
+      summary: `${mustNames.join(", ")}님은 반드시 방문으로, ${avoidNames.join(", ")}님은 피할 장소로 명시했어요.${selfConflictNames.length ? ` ${selfConflictNames.join(", ")}님에게는 두 신호가 동시에 저장되어 있어 먼저 정정해야 해요.` : ""} 이 충돌은 수치 평균으로 없애지 않고 해당 후보만 자동 초안에서 보류해요. 초안 자체는 충돌 없는 후보로 계속 만들 수 있어요.`,
       affectedItemIds: snapshot.itinerary.filter((item) => item.placeId === conflict.placeId).map((item) => item.id),
       affectedPlaceIds: [conflict.placeId],
       affectedMemberIds: [...new Set([...conflict.mustVisitMemberIds, ...conflict.avoidMemberIds])].sort(),
@@ -625,6 +679,7 @@ export function analyzePreferenceConstraints(snapshot: DuriAnalysisSnapshot, _an
     ...analyzeExplicitPreferenceDifferences(snapshot),
     ...analyzeContinuousScheduleConsensus(snapshot),
     ...analyzeMobilityConsensus(snapshot),
+    ...analyzeSharedMobilityRequirements(snapshot),
     ...analyzeBudgetPriorityDifferences(snapshot),
     ...analyzeMobilityChoices(snapshot),
     // 하루 일정량과 연속 활동은 robustDensityAnalyzer가 같은 설문 해상도 구간,

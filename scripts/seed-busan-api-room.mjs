@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 export const FIXTURE_ITEM_PREFIX = "fixture-busan-v1-";
-export const STRESS_FIXTURE_ITEM_PREFIX = "fixture-busan-stress-v2-";
+export const STRESS_FIXTURE_ITEM_PREFIX = "fixture-busan-stress-v3-";
 export const DEFAULT_ROOM_TITLE = "[API DEMO] 부산 2박 3일";
 export const STRESS_ROOM_TITLE_PREFIX = "[API STRESS] 부산 현실 조율";
 const FIXTURE_RESERVATION_CODE_PREFIX = "FIXTURE-NOT-REAL-";
@@ -707,9 +707,7 @@ const STRESS_STAY_RANGES = Object.freeze({
 export const STRESS_SCHEDULED_PLACE_KEYS = Object.freeze([
   "gamcheon",
   "jagalchi",
-  "haedong",
   "xsky",
-  "haeundae",
   "gwangalli",
   "taejongdae",
 ]);
@@ -800,9 +798,7 @@ export function buildStressScheduleDays(resolvedPlaces, { seed, startDate, requi
   const specByKey = new Map(BUSAN_PLACE_SPECS.map((spec) => [spec.key, spec]));
   const dayOrders = [
     ["gamcheon", "jagalchi"],
-    random() < 0.5
-      ? ["haedong", "xsky", "haeundae", "gwangalli"]
-      : ["haedong", "haeundae", "xsky", "gwangalli"],
+    ["xsky", "gwangalli"],
     ["taejongdae"],
   ];
   const dayStartRanges = [[555, 585], [510, 540], [540, 570]];
@@ -821,6 +817,9 @@ export function buildStressScheduleDays(resolvedPlaces, { seed, startDate, requi
         throw new Error(`후보 API 응답에서 '${spec.query}'의 서버 placeId를 확인하지 못했습니다.`);
       }
       if (previousPlace) cursor += estimateFixtureTransferMinutes(previousPlace, place, random);
+      // 광안리 야경 예약을 저녁에 고정해, 오전 확정 일정과 저녁 예약 사이의
+      // 실제 빈 구간을 자동 초안이 채우는 API 데모가 되도록 한다.
+      if (key === "gwangalli") cursor = Math.max(cursor, sampleQuarter(random, 17 * 60, 17 * 60 + 30));
       const [minimumStay, maximumStay] = STRESS_STAY_RANGES[key];
       const stayMinutes = sampleQuarter(random, minimumStay, maximumStay);
       const startTime = formatClock(cursor);
@@ -970,7 +969,7 @@ export function buildStressScenario(resolvedPlaces, { seed, startDate, transport
         dueDate: tripDateForDay(startDate, 1),
         dueTime: "20:00",
         assigneeKey: "active",
-        itemKey: "haeundae",
+        itemKey: "gwangalli",
         checklist: ["기상 예보 확인", "실내 후보 2곳 비교", "당일 취소 가능 여부 확인"],
       },
       {
@@ -1010,8 +1009,8 @@ export function validateStressScenario(scenario) {
   const scheduledKeys = new Set(allItems.map((item) => item.id.slice(STRESS_FIXTURE_ITEM_PREFIX.length)));
   if (
     STRESS_SCHEDULED_PLACE_KEYS.some((key) => !scheduledKeys.has(key))
-    || BUSAN_PLACE_SPECS.length - scheduledKeys.size < 2
-  ) throw new Error("자동 채우기용 미배치 후보가 2개 이상 남아야 합니다.");
+    || BUSAN_PLACE_SPECS.length - scheduledKeys.size < 4
+  ) throw new Error("자동 채우기용 미배치 후보가 4개 이상 남아야 합니다.");
   if (new Set(allItems.map((item) => item.id)).size !== allItems.length) {
     throw new Error("스트레스 fixture 일정 id가 중복되었습니다.");
   }
@@ -1130,8 +1129,8 @@ function createHttpClient(baseUrl) {
 }
 
 function assertAuthResponse(response, email) {
-  if (!response?.accessToken || !response?.user?.id) {
-    throw new Error(`${email} 로그인 응답에 accessToken 또는 user.id가 없습니다.`);
+  if (!response?.accessToken || !response?.refreshToken || !response?.user?.id) {
+    throw new Error(`${email} 로그인 응답에 accessToken, refreshToken 또는 user.id가 없습니다.`);
   }
   return response;
 }
@@ -1161,6 +1160,21 @@ async function signInOrCreate(client, account, password) {
   }
 }
 
+async function releaseFixtureSessions(client, authentications) {
+  const sessions = [...new Map(authentications
+    .filter((auth) => auth?.accessToken && auth?.refreshToken)
+    .map((auth) => [auth.refreshToken, auth])).values()];
+  const results = await Promise.allSettled(sessions.map((auth) => client.request("auth/logout", {
+    method: "POST",
+    token: auth.accessToken,
+    body: { refreshToken: auth.refreshToken },
+  })));
+  const failures = results.filter((result) => result.status === "rejected").length;
+  if (failures > 0) {
+    console.warn(`fixture 검증용 로그인 ${failures}개를 정리하지 못했습니다. 다음 실행 전에 서버 상태를 확인하세요.`);
+  }
+}
+
 async function seedPersona(client, account, auth) {
   await client.request("users/me/profile", {
     method: "PATCH",
@@ -1182,6 +1196,14 @@ async function seedPersona(client, account, auth) {
       body: { responses: account.quiz },
     });
   }
+  const [verifiedStatus, verifiedProfile] = await Promise.all([
+    client.request("quiz/status", { token: auth.accessToken }),
+    client.request("quiz/me", { token: auth.accessToken }),
+  ]);
+  if (!verifiedStatus?.completed || !verifiedProfile?.completed || !verifiedProfile?.travelType?.name) {
+    throw new Error(`${account.nickname}의 서버 성향 완료 상태와 최신 결과가 일치하지 않습니다.`);
+  }
+  return verifiedProfile;
 }
 
 async function mapWithConcurrency(values, limit, mapper) {
@@ -1533,7 +1555,7 @@ function readConfig() {
   if (!['baseline', 'stress'].includes(mode)) {
     throw new Error("DURI_FIXTURE_MODE는 baseline 또는 stress여야 합니다.");
   }
-  const seed = process.env.DURI_FIXTURE_SEED?.trim() || "busan-stress-v2";
+  const seed = process.env.DURI_FIXTURE_SEED?.trim() || "busan-draft-v3";
   if (seed.length > 80) throw new Error("DURI_FIXTURE_SEED는 80자 이하여야 합니다.");
   const seedTag = stableSeedTag(seed);
   const defaults = getDefaultTripDates();
@@ -1584,7 +1606,7 @@ function readConfig() {
 }
 
 function printHelp() {
-  console.log(`부산 API 여행방 시드\n\n필수:\n  DURI_FIXTURE_PASSWORD             12자 이상 fixture 전용 비밀번호\n\n선택:\n  DURI_FIXTURE_MODE                 baseline | stress (또는 --stress)\n  DURI_FIXTURE_SEED                 stress 결과 재현 seed (기본 busan-stress-v2)\n  DURI_FIXTURE_API_BASE_URL         기본 EXPO_PUBLIC_API_BASE_URL 또는 localhost\n  DURI_FIXTURE_EMAIL_PREFIX         fixture 계정 prefix (원격에서는 필수)\n  DURI_FIXTURE_START_DATE           YYYY-MM-DD\n  DURI_FIXTURE_END_DATE             시작일 + 2일\n  DURI_FIXTURE_TRANSPORT_MODE       car | transit | walk | mixed (stress 기본 mixed)\n  DURI_FIXTURE_ROOM_ID              기존 방을 정확히 지정\n  DURI_FIXTURE_REPLACE_SCHEDULE     다른 seed의 fixture 일정을 교체할 때만 1\n  DURI_FIXTURE_ALLOW_REMOTE         원격에서 BUSAN_API_FIXTURE를 명시\n  DURI_FIXTURE_ALLOW_CURATED_PLACES localhost baseline에서 TourAPI 실패 시 수동 일정 fallback 허용\n\n기존 deterministic baseline:\n  $env:DURI_FIXTURE_PASSWORD='12자-이상-전용-비밀번호'\n  npm.cmd run seed:busan-api-room\n\n재현 가능한 현실 조율 stress:\n  $env:DURI_FIXTURE_PASSWORD='12자-이상-전용-비밀번호'\n  $env:DURI_FIXTURE_SEED='team-conflict-001'\n  npm.cmd run seed:busan-api-room:stress\n\n같은 seed는 같은 계정·방·일정을 재사용하고, 다른 seed는 별도 계정 prefix와 방 제목을 만듭니다.\n`);
+  console.log(`부산 API 여행방 시드\n\n필수:\n  DURI_FIXTURE_PASSWORD             12자 이상 fixture 전용 비밀번호\n\n선택:\n  DURI_FIXTURE_MODE                 baseline | stress (또는 --stress)\n  DURI_FIXTURE_SEED                 stress 결과 재현 seed (기본 busan-draft-v3)\n  DURI_FIXTURE_API_BASE_URL         기본 EXPO_PUBLIC_API_BASE_URL 또는 localhost\n  DURI_FIXTURE_EMAIL_PREFIX         fixture 계정 prefix (원격에서는 필수)\n  DURI_FIXTURE_START_DATE           YYYY-MM-DD\n  DURI_FIXTURE_END_DATE             시작일 + 2일\n  DURI_FIXTURE_TRANSPORT_MODE       car | transit | walk | mixed (stress 기본 mixed)\n  DURI_FIXTURE_ROOM_ID              기존 방을 정확히 지정\n  DURI_FIXTURE_REPLACE_SCHEDULE     다른 seed의 fixture 일정을 교체할 때만 1\n  DURI_FIXTURE_ALLOW_REMOTE         원격에서 BUSAN_API_FIXTURE를 명시\n  DURI_FIXTURE_ALLOW_CURATED_PLACES localhost baseline에서 TourAPI 실패 시 수동 일정 fallback 허용\n\n기존 deterministic baseline:\n  $env:DURI_FIXTURE_PASSWORD='12자-이상-전용-비밀번호'\n  npm.cmd run seed:busan-api-room\n\n재현 가능한 현실 조율 stress:\n  $env:DURI_FIXTURE_PASSWORD='12자-이상-전용-비밀번호'\n  $env:DURI_FIXTURE_SEED='team-conflict-001'\n  npm.cmd run seed:busan-api-room:stress\n\n같은 seed는 같은 계정·방·일정을 재사용하고, 다른 seed는 별도 계정 prefix와 방 제목을 만듭니다.\n`);
 }
 
 async function main() {
@@ -1597,6 +1619,9 @@ async function main() {
   const stress = config.mode === "stress";
   const totalSteps = stress ? 10 : 7;
   const step = (number, message) => console.log(`${number}/${totalSteps} ${message}`);
+  const sessionsToRelease = [];
+
+  try {
 
   step(1, "TourAPI 부산 장소를 검증합니다...");
   let tourPlaces;
@@ -1621,6 +1646,7 @@ async function main() {
   step(2, "fixture owner 인증과 기존 방 보호 검사를 수행합니다...");
   const ownerAccount = config.accounts[0];
   const ownerAuth = await signInOrCreate(client, ownerAccount, config.password);
+  sessionsToRelease.push(ownerAuth);
   let room = await findFixtureRoom(client, ownerAuth, config.roomTitle, config.explicitRoomId);
   if (room) {
     const existingSchedule = await client.request(`rooms/${encodeURIComponent(room.id)}/schedule`, { token: ownerAuth.accessToken });
@@ -1643,8 +1669,9 @@ async function main() {
   const authentications = [];
   for (const account of config.accounts) {
     const auth = account.key === "owner" ? ownerAuth : await signInOrCreate(client, account, config.password);
-    await seedPersona(client, account, auth);
-    authentications.push({ account, auth });
+    if (account.key !== "owner") sessionsToRelease.push(auth);
+    const quizProfile = await seedPersona(client, account, auth);
+    authentications.push({ account, auth, quizProfile });
   }
 
   if (!room) {
@@ -1815,13 +1842,20 @@ async function main() {
     );
   }
 
-  const [verifiedRoom, verifiedWorkspace, compatibility, finalSchedule, finalPreferences, finalPlanning] = await Promise.all([
+  const [verifiedRoom, verifiedWorkspace, compatibility, finalSchedule, finalPreferences, finalPlanning, finalQuizProfiles] = await Promise.all([
     client.request(`rooms/${encodeURIComponent(roomId)}`, { token: ownerAuth.accessToken }),
     client.request(`rooms/${encodeURIComponent(roomId)}/workspace`, { token: ownerAuth.accessToken }),
     client.request(`rooms/${encodeURIComponent(roomId)}/compatibility`, { token: ownerAuth.accessToken }),
     client.request(`rooms/${encodeURIComponent(roomId)}/schedule`, { token: ownerAuth.accessToken }),
     stress ? client.request(`rooms/${encodeURIComponent(roomId)}/preferences`, { token: ownerAuth.accessToken }) : null,
     stress ? client.request(`rooms/${encodeURIComponent(roomId)}/planning`, { token: ownerAuth.accessToken }) : null,
+    Promise.all(authentications.map(async ({ account, auth }) => {
+      const [status, profile] = await Promise.all([
+        client.request("quiz/status", { token: auth.accessToken }),
+        client.request("quiz/me", { token: auth.accessToken }),
+      ]);
+      return { account, status, profile };
+    })),
   ]);
   const savedScheduleDays = readScheduleDays(finalSchedule ?? savedSchedule);
   const scheduleItemCount = savedScheduleDays.reduce((sum, day) => sum + (day?.items?.length ?? 0), 0);
@@ -1833,6 +1867,12 @@ async function main() {
     throw new Error(
       "멤버의 travelTypeSnapshot이 비어 있습니다. 기존 방의 스냅샷은 API로 갱신할 수 없으므로 새 DURI_FIXTURE_ROOM_TITLE로 다시 시드하세요.",
     );
+  }
+  const invalidQuizProfiles = finalQuizProfiles.filter(({ status, profile }) => (
+    !status?.completed || !profile?.completed || !profile?.travelType?.name || !profile?.axes
+  ));
+  if (invalidQuizProfiles.length > 0) {
+    throw new Error(`시드 후 서버 성향 결과가 불완전한 계정: ${invalidQuizProfiles.map(({ account }) => account.email).join(", ")}`);
   }
   if (placeMode === "tour-api" && (verifiedWorkspace?.candidates?.length ?? 0) < BUSAN_PLACE_SPECS.length) {
     throw new Error("시드 후 Workspace 후보 수가 기대보다 적습니다.");
@@ -1909,8 +1949,14 @@ async function main() {
     console.log("제한: 주소는 schedule DTO에 전용 필드가 없어 각 일정의 reason 텍스트에 보존했습니다.");
   }
   console.log(`궁합 점수: ${compatibility?.compatibilityScore ?? "응답 없음"}`);
+  console.log(`성향 결과: ${finalQuizProfiles.map(({ account, profile }) => `${account.nickname}=${profile.travelType.name}`).join(" / ")}`);
   console.log(`fixture 계정: ${config.accounts.map((account) => account.email).join(", ")}`);
   console.log("accessToken과 비밀번호는 출력하지 않았습니다.");
+  } finally {
+    // Backend는 계정당 최근 Refresh Token 수를 제한한다. 시드 반복 실행이
+    // 앱에서 로그인한 fixture 계정의 세션을 밀어내지 않도록 즉시 정리한다.
+    await releaseFixtureSessions(client, sessionsToRelease);
+  }
 }
 
 const invokedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : "";

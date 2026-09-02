@@ -2,6 +2,7 @@ import type { DuriReportIssue } from "../../duri/types";
 import type { ItineraryItem } from "../../../domain";
 import {
   createWorkspaceScheduleImpactTodoSeeds,
+  isDuriIssueTodoActionable,
   type ScheduleImpactExternalReference,
 } from "../logic/todoAutomation";
 import {
@@ -45,7 +46,7 @@ export async function syncApiDuriIssueTodos(input: {
   baseRevision: string;
   timezone: string;
 }) {
-  const actionable = input.issues.filter((issue) => issue.constraintType !== "informational" && issue.severity !== "info");
+  const actionable = input.issues.filter(isDuriIssueTodoActionable);
   const activeKeys = new Set(actionable.map((issue) => apiDuriIssueTodoDedupeKey(issue.id)));
   const existing = await fetchApiRoomTodos(input.roomId);
   const obsoleteKeys = [...new Set(existing.flatMap((todo) => (

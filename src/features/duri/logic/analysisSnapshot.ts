@@ -337,7 +337,7 @@ export function getDuriAnalysisAvailability({
   input?: DuriAnalysisInput;
   engineAvailable: boolean;
 }): DuriAnalysisAvailability {
-  if (!engineAvailable) return { status: "engine-unavailable", canAnalyze: false, readOnly: false, message: "서버 두리 계약이 확인되지 않아 분석을 실행할 수 없어요." };
+  if (!engineAvailable) return { status: "engine-unavailable", canAnalyze: false, readOnly: false, message: "분석에 필요한 최신 일정 데이터를 확인하지 못했어요. 여행방을 다시 불러온 뒤 시도해 주세요." };
   if (!input || !getTripDates(input.trip.startDate, input.trip.endDate).length) return { status: "invalid-trip-dates", canAnalyze: false, readOnly: false, message: "여행 날짜를 확인한 뒤 분석해 주세요." };
   if (!input.itinerary.length) return {
     status: "no-itinerary",

@@ -11,6 +11,17 @@ const priorityFromDuriIssue = (issue: Pick<DuriReportIssue, "severity" | "constr
   return "normal";
 };
 
+/**
+ * 분석 리포트의 모든 설명을 작업 목록에 복제하지 않는다. 실제 일정 위반으로
+ * 사용자가 확인·수정해야 하며, 근거 신뢰도가 중간 이상인 hard constraint만
+ * 공유 TODO로 승격한다. Soft 제안과 낮은 신뢰도 판정은 리포트에만 남긴다.
+ */
+export function isDuriIssueTodoActionable(issue: DuriReportIssue) {
+  return issue.constraintType === "hard"
+    && (issue.severity === "high" || issue.severity === "medium")
+    && (issue.confidence === "high" || issue.confidence === "medium");
+}
+
 const documentKindLabel: Record<TravelDocumentKind, string> = {
   accommodation: "숙소 예약",
   admission: "입장권",

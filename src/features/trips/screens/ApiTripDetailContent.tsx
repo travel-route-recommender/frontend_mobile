@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
@@ -13,6 +13,10 @@ import { useExploreSearchStore } from "../../explore/store/useExploreSearchStore
 import { TripInviteManagerModal } from "../../invitations/components/TripInviteManagerModal";
 import { ApiTripDocumentSection, type ApiTripDocument } from "../../trip-documents";
 import { ApiTripTodoSection } from "../../trip-todos";
+import { buildApiDuriAnalysisInput } from "../../duri/logic/apiAnalysisInput";
+import { createDuriAnalysisSnapshot, createDuriInputFingerprint, getDuriAnalysisAvailability } from "../../duri/logic/analysisSnapshot";
+import { duriAnalysisService } from "../../duri/services/duriAnalysisService";
+import { useDuriAnalysisStore } from "../../duri/store/useDuriAnalysisStore";
 import {
   DuriAnalysisCard,
   PreferenceSectionIntro,
@@ -20,10 +24,10 @@ import {
   TripPlanningSection,
   TripPreparationCard,
   TripQuickActions,
-  type TripHomeDuriState,
   type TripNextAction,
 } from "../components/home";
 import { PreferenceResponseSummaryCard } from "../components/preferences";
+import { selectTripHomeDuriState } from "../logic/selectTripHomeDuriState";
 import { fetchApiTripDetail } from "../tripRoomApi";
 import type { TripPreparationStepId } from "../types";
 
@@ -53,6 +57,22 @@ export function ApiTripDetailContent({ tripId, created }: { tripId: string; crea
   });
 
   const data = query.data;
+  const analysisSession = useDuriAnalysisStore((state) => state.sessionsByTripId[tripId]);
+  const analysisStatus = useDuriAnalysisStore((state) => state.analysisStatusByTripId[tripId] ?? "idle");
+  const analysisInput = useMemo(() => buildApiDuriAnalysisInput(
+    data,
+    currentUserId ?? "",
+    [],
+    data?.sharedDocumentsStatus ?? "unavailable",
+  ), [currentUserId, data]);
+  const currentAnalysisFingerprint = useMemo(
+    () => analysisInput ? createDuriInputFingerprint(createDuriAnalysisSnapshot(analysisInput)) : "",
+    [analysisInput],
+  );
+  const analysisAvailability = useMemo(() => getDuriAnalysisAvailability({
+    input: analysisInput,
+    engineAvailable: duriAnalysisService.available && Boolean(data?.scheduleSnapshot),
+  }), [analysisInput, data?.scheduleSnapshot]);
   const currentMember = data?.preferenceSummary.members.find((member) => member.userId === currentUserId);
   const completed = data?.room.status === "completed";
   if (!currentUserId) return <Screen><ErrorState message="로그인 사용자 정보를 확인하지 못했어요." /></Screen>;
@@ -89,9 +109,14 @@ export function ApiTripDetailContent({ tripId, created }: { tripId: string; crea
         : data.itinerary.length === 0
           ? { title: "첫 일정을 만들어보세요", description: "모아둔 후보를 날짜와 시간에 배치해보세요.", label: "일정 만들기", onPress: openWorkspace }
           : { title: "일정을 계속 만들어보세요", description: `${data.itinerary.length}개 일정을 바탕으로 남은 후보도 배치해보세요.`, label: "일정 계속 만들기", onPress: openWorkspace };
-  const duriState: TripHomeDuriState = data.itinerary.length
-    ? { kind: "unavailable", message: "서버 여행방의 분석 계약을 연결한 뒤 이용할 수 있어요." }
-    : { kind: "no-itinerary" };
+  const duriState = selectTripHomeDuriState({
+    itineraryCount: data.itinerary.length,
+    analysisAvailable: analysisAvailability.canAnalyze,
+    unavailableMessage: analysisAvailability.message,
+    analysisStatus,
+    currentFingerprint: currentAnalysisFingerprint,
+    session: analysisSession,
+  });
 
   return <Screen padded={false} testID="api-trip-home-screen"><View style={styles.page}>
     <TripHomeHero trip={data.room} region={data.region} usersById={data.usersById} currentUserId={currentUserId} onBack={() => router.back()} />

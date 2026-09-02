@@ -342,7 +342,15 @@ function normalizeInput(input: ItineraryOptimizerInput) {
   }
   if (new Set(input.visits.map((visit) => visit.id)).size !== input.visits.length) throw new Error("방문 ID는 중복될 수 없습니다.");
   const dayIds = new Set(days.map((day) => day.id));
-  const visits = [...input.visits].sort((left, right) => compareText(left.id, right.id));
+  const totalUtility = (visit: OptimizationVisit) => memberIds.reduce((sum, memberId) => (
+    sum + (visit.utilityPointsByMember[memberId] ?? 0)
+  ), 0);
+  const visits = [...input.visits].sort((left, right) => (
+    Number(Boolean(right.lockedAssignment)) - Number(Boolean(left.lockedAssignment))
+    || Number(Boolean(right.mandatory)) - Number(Boolean(left.mandatory))
+    || totalUtility(right) - totalUtility(left)
+    || compareText(left.id, right.id)
+  ));
   visits.forEach((visit) => {
     if (!visit.id.trim() || !visit.nodeId.trim()) throw new Error("방문 ID와 node ID는 비어 있을 수 없습니다.");
     if (Object.keys(visit.utilityPointsByMember).some((memberId) => !memberIds.includes(memberId))) {
@@ -363,6 +371,18 @@ function normalizeInput(input: ItineraryOptimizerInput) {
     if (visit.lockedAssignment) {
       if (!dayIds.has(visit.lockedAssignment.dayId)) throw new Error(`${visit.id} 잠금 날짜가 여행 범위 밖입니다.`);
       finiteInteger(visit.lockedAssignment.startMinute, `${visit.id} 잠금 시작 시각`);
+      const lockedDay = days.find((day) => day.id === visit.lockedAssignment?.dayId) as OptimizationDay;
+      const lockedEndMinute = visit.lockedAssignment.startMinute + visit.durationMinutes;
+      if (visit.lockedAssignment.startMinute < lockedDay.startMinute || lockedEndMinute > lockedDay.endMinute) {
+        throw new Error(`${visit.id} 잠금 일정이 DAY 활동 범위를 벗어납니다.`);
+      }
+      if (visit.timeWindows?.length && !visit.timeWindows.some((window) => (
+        window.dayId === lockedDay.id
+        && visit.lockedAssignment!.startMinute >= window.startMinute
+        && lockedEndMinute <= window.endMinute
+      ))) {
+        throw new Error(`${visit.id} 잠금 일정이 허용 시간창을 벗어납니다.`);
+      }
     }
   });
   const baseline = new Map<string, BaselineVisitAssignment>();
@@ -391,18 +411,42 @@ function normalizeInput(input: ItineraryOptimizerInput) {
   const requireEdge = (fromNodeId?: string, toNodeId?: string) => {
     if (fromNodeId && toNodeId && fromNodeId !== toNodeId) requiredRouteEdgeKeys.add(routeEdgeKey(fromNodeId, toNodeId));
   };
+  const feasibleStartBounds = (visit: OptimizationVisit, day: OptimizationDay) => {
+    if (visit.lockedAssignment) {
+      return visit.lockedAssignment.dayId === day.id
+        ? { earliest: visit.lockedAssignment.startMinute, latest: visit.lockedAssignment.startMinute }
+        : undefined;
+    }
+    const windows = visit.timeWindows?.length
+      ? visit.timeWindows.filter((window) => window.dayId === day.id)
+      : [{ dayId: day.id, startMinute: day.startMinute, endMinute: day.endMinute }];
+    const bounds = windows.flatMap((window) => {
+      const earliest = Math.max(day.startMinute, window.startMinute);
+      const latest = Math.min(day.endMinute, window.endMinute) - visit.durationMinutes;
+      return earliest <= latest ? [{ earliest, latest }] : [];
+    });
+    if (!bounds.length) return undefined;
+    return {
+      earliest: Math.min(...bounds.map((bound) => bound.earliest)),
+      latest: Math.max(...bounds.map((bound) => bound.latest)),
+    };
+  };
   days.forEach((day) => {
-    const eligibleVisits = visits.filter((visit) => {
-      if (visit.lockedAssignment) return visit.lockedAssignment.dayId === day.id;
-      return !visit.timeWindows?.length || visit.timeWindows.some((window) => window.dayId === day.id);
+    const eligibleVisits = visits.flatMap((visit) => {
+      const bounds = feasibleStartBounds(visit, day);
+      return bounds ? [{ visit, bounds }] : [];
     });
     const startNodeId = anchorNodeId(day.startAnchor);
     const endNodeId = anchorNodeId(day.endAnchor);
     requireEdge(startNodeId, endNodeId);
-    eligibleVisits.forEach((visit) => {
+    eligibleVisits.forEach(({ visit, bounds }) => {
       requireEdge(startNodeId, visit.nodeId);
       requireEdge(visit.nodeId, endNodeId);
-      eligibleVisits.forEach((nextVisit) => requireEdge(visit.nodeId, nextVisit.nodeId));
+      eligibleVisits.forEach(({ visit: nextVisit, bounds: nextBounds }) => {
+        if (bounds.earliest + visit.durationMinutes <= nextBounds.latest) {
+          requireEdge(visit.nodeId, nextVisit.nodeId);
+        }
+      });
     });
   });
   const unknownRouteEdgeKeys = [...requiredRouteEdgeKeys].flatMap((key) => {
@@ -479,32 +523,43 @@ function fractionalUtilityUpperBound(
   return upper;
 }
 
-function candidateStarts(
+function* candidateStarts(
   day: OptimizationDay,
   visit: OptimizationVisit,
   arrivalMinute: number,
+  baseline?: BaselineVisitAssignment,
 ) {
   const windows = visit.timeWindows?.length
     ? visit.timeWindows.filter((window) => window.dayId === day.id)
     : [{ dayId: day.id, startMinute: day.startMinute, endMinute: day.endMinute }];
-  if (!windows.length) return [];
+  if (!windows.length) return;
   const locked = visit.lockedAssignment;
-  if (locked && locked.dayId !== day.id) return [];
-  const starts = new Set<number>();
-  windows.forEach((window) => {
-    const earliest = Math.max(arrivalMinute, day.startMinute, window.startMinute);
-    const latest = Math.min(window.endMinute, day.endMinute) - visit.durationMinutes;
-    const candidates = locked ? [locked.startMinute] : Array.from(
-      { length: Math.max(0, latest - earliest + 1) },
-      (_, offset) => earliest + offset,
-    );
-    candidates.forEach((startMinute) => {
-      if (startMinute < earliest) return;
-      const endMinute = startMinute + visit.durationMinutes;
-      if (endMinute <= Math.min(window.endMinute, day.endMinute)) starts.add(startMinute);
-    });
-  });
-  return [...starts].sort((left, right) => left - right);
+  if (locked && locked.dayId !== day.id) return;
+  const bounds = windows.map((window) => ({
+    earliest: Math.max(arrivalMinute, day.startMinute, window.startMinute),
+    latest: Math.min(window.endMinute, day.endMinute) - visit.durationMinutes,
+  })).filter((bound) => bound.earliest <= bound.latest)
+    .sort((left, right) => left.earliest - right.earliest || left.latest - right.latest);
+  if (!bounds.length) return;
+  const isAllowed = (startMinute: number) => bounds.some((bound) => (
+    startMinute >= bound.earliest && startMinute <= bound.latest
+  ));
+  if (locked) {
+    if (isAllowed(locked.startMinute)) yield locked.startMinute;
+    return;
+  }
+  const preferredStart = baseline?.dayId === day.id && isAllowed(baseline.startMinute)
+    ? baseline.startMinute
+    : undefined;
+  if (preferredStart !== undefined) yield preferredStart;
+  let lastAscendingStart = Number.NEGATIVE_INFINITY;
+  for (const bound of bounds) {
+    const first = Math.max(bound.earliest, lastAscendingStart + 1);
+    for (let startMinute = first; startMinute <= bound.latest; startMinute += 1) {
+      lastAscendingStart = startMinute;
+      if (startMinute !== preferredStart) yield startMinute;
+    }
+  }
 }
 
 function changedMetrics(
@@ -778,16 +833,14 @@ export function optimizeGroupItinerary(input: ItineraryOptimizerInput): Itinerar
   let generationLimitUpperBound: RationalValue | undefined;
   const labelsByStateKey = new Map<string, SearchState[]>();
   const activeFrontierStates = new Set<SearchState>();
-  const enqueue = (candidate: SearchState, omittedBranchUpper = candidate.upperMinimumSatisfaction) => {
-    if (generatedStates >= maxGeneratedStates) {
-      generationLimitReached = true;
-      if (!generationLimitUpperBound
-        || compareRational(omittedBranchUpper, generationLimitUpperBound) > 0) {
-        generationLimitUpperBound = omittedBranchUpper;
-      }
-      return;
+  const markGenerationLimit = (omittedBranchUpper: RationalValue) => {
+    generationLimitReached = true;
+    if (!generationLimitUpperBound
+      || compareRational(omittedBranchUpper, generationLimitUpperBound) > 0) {
+      generationLimitUpperBound = omittedBranchUpper;
     }
-    generatedStates += 1;
+  };
+  const enqueue = (candidate: SearchState, omittedBranchUpper = candidate.upperMinimumSatisfaction) => {
     const key = searchStateLabelKey(candidate);
     const labels = labelsByStateKey.get(key) ?? [];
     if (labels.some((label) => dominatesSearchState(label, candidate, baseline, days))) {
@@ -795,9 +848,15 @@ export function optimizeGroupItinerary(input: ItineraryOptimizerInput): Itinerar
       return;
     }
     const survivors = labels.filter((label) => {
-      if (!dominatesSearchState(candidate, label, baseline, days)) return true;
+      return !dominatesSearchState(candidate, label, baseline, days);
+    });
+    if (generatedStates >= maxGeneratedStates) {
+      markGenerationLimit(omittedBranchUpper);
+      return;
+    }
+    generatedStates += 1;
+    labels.filter((label) => !survivors.includes(label)).forEach((label) => {
       if (activeFrontierStates.delete(label)) prunedStates += 1;
-      return false;
     });
     labelsByStateKey.set(key, [...survivors, candidate]);
     activeFrontierStates.add(candidate);
@@ -825,15 +884,40 @@ export function optimizeGroupItinerary(input: ItineraryOptimizerInput): Itinerar
       enqueue(finish.state, state.upperMinimumSatisfaction);
     }
 
+    const branchSources: {
+      visit: OptimizationVisit;
+      visitIndex: number;
+      travel: { nominal: number; upper: number };
+      starts: Generator<number, void, unknown>;
+    }[] = [];
     visits.forEach((visit, visitIndex) => {
-      if (generationLimitReached) return;
       if (hasBit(state.visitedMask, visitIndex)) return;
       const travel = readTravelMinutes(input, state.currentNodeId, visit.nodeId);
       if (travel === undefined) return;
       const arrivalMinute = state.currentMinute + travel.upper;
-      const starts = candidateStarts(day, visit, arrivalMinute);
-      starts.forEach((startMinute) => {
-        if (generationLimitReached) return;
+      branchSources.push({
+        visit,
+        visitIndex,
+        travel,
+        starts: candidateStarts(day, visit, arrivalMinute, baseline.get(visit.id)),
+      });
+    });
+    // 각 후보의 시작 시각 iterator에서 한 개씩 번갈아 꺼낸다. 계산 budget이
+    // 소진되면 아직 만들지 않은 수십만 SearchState를 메모리에 쌓지 않고 즉시
+    // 중단하며, 생략한 branch에는 부모 상태의 admissible upper bound를 남긴다.
+    let activeSources = branchSources;
+    branchGeneration: while (activeSources.length) {
+      const nextSources: typeof branchSources = [];
+      for (const source of activeSources) {
+        const nextStart = source.starts.next();
+        if (nextStart.done) continue;
+        nextSources.push(source);
+        if (generatedStates >= maxGeneratedStates) {
+          markGenerationLimit(state.upperMinimumSatisfaction);
+          break branchGeneration;
+        }
+        const startMinute = nextStart.value;
+        const { visit, visitIndex, travel } = source;
         const endMinute = startMinute + visit.durationMinutes;
         const visitedMask = setBit(state.visitedMask, visitIndex);
         const utilityTotals = memberIds.map((memberId, memberIndex) => (
@@ -863,11 +947,13 @@ export function optimizeGroupItinerary(input: ItineraryOptimizerInput): Itinerar
         };
         if (!upperBoundCanImprove(boundedState, best, denominators, modeledMemberIndexes)) {
           prunedStates += 1;
-          return;
+          continue;
         }
         enqueue(boundedState, state.upperMinimumSatisfaction);
-      });
-    });
+        if (generationLimitReached) break branchGeneration;
+      }
+      activeSources = nextSources;
+    }
   }
 
   while (frontier.size && !activeFrontierStates.has(frontier.peek() as SearchState)) frontier.pop();
@@ -986,6 +1072,9 @@ export function optimizeGroupItinerary(input: ItineraryOptimizerInput): Itinerar
 export function calculateExactIndividualIdealUtilityPoints(
   input: Omit<ItineraryOptimizerInput, "idealUtilityPointsByMember">,
 ): IndividualIdealUtilityResult {
+  // 참여자별 반복을 시작하기 전에 원본 전체를 한 번 검증한다. 특정 참여자의
+  // utility 누락·NaN이 단독 계산에서 0처럼 흘러가는 일을 막는다.
+  normalizeInput({ ...input, idealUtilityPointsByMember: undefined });
   const idealUtilityPointsByMember: Partial<Record<EntityId, number>> = {};
   const zeroUtilityMemberIds: EntityId[] = [];
   const unavailableMemberIds: EntityId[] = [];

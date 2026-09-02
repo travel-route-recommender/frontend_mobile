@@ -25,6 +25,7 @@ import {
   resolveHydratedLocalPrivateDataScope,
   transferLocalPrivateDataScope,
 } from "../src/features/auth/services/localPrivateDataPolicy";
+import { parseApiPreferenceProfile } from "../src/features/preferences/logic/apiPreferenceProfile";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -183,16 +184,48 @@ async function verifyApi401Policy() {
     assert(recovered.ok && refreshCalls === 1 && calls === 2, "TOKEN_EXPIRED must refresh and retry exactly once");
 
     refreshCalls = 0;
+    calls = 0;
+    accessToken = "A0";
+    globalThis.fetch = (async (_input, init) => {
+      calls += 1;
+      const authorization = new Headers(init?.headers).get("Authorization");
+      if (calls === 1) {
+        assert(authorization === "Bearer A0", "current Backend contract starts with the existing access token");
+        return jsonResponse(401, { message: "Unauthorized", statusCode: 401 });
+      }
+      assert(authorization === "Bearer A1", "a code-less Backend 401 must retry with the refreshed access token");
+      return jsonResponse(200, { ok: true });
+    }) as typeof fetch;
+    const recoveredFromCurrentContract = await client.request<{ ok: boolean }>({ path: "/protected" });
+    assert(
+      recoveredFromCurrentContract.ok && refreshCalls === 1 && calls === 2,
+      "the current Backend's code-less 401 must refresh and retry exactly once",
+    );
+
+    refreshCalls = 0;
     globalThis.fetch = (async () => jsonResponse(401, { message: "Invalid credentials" })) as typeof fetch;
-    await expectApiError(client.request({ path: "/auth/account", method: "DELETE" }));
-    assert(refreshCalls === 0, "an unstructured 401 such as a wrong password must not refresh");
+    await expectApiError(client.request({ path: "/auth/login", method: "POST", auth: false }));
+    assert(refreshCalls === 0, "an unprotected login 401 must never start token refresh");
+
+    let postRefreshCalls = 0;
+    const invalidationsBeforeRejectedRefresh = invalidationCalls;
+    globalThis.fetch = (async () => {
+      postRefreshCalls += 1;
+      return jsonResponse(401, { message: "Unauthorized", statusCode: 401 });
+    }) as typeof fetch;
+    await expectApiError(client.request({ path: "/protected" }));
+    assert(
+      Number(postRefreshCalls) === 2 && Number(refreshCalls) === 1 && Number(invalidationCalls) === invalidationsBeforeRejectedRefresh + 1,
+      "a code-less 401 after refresh must invalidate the stale local session",
+    );
 
     for (const code of ["TOKEN_INVALID", "SESSION_REVOKED", "TOKEN_OBSOLETE", "ACCOUNT_UNAVAILABLE"]) {
-      const invalidationsBeforeRequest = invalidationCalls;
+      const refreshesBeforeRequest: number = Number(refreshCalls);
+      const invalidationsBeforeRequest: number = Number(invalidationCalls);
       globalThis.fetch = (async () => jsonResponse(401, { code, message: "terminal" })) as typeof fetch;
       await expectApiError(client.request({ path: "/protected" }), code);
       assert(
-        refreshCalls === 0 && invalidationCalls === invalidationsBeforeRequest + 1,
+        Number(refreshCalls) === refreshesBeforeRequest && Number(invalidationCalls) === invalidationsBeforeRequest + 1,
         `${code} must invalidate local session without refresh`,
       );
     }
@@ -254,6 +287,45 @@ function verifyLocalPrivateDataAccountScope() {
   assert(inferLegacyLocalPrivateDataOwner(["user-a", "user-b"]).status === "ambiguous", "mixed-owner legacy data must be quarantined instead of exposed");
 }
 
+function verifyApiPreferenceProfileContract() {
+  const travelType = {
+    name: "균형 잡힌 여행자",
+    description: "명소와 로컬 사이에서 균형을 찾는 스타일이에요.",
+    tags: ["명소", "로컬", "명소", ""],
+    warning: "일정이 한쪽으로 치우치지 않게 살펴보세요.",
+    emoji: "⚖️",
+  };
+  const axes = { scheduleDensity: 61, landmarkNecessity: 54, localInterest: 46, challenging: 58 };
+  const profile = parseApiPreferenceProfile(
+    { completed: true, activeSessionId: null },
+    { completed: true, travelType, axes, completedAt: "2026-09-01T01:00:00.000Z" },
+  );
+  assert(profile.completed, "quiz/status 완료 결과는 API 성향의 단일 완료 기준이어야 한다");
+  assert(profile.presentation?.title === travelType.name, "마이페이지는 서버 travelType 이름을 그대로 표시해야 한다");
+  assert(profile.presentation?.preferredTags.join(",") === "명소,로컬", "서버 태그는 빈 값과 중복만 제거해야 한다");
+  assert(profile.axes?.scheduleDensity === 61, "서버 성향 축 값을 임의로 다시 계산하면 안 된다");
+
+  const legacy = parseApiPreferenceProfile(
+    { completed: true },
+    { completed: false, travelType, axes: null },
+  );
+  assert(legacy.completed && legacy.travelType?.name === travelType.name, "서버 status가 완료인 구버전 결과도 로컬 결과 부재로 미완료 처리하면 안 된다");
+
+  const incomplete = parseApiPreferenceProfile(
+    { completed: false },
+    { completed: false, travelType: null, axes: null },
+  );
+  assert(!incomplete.completed && !incomplete.presentation, "서버가 미완료라고 확인한 경우에만 미완료 화면을 보여야 한다");
+
+  let missingTypeRejected = false;
+  try {
+    parseApiPreferenceProfile({ completed: true }, { completed: true, travelType: null, axes: null });
+  } catch {
+    missingTypeRejected = true;
+  }
+  assert(missingTypeRejected, "완료 플래그와 결과 유형이 충돌하면 미완료로 숨기지 말고 계약 오류로 드러내야 한다");
+}
+
 async function main() {
   await verifyTokenState();
   await verifySingleFlight();
@@ -261,7 +333,10 @@ async function main() {
   await verifyApi401Policy();
   await verifyMultipartRequestBody();
   verifyLocalPrivateDataAccountScope();
-  assert(isAccessTokenExpiredError({ status: 401, code: "TOKEN_EXPIRED" }), "TOKEN_EXPIRED policy must stay explicit");
+  verifyApiPreferenceProfileContract();
+  assert(isAccessTokenExpiredError({ status: 401, code: "TOKEN_EXPIRED" }), "TOKEN_EXPIRED must refresh");
+  assert(isAccessTokenExpiredError({ status: 401 }), "the current Backend's code-less 401 must refresh");
+  assert(!isAccessTokenExpiredError({ status: 401, code: "SESSION_REVOKED" }), "an explicit terminal access error must not refresh");
   assert(isTerminalAccessAuthError({ status: 401, code: "SESSION_REVOKED" }), "revoked sessions must be terminal");
   for (const code of [
     "REFRESH_INVALID",
@@ -274,6 +349,7 @@ async function main() {
   ]) {
     assert(isTerminalRefreshError({ status: 401, code }), `${code} must terminate refresh and clear credentials`);
   }
+  assert(isTerminalRefreshError({ status: 401 }), "the current Backend's code-less refresh 401 must clear credentials");
   assert(isRetryableRefreshStatus(503) && !isRetryableRefreshStatus(401), "only transient server failures may retry refresh");
   assert(refreshRetryDelayMs(0, 0.5) === 300 && refreshRetryDelayMs(1, 0.5) === 600, "refresh retry must use bounded exponential backoff");
   assert(restrictedFeatureMessage("guest", "schedule-edit").includes("후보 장소 추가"), "guest schedule denial must explain the still-allowed candidate action");

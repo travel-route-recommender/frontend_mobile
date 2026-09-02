@@ -23,6 +23,7 @@ import {
 import { loadApiWorkspaceOverlaysWithStatus } from "../workspace/services/apiWorkspaceOverlayStorage";
 import { loadApiTripLocalFactsWithStatus, type ApiTripLocalFacts } from "../trip-creation/services/apiTripFactsStorage";
 import { fetchApiTripDocuments, type ApiTripDocument } from "../trip-documents/services/tripDocumentApi";
+import { fetchApiPreferenceCompletion } from "../preferences/services/preferenceProfileApi";
 import { hasDuplicateMemberIds, parseTravelTypeSnapshotRecord, parseTravelTypeSnapshotTags } from "./logic/travelTypeSnapshot";
 import {
   RoomPreferenceApiContractError,
@@ -47,6 +48,12 @@ export type ApiTripRoomMember = TripMember & {
   travelTypeName?: string;
   travelTypeTags: string[];
   hasTravelTypeSnapshot: boolean;
+};
+
+export type ApiDirectoryUser = User & {
+  hasTravelType: boolean;
+  travelTypeName?: string;
+  travelTypeTags: string[];
 };
 
 export type ApiTripRoom = {
@@ -228,14 +235,27 @@ function parseApiTripSummary(value: unknown, path: string): ApiTripSummary {
   };
 }
 
-export function parseApiUserDirectory(value: unknown): Record<EntityId, User> {
+export function parseApiUserDirectory(value: unknown): Record<EntityId, ApiDirectoryUser> {
   const record = asRecord(value, "users");
   return Object.fromEntries(asArray(record.data, "users.data").map((entry, index) => {
     const user = asRecord(entry, `users.data[${index}]`);
     const id = asString(user.id, `users.data[${index}].id`);
     const name = asString(user.nickname, `users.data[${index}].nickname`);
     const profileImageUrl = optionalString(user.profileImageUrl, `users.data[${index}].profileImageUrl`);
-    return [id, { id, name, initial: Array.from(name)[0] ?? "?", ...(profileImageUrl ? { profileImageUrl } : {}) } satisfies User];
+    const parsedTravelType = parseTravelTypeSnapshotRecord(user.travelType);
+    if (!parsedTravelType.ok) return fail(`users.data[${index}].travelType`, parsedTravelType.message);
+    const travelTypeName = optionalString(parsedTravelType.snapshot?.name, `users.data[${index}].travelType.name`);
+    const parsedTags = parseTravelTypeSnapshotTags(parsedTravelType.snapshot?.tags);
+    if (!parsedTags.ok) return fail(`users.data[${index}].travelType.tags`, parsedTags.message);
+    return [id, {
+      id,
+      name,
+      initial: Array.from(name)[0] ?? "?",
+      ...(profileImageUrl ? { profileImageUrl } : {}),
+      hasTravelType: Boolean(parsedTravelType.snapshot && Object.keys(parsedTravelType.snapshot).length),
+      ...(travelTypeName ? { travelTypeName } : {}),
+      travelTypeTags: parsedTags.tags,
+    } satisfies ApiDirectoryUser];
   }));
 }
 
@@ -249,23 +269,45 @@ export async function fetchApiUserDirectory(signal?: AbortSignal) {
   return parseApiUserDirectory(payload);
 }
 
-function usersForRoom(room: ApiTripRoom, directory: Readonly<Record<EntityId, User>>, currentUserId?: string | null) {
+function usersForRoom(room: ApiTripRoom, directory: Readonly<Record<EntityId, ApiDirectoryUser>>, currentUserId?: string | null) {
   return Object.fromEntries(room.members.map((member, index) => {
     const fromDirectory = directory[member.userId];
     if (fromDirectory) return [member.userId, fromDirectory];
     const name = member.userId === currentUserId
       ? "나"
       : member.role === "owner" ? "방장" : `동행자 ${index + 1}`;
-    return [member.userId, { id: member.userId, name, initial: Array.from(name)[0] ?? "?" } satisfies User];
+    return [member.userId, {
+      id: member.userId,
+      name,
+      initial: Array.from(name)[0] ?? "?",
+      hasTravelType: member.hasTravelTypeSnapshot,
+      ...(member.travelTypeName ? { travelTypeName: member.travelTypeName } : {}),
+      travelTypeTags: member.travelTypeTags,
+    } satisfies ApiDirectoryUser];
   }));
 }
 
-function buildPreparation(room: ApiTripRoom): TripPreparationProgress {
+function hasCurrentPreference(
+  member: ApiTripRoomMember,
+  usersById: Readonly<Record<EntityId, ApiDirectoryUser>>,
+  currentUserId?: string | null,
+  currentUserCompleted?: boolean,
+) {
+  if (member.userId === currentUserId && currentUserCompleted !== undefined) return currentUserCompleted;
+  return usersById[member.userId]?.hasTravelType ?? member.hasTravelTypeSnapshot;
+}
+
+function buildPreparation(
+  room: ApiTripRoom,
+  usersById: Readonly<Record<EntityId, ApiDirectoryUser>> = {},
+  currentUserId?: string | null,
+  currentUserCompleted?: boolean,
+): TripPreparationProgress {
   const validRoom = room.destinationName !== "목적지 미정"
     && room.startDate !== null
     && room.endDate !== null
     && room.endDate >= room.startDate;
-  const completedPreferenceCount = room.members.filter((member) => member.hasTravelTypeSnapshot).length;
+  const completedPreferenceCount = room.members.filter((member) => hasCurrentPreference(member, usersById, currentUserId, currentUserCompleted)).length;
   const preferenceStatus: TripPreparationStep["status"] = room.members.length > 0 && completedPreferenceCount === room.members.length
     ? "completed"
     : completedPreferenceCount > 0 ? "active" : "pending";
@@ -282,17 +324,25 @@ function buildPreparation(room: ApiTripRoom): TripPreparationProgress {
   return { completedSteps, activeSteps, totalSteps: steps.length, rate, steps };
 }
 
-function buildPreferenceSummary(room: ApiTripRoom, usersById: Readonly<Record<EntityId, User>>, currentUserId?: string | null): RoomPreferenceResponseSummary {
-  const members = room.members.map((member) => ({
-    userId: member.userId,
-    role: member.role,
-    name: usersById[member.userId]?.name ?? "알 수 없는 참여자",
-    initial: usersById[member.userId]?.initial ?? "?",
-    ...(usersById[member.userId]?.profileImageUrl ? { profileImageUrl: usersById[member.userId].profileImageUrl } : {}),
-    state: member.hasTravelTypeSnapshot ? "completed" as const : "pending" as const,
-    ...(member.travelTypeName ? { profileType: member.travelTypeName } : {}),
-    isCurrentUser: member.userId === currentUserId,
-  }));
+function buildPreferenceSummary(
+  room: ApiTripRoom,
+  usersById: Readonly<Record<EntityId, ApiDirectoryUser>>,
+  currentUserId?: string | null,
+  currentUserCompleted?: boolean,
+): RoomPreferenceResponseSummary {
+  const members = room.members.map((member) => {
+    const currentTravelTypeName = usersById[member.userId]?.travelTypeName ?? member.travelTypeName;
+    return {
+      userId: member.userId,
+      role: member.role,
+      name: usersById[member.userId]?.name ?? "알 수 없는 참여자",
+      initial: usersById[member.userId]?.initial ?? "?",
+      ...(usersById[member.userId]?.profileImageUrl ? { profileImageUrl: usersById[member.userId].profileImageUrl } : {}),
+      state: hasCurrentPreference(member, usersById, currentUserId, currentUserCompleted) ? "completed" as const : "pending" as const,
+      ...(currentTravelTypeName ? { profileType: currentTravelTypeName } : {}),
+      isCurrentUser: member.userId === currentUserId,
+    };
+  });
   const completedMemberIds = members.filter((member) => member.state === "completed").map((member) => member.userId);
   const pendingMemberIds = members.filter((member) => member.state === "pending").map((member) => member.userId);
   const completedCount = completedMemberIds.length;
@@ -386,10 +436,21 @@ async function fetchUserDirectory(signal?: AbortSignal) {
   }
 }
 
+async function fetchCurrentPreferenceCompletion(currentUserId?: string | null, signal?: AbortSignal) {
+  if (!currentUserId) return undefined;
+  try {
+    return await fetchApiPreferenceCompletion(signal);
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    return undefined;
+  }
+}
+
 export async function fetchApiTripList(currentUserId?: string | null, signal?: AbortSignal) {
   const payload = await apiClient.request<unknown>({ path: "/rooms/me", signal, auth: true });
   const summaries = asArray(payload, "rooms").map((room, index) => parseApiTripSummary(room, `rooms[${index}]`));
   const directoryPromise = fetchUserDirectory(signal);
+  const currentPreferenceCompletionPromise = fetchCurrentPreferenceCompletion(currentUserId, signal);
   const details: ApiTripRoom[] = [];
   for (let offset = 0; offset < summaries.length; offset += 4) {
     const group = summaries.slice(offset, offset + 4);
@@ -399,13 +460,13 @@ export async function fetchApiTripList(currentUserId?: string | null, signal?: A
       auth: true,
     })))));
   }
-  const directory = await directoryPromise;
+  const [directory, currentUserCompleted] = await Promise.all([directoryPromise, currentPreferenceCompletionPromise]);
   const detailById = Object.fromEntries(details.map((detail) => [detail.id, detail]));
   return summaries.flatMap((summary) => {
     const room = detailById[summary.id];
     if (!room) return [];
     const usersById = usersForRoom(room, directory, currentUserId);
-    const completedPreferenceCount = room.members.filter((member) => member.hasTravelTypeSnapshot).length;
+    const completedPreferenceCount = room.members.filter((member) => hasCurrentPreference(member, directory, currentUserId, currentUserCompleted)).length;
     const timingLabel = getTripTimingLabel(room.startDate, room.endDate);
     const viewModel: TripRoomCardViewModel = {
       id: room.id,
@@ -426,7 +487,7 @@ export async function fetchApiTripList(currentUserId?: string | null, signal?: A
       itineraryCount: room.scheduleItemCount,
       preferenceCompletedCount: completedPreferenceCount,
       preferenceTotalCount: room.members.length,
-      preparation: buildPreparation(room),
+      preparation: buildPreparation(room, directory, currentUserId, currentUserCompleted),
       isOwner: room.members.some((member) => member.userId === currentUserId && member.role === "owner"),
     };
     return [{ id: room.id, viewModel }];
@@ -443,7 +504,7 @@ export async function fetchApiTripDetail(roomId: string, currentUserId?: string 
   const region = regionForRoom(room);
   const hasValidLocalUserScope = Boolean(currentUserId && MONGO_OBJECT_ID_PATTERN.test(currentUserId));
   const unavailableLocalUserScope = Boolean(currentUserId) && !hasValidLocalUserScope;
-  const [candidatePayload, directory, localFactsResult, preferenceResult, sharedDocumentsResult] = await Promise.all([
+  const [candidatePayload, directory, localFactsResult, preferenceResult, sharedDocumentsResult, currentUserCompleted] = await Promise.all([
     apiClient.request<unknown>({ path: `/rooms/${encodeURIComponent(id)}/candidates`, signal, auth: true }),
     fetchUserDirectory(signal),
     hasValidLocalUserScope
@@ -471,6 +532,7 @@ export async function fetchApiTripDetail(roomId: string, currentUserId?: string 
         if (signal?.aborted) throw error;
         return { status: "unavailable" as const, value: [] as ApiTripDocument[] };
       }),
+    fetchCurrentPreferenceCompletion(currentUserId, signal),
   ]);
   const candidateData = parseCandidates(candidatePayload, room, region);
   const usersById = usersForRoom(room, directory, currentUserId);
@@ -548,8 +610,8 @@ export async function fetchApiTripDetail(roomId: string, currentUserId?: string 
     itinerary,
     ...(scheduleSnapshot ? { scheduleSnapshot } : {}),
     itineraryItemLabelsById,
-    preferenceSummary: buildPreferenceSummary(room, usersById, currentUserId),
-    preparation: buildPreparation(room),
+    preferenceSummary: buildPreferenceSummary(room, usersById, currentUserId, currentUserCompleted),
+    preparation: buildPreparation(room, usersById, currentUserId, currentUserCompleted),
     localFacts: localFactsResult.value,
     localFactsStatus: localFactsResult.status,
     workspaceOverlayStatus,

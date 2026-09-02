@@ -9,6 +9,7 @@ import {
   createWorkspaceScheduleImpactTodoSeeds,
   getDocumentOcrConfirmationTodoAction,
   getDuriTodoResolvableDedupePrefixes,
+  isDuriIssueTodoActionable,
   isSuccessfulWorkspaceMutation,
   runFreshDuriTodoSync,
   runWorkspaceTodoPostCommit,
@@ -82,6 +83,10 @@ const issueSeed = createDuriIssueTodoSeed("trip-1", issue, "owner");
 assert(issueSeed.priority === "urgent" && issueSeed.dedupeKey.includes(issue.id), "신뢰도 높은 hard 이슈를 긴급 TODO와 안정 키로 변환한다");
 assert(issueSeed.due?.date === issue.date && issueSeed.links?.itineraryItemIds?.length === 2, "Duri 날짜·영향 일정을 TODO에 연결한다");
 assert(issueSeed.assigneeUserIds?.length === 1 && issueSeed.assigneeUserIds[0] === "member-1", "영향받는 동행자를 자동 TODO 담당자로 중복 없이 연결한다");
+assert(isDuriIssueTodoActionable(issue), "신뢰도 중간 이상인 실제 hard 위반은 공유 TODO 후보여야 한다");
+assert(!isDuriIssueTodoActionable({ ...issue, id: "soft-route", constraintType: "soft" }), "동선 최적화 같은 soft 제안은 리포트에만 남기고 TODO로 복제하지 않는다");
+assert(!isDuriIssueTodoActionable({ ...issue, id: "low-confidence", confidence: "low" }), "근거 신뢰도가 낮은 hard 경고는 자동 TODO로 승격하지 않는다");
+assert(!isDuriIssueTodoActionable({ ...issue, id: "informational", constraintType: "informational", severity: "info" }), "정보성 설명은 여행 준비 TODO에 추가하지 않는다");
 const generated = createGeneratedTripTodo(issueSeed, now, [created.id]);
 assert(generated?.source.kind === "duri" && generated.id !== created.id, "자동 TODO도 고유 ID와 출처를 가진다");
 const editedGenerated = generated && { ...generated, title: "내가 고친 제목", userEditedAt: "2026-08-19T03:30:00.000Z" };

@@ -124,7 +124,7 @@ export function DuriAnalysisReport({
           <View style={[styles.rowIcon, styles.peachSoft]}><Text style={styles.peachText}>!</Text></View>
           <View style={styles.flex}><DuriKoreanText style={styles.rowTitle}>{issue.title}</DuriKoreanText><DuriKoreanText numberOfLines={1} style={styles.rowDetail}>{issuePreviewText(issue)}</DuriKoreanText></View>
         </View>)}
-        {presentation.actionableIssues.length > 3 ? <Text style={styles.moreHint}>외 {presentation.actionableIssues.length - 3}개는 전체 점검에서 확인할 수 있어요.</Text> : null}
+        {presentation.actionableIssues.length > 3 ? <Text style={styles.moreHint}>나머지 {presentation.actionableIssues.length - 3}개 결과는 아래 ‘전체 점검 항목’에서 자세히 볼 수 있어요.</Text> : null}
       </View> : <View style={styles.emptyCompact}><DuriKoreanText style={styles.rowTitle}>현재 근거에서 조정할 점이 없어요</DuriKoreanText></View>}
     </View>
 

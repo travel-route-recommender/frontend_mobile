@@ -18,4 +18,7 @@ export const queryKeys = {
   users: {
     directory: () => ["users", "directory"] as const,
   },
+  preferences: {
+    profile: (userId: EntityId) => ["preferences", "profile", userId] as const,
+  },
 } as const;

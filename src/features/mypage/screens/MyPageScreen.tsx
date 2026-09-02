@@ -3,6 +3,7 @@ import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensi
 import { router } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Avatar, PrimaryButton } from "../../../components/common";
+import { environment } from "../../../config/environment";
 import { useDuriStore } from "../../../store/useDuriStore";
 import { colors, radius, shadows, spacing, typography } from "../../../theme/tokens";
 import { AuthErrorBanner, AuthTextField, PasswordField } from "../../auth/components/AuthControls";
@@ -11,6 +12,7 @@ import { authService } from "../../auth/services/authService";
 import { useAuthSessionStore } from "../../auth/store/useAuthSessionStore";
 import { validateNickname } from "../../auth/validation";
 import { useTravelPreferenceSurveyResult } from "../../preferences/hooks/useTravelPreferenceSurveyResult";
+import { useApiPreferenceProfile } from "../../preferences/hooks/useApiPreferenceProfile";
 import { resolvePreferenceResultPair } from "../../preferences/logic/resolve-preference-result-pair";
 
 const DURI_GUIDE_IMAGE = require("../../../../assets/images/duri/home/hero-travel.png");
@@ -48,7 +50,22 @@ export function MyPageScreen() {
     detailedResult,
     state.currentUserId,
   ) : null, [detailedResult, result, state.currentUserId]);
-  const preferencePresentation = preferenceResultPair?.canonicalPresentation ?? null;
+  const apiPreferenceProfile = useApiPreferenceProfile(state.currentUserId, sessionKind === "member");
+  const apiPreferenceState = environment.dataSource === "mock"
+    ? "local"
+    : apiPreferenceProfile.data
+      ? apiPreferenceProfile.data.completed ? "completed" : "incomplete"
+      : apiPreferenceProfile.isError ? "error" : "loading";
+  const preferencePresentation = environment.dataSource === "mock"
+    ? preferenceResultPair?.canonicalPresentation ?? null
+    : apiPreferenceProfile.data?.completed
+      ? apiPreferenceProfile.data.presentation
+      : null;
+  const preferenceStatusLabel = apiPreferenceState === "loading"
+    ? "여행 성향을 확인하고 있어요"
+    : apiPreferenceState === "error"
+      ? "여행 성향을 불러오지 못했어요"
+      : undefined;
   const trips = useMemo(
     () => Object.values(state.tripsById).filter((trip) => trip.members.some((member) => member.userId === state.currentUserId)),
     [state.currentUserId, state.tripsById],
@@ -140,6 +157,7 @@ export function MyPageScreen() {
             imageUrl={user?.profileImageUrl}
             name={userName}
             preferenceTitle={preferencePresentation?.title}
+            preferenceStatusLabel={preferenceStatusLabel}
             preferredTags={preferencePresentation?.preferredTags ?? []}
             onEdit={openProfileEditor}
           />
@@ -151,7 +169,11 @@ export function MyPageScreen() {
               preferredTags={preferencePresentation.preferredTags}
               title={preferencePresentation.title}
             />
-            : <PreferenceEmptyCard compact={compact} />}
+            : apiPreferenceState === "loading"
+              ? <PreferenceStatusCard message="서버에 저장된 최신 성향을 확인하고 있어요." />
+              : apiPreferenceState === "error"
+                ? <PreferenceStatusCard message="성향 정보를 불러오지 못했어요. 완료 여부를 미완료로 바꾸지 않았습니다." onRetry={() => { void apiPreferenceProfile.refetch(); }} />
+                : <PreferenceEmptyCard compact={compact} />}
         </>}
 
         <MenuSection rows={serviceRows} title="서비스" />
@@ -180,12 +202,13 @@ export function MyPageScreen() {
   </>;
 }
 
-function MemberProfileCard({ avatarName, compact, imageUrl, name, preferenceTitle, preferredTags, onEdit }: {
+function MemberProfileCard({ avatarName, compact, imageUrl, name, preferenceTitle, preferenceStatusLabel, preferredTags, onEdit }: {
   avatarName: string;
   compact: boolean;
   imageUrl?: string;
   name: string;
   preferenceTitle?: string;
+  preferenceStatusLabel?: string;
   preferredTags: string[];
   onEdit: () => void;
 }) {
@@ -196,7 +219,7 @@ function MemberProfileCard({ avatarName, compact, imageUrl, name, preferenceTitl
     <View style={styles.profileCopy}>
       <Text numberOfLines={1} style={styles.profileName}>{name}</Text>
       <Text numberOfLines={2} style={[styles.profileIdentity, !preferenceTitle && styles.profileIdentityEmpty]}>
-        {preferenceTitle ?? (compact ? <>아직 여행 성향을{`\n`}알아보지 않았어요</> : "아직 여행 성향을 알아보지 않았어요")}
+        {preferenceTitle ?? preferenceStatusLabel ?? (compact ? <>아직 여행 성향을{`\n`}알아보지 않았어요</> : "아직 여행 성향을 알아보지 않았어요")}
       </Text>
       {preferenceTitle && identityTags.length ? <Text accessibilityLabel={`선호 여행 키워드 ${preferredTags.join(", ")}`} numberOfLines={2} style={styles.profileTags}>
         {identityTags.join(" · ")}{remaining > 0 ? ` · +${remaining}` : ""}
@@ -294,6 +317,16 @@ function PreferenceEmptyCard({ compact }: { compact: boolean }) {
     <Pressable accessibilityRole="button" onPress={() => router.push("/tests/personal")} style={({ pressed }) => [styles.primaryAction, pressed && styles.pressed]}>
       <Text style={styles.primaryActionText}>여행 성향 알아보기</Text><Text style={styles.primaryActionArrow}>›</Text>
     </Pressable>
+  </View>;
+}
+
+function PreferenceStatusCard({ message, onRetry }: { message: string; onRetry?: () => void }) {
+  return <View style={styles.preferenceStatusCard} testID="mypage-preference-status">
+    <Text style={styles.preferenceStatusTitle}>여행 성향 상태 확인</Text>
+    <Text style={styles.preferenceStatusDescription}>{message}</Text>
+    {onRetry ? <Pressable accessibilityRole="button" onPress={onRetry} style={({ pressed }) => [styles.preferenceRetry, pressed && styles.pressed]}>
+      <Text style={styles.preferenceRetryText}>다시 불러오기</Text>
+    </Pressable> : null}
   </View>;
 }
 
@@ -403,6 +436,11 @@ const styles = StyleSheet.create({
   preferenceDetailText: { color: FOUNDATION.secondary, fontSize: 13, lineHeight: 19, fontWeight: "800" },
   preferenceDetailArrow: { color: FOUNDATION.secondary, fontSize: 22, lineHeight: 24, fontWeight: "600" },
   preferenceEmptyCard: { borderRadius: 22, borderWidth: 1, borderColor: "#E3ECFA", backgroundColor: FOUNDATION.page, padding: 18, overflow: "hidden", ...shadows.card },
+  preferenceStatusCard: { gap: 8, borderRadius: 22, borderWidth: 1, borderColor: "#E3ECFA", backgroundColor: FOUNDATION.page, padding: 18, ...shadows.card },
+  preferenceStatusTitle: { color: FOUNDATION.text, fontSize: 17, lineHeight: 23, fontWeight: "900" },
+  preferenceStatusDescription: { color: FOUNDATION.secondary, fontSize: 13, lineHeight: 20, fontWeight: "500" },
+  preferenceRetry: { minHeight: 44, alignItems: "center", justifyContent: "center", alignSelf: "flex-start", paddingHorizontal: 14, borderRadius: 12, backgroundColor: FOUNDATION.blueSurface },
+  preferenceRetryText: { color: colors.primary, fontSize: 13, lineHeight: 19, fontWeight: "800" },
   preferenceEmptyTop: { minHeight: 142, flexDirection: "row", alignItems: "center" },
   preferenceEmptyCopy: { flex: 1, zIndex: 1 },
   preferenceEmptyTitle: { color: FOUNDATION.text, fontSize: 22, lineHeight: 29, fontWeight: "900" },

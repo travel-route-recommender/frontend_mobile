@@ -33,6 +33,7 @@ import { filterEligibleCompanionUserIds, resolveEligibleCompanionUsers } from ".
 import { CREATE_TRIP_DRAFT_VERSION } from "../src/features/trip-creation/types";
 import { selectCompletedTripsForCurrentUser, selectPlanningTripsForCurrentUser } from "../src/store/selectors";
 import { hasDuplicateMemberIds, parseTravelTypeSnapshotRecord, parseTravelTypeSnapshotTags } from "../src/features/trips/logic/travelTypeSnapshot";
+import { selectTripHomeDuriState } from "../src/features/trips/logic/selectTripHomeDuriState";
 
 function assert(condition: unknown, message: string): asserts condition { if (!condition) throw new Error(message); }
 
@@ -74,6 +75,19 @@ function createDraft(overrides: Partial<CreateTripDraft> = {}): CreateTripDraft 
 }
 
 async function main() {
+  assert(selectTripHomeDuriState({ itineraryCount: 0, analysisAvailable: true, analysisStatus: "idle", currentFingerprint: "current" }).kind === "no-itinerary", "빈 일정은 분석 대신 일정 만들기로 안내해야 한다");
+  assert(selectTripHomeDuriState({ itineraryCount: 2, analysisAvailable: true, analysisStatus: "idle", currentFingerprint: "current" }).kind === "ready", "API 일정과 분석 입력이 준비되면 여행방 홈에서 분석을 열어야 한다");
+  const existingDuriState = selectTripHomeDuriState({
+    itineraryCount: 2,
+    analysisAvailable: true,
+    analysisStatus: "idle",
+    currentFingerprint: "current",
+    session: { inputFingerprint: "current", issues: [{ severity: "high" }, { severity: "info" }] },
+  });
+  assert(existingDuriState.kind === "existing" && existingDuriState.issueCount === 1, "현재 입력의 저장된 분석은 정보성 항목을 제외한 점검 개수로 표시해야 한다");
+  assert(selectTripHomeDuriState({ itineraryCount: 2, analysisAvailable: true, analysisStatus: "idle", currentFingerprint: "new", session: { inputFingerprint: "old", issues: [] } }).kind === "stale", "서버 일정 version이 바뀌면 과거 분석을 최신 결과처럼 표시하면 안 된다");
+  assert(selectTripHomeDuriState({ itineraryCount: 2, analysisAvailable: false, unavailableMessage: "일정 없음", analysisStatus: "idle", currentFingerprint: "" }).kind === "unavailable", "분석 입력이 없을 때만 준비 중 상태를 표시해야 한다");
+
   const parsedSnapshotTags = parseTravelTypeSnapshotTags([" 카페 ", "ＣＡＦＥ", "카페", "로컬"]);
   assert(parsedSnapshotTags.ok && parsedSnapshotTags.tags.join(",") === "카페,ＣＡＦＥ,로컬", "서버 성향 태그는 trim·Unicode 정규화 중복 제거 후 실제 값만 보존해야 한다");
   assert(!parseTravelTypeSnapshotTags("카페").ok && !parseTravelTypeSnapshotTags([" "]).ok, "서버 성향 태그가 존재하면 비어 있지 않은 문자열 배열만 허용해야 한다");

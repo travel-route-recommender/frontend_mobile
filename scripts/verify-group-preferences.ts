@@ -666,6 +666,92 @@ assert(!generatedStateCapped.certificate.exact
   && generatedStateCapped.certificate.minimumSatisfactionUpperBound === 1,
 "42h. label 생성 상한에서 누락 branch 상한을 보존하며 exact가 아닌 feasible로 중단한다");
 
+const budgetPriorityInput = {
+  members: [{ id: "a" }],
+  days: [{ id: "day-1", date: "2026-07-18", startMinute: 0, endMinute: 10, startAnchor: { kind: "open" as const }, endAnchor: { kind: "open" as const } }],
+  visits: [
+    { id: "a-low", nodeId: "a-low", durationMinutes: 10, utilityPointsByMember: { a: 1 } },
+    { id: "z-high", nodeId: "z-high", durationMinutes: 10, utilityPointsByMember: { a: 100 } },
+  ],
+  routeEdgesByKey: {},
+  idealUtilityPointsByMember: { a: 100 },
+  maxExpandedStates: 100,
+  maxGeneratedStates: 2,
+};
+const budgetPrioritizesUtility = optimizeGroupItinerary(budgetPriorityInput);
+assert(budgetPrioritizesUtility.assignments[0]?.visitId === "z-high"
+  && budgetPrioritizesUtility.objective?.satisfactionByMember.a === 1,
+"42i. 작은 생성 예산에서도 ID순 저효용 후보가 고효용 대표 branch를 가리면 안 된다");
+const budgetPrioritizesMandatory = optimizeGroupItinerary({
+  ...budgetPriorityInput,
+  visits: budgetPriorityInput.visits.map((visit) => visit.id === "z-high" ? { ...visit, mandatory: true } : visit),
+});
+assert(budgetPrioritizesMandatory.assignments[0]?.visitId === "z-high"
+  && budgetPrioritizesMandatory.certificate.status === "feasible",
+"42j. 작은 생성 예산에서도 mandatory branch를 일반 후보보다 먼저 보존해야 한다");
+
+const baselineStartPriority = optimizeGroupItinerary({
+  members: [{ id: "a" }],
+  days: [{ id: "day-1", date: "2026-07-18", startMinute: 0, endMinute: 100, startAnchor: { kind: "open" }, endAnchor: { kind: "open" } }],
+  visits: [{ id: "a", nodeId: "a", durationMinutes: 10, utilityPointsByMember: { a: 1 } }],
+  routeEdgesByKey: {},
+  idealUtilityPointsByMember: { a: 1 },
+  baselineAssignments: [{ visitId: "a", dayId: "day-1", startMinute: 50 }],
+  maxExpandedStates: 100,
+  maxGeneratedStates: 2,
+});
+assert(baselineStartPriority.assignments[0]?.startMinute === 50,
+  "42k. 탐색 예산이 작아도 가능한 기존 일정 시각을 가장 이른 시각보다 먼저 보존해야 한다");
+
+assertThrows(() => optimizeGroupItinerary({
+  ...budgetPriorityInput,
+  visits: [{
+    id: "locked",
+    nodeId: "locked",
+    durationMinutes: 10,
+    utilityPointsByMember: { a: 1 },
+    lockedAssignment: { dayId: "day-1", startMinute: 5 },
+  }],
+  idealUtilityPointsByMember: { a: 1 },
+}), "42l. 잠금 일정이 DAY 종료를 넘으면 입력 단계에서 거부해야 한다");
+
+const directedWindowInput = {
+  members: [{ id: "a" }],
+  days: [{ id: "day-1", date: "2026-07-18", startMinute: 0, endMinute: 40, startAnchor: { kind: "open" as const }, endAnchor: { kind: "open" as const } }],
+  visits: [
+    { id: "early", nodeId: "early", durationMinutes: 10, utilityPointsByMember: { a: 1 }, mandatory: true, timeWindows: [{ dayId: "day-1", startMinute: 0, endMinute: 10 }] },
+    { id: "late", nodeId: "late", durationMinutes: 10, utilityPointsByMember: { a: 1 }, mandatory: true, timeWindows: [{ dayId: "day-1", startMinute: 20, endMinute: 30 }] },
+  ],
+  routeEdgesByKey: {
+    [routeEdgeKey("early", "late")]: { status: "available" as const, durationMinutes: 0 },
+  },
+  idealUtilityPointsByMember: { a: 2 },
+  maxExpandedStates: 1_000,
+};
+const directedWindowResult = optimizeGroupItinerary(directedWindowInput);
+assert(directedWindowResult.certificate.exact
+  && directedWindowResult.certificate.status === "optimal"
+  && directedWindowResult.assignments.map((assignment) => assignment.visitId).join(",") === "early,late",
+"42m. 시간창상 불가능한 역방향 경로 누락을 분석 불충분으로 오인하면 안 된다");
+
+const lazyStartStress = optimizeGroupItinerary({
+  members: [{ id: "a" }],
+  days: [{ id: "day-1", date: "2026-07-18", startMinute: 0, endMinute: 1440, startAnchor: { kind: "open" }, endAnchor: { kind: "open" } }],
+  visits: Array.from({ length: 128 }, (_, index) => ({
+    id: `lazy-${index}`,
+    nodeId: `lazy-${index}`,
+    durationMinutes: 1,
+    utilityPointsByMember: { a: 1 },
+  })),
+  routeEdgesByKey: {},
+  idealUtilityPointsByMember: { a: 128 },
+  maxExpandedStates: 1,
+  maxGeneratedStates: 1,
+});
+assert(lazyStartStress.certificate.generatedStates === 1
+  && lazyStartStress.certificate.computationLimitReached,
+"42n. 생성 한도 1에서 분 단위 branch를 선행 생성하지 않고 즉시 중단해야 한다");
+
 let randomState = 0x5eed1234;
 const nextRandom = () => {
   randomState = (Math.imul(randomState, 1_664_525) + 1_013_904_223) >>> 0;

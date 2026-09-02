@@ -6,6 +6,7 @@ import {
   createScheduleImpactTodoSeed,
   createWorkspaceScheduleImpactTodoSeeds,
   getDocumentOcrConfirmationTodoAction,
+  isDuriIssueTodoActionable,
   runFreshDuriTodoSync,
   type OcrConfirmationCandidate,
   type ScheduleImpactExternalReference,
@@ -27,7 +28,9 @@ export async function syncDuriIssueTodos(input: {
     waitUntilReady: ensureTripTodoStoreHydrated,
     isCurrent: input.isCurrent,
     commit: () => {
-      const seeds = input.issues.map((issue) => createDuriIssueTodoSeed(input.tripId, issue, input.createdByUserId));
+      const seeds = input.issues
+        .filter(isDuriIssueTodoActionable)
+        .map((issue) => createDuriIssueTodoSeed(input.tripId, issue, input.createdByUserId));
       return useTripTodoStore.getState().syncGeneratedTodos(
         input.tripId,
         "duri-analysis",
