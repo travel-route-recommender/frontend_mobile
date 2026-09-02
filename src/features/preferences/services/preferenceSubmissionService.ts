@@ -21,16 +21,34 @@ type QuizCompleteResponse = { completedAt?: string };
 type QuizResponses = {
   surveyVersion: number;
   algorithmVersion: number;
-  challengeStyleAnswers: NonNullable<PersonalPreferenceDraftAnswers["challengeStyleAnswers"]>;
-  itineraryMessageAnswers: NonNullable<PersonalPreferenceDraftAnswers["itineraryMessageAnswers"]>;
-  itineraryDays: NonNullable<PersonalPreferenceDraftAnswers["itineraryDays"]>;
-  mobilityModes: NonNullable<PersonalPreferenceDraftAnswers["mobilityModes"]>;
-  accommodation: NonNullable<PersonalPreferenceDraftAnswers["accommodation"]>;
-  adventure: NonNullable<PersonalPreferenceDraftAnswers["adventure"]>;
-  stamina: NonNullable<PersonalPreferenceDraftAnswers["stamina"]>;
-  budgetRanking: NonNullable<PersonalPreferenceDraftAnswers["budgetRanking"]>;
-  landmarkImportance: NonNullable<PersonalPreferenceDraftAnswers["landmarkImportance"]>;
-  localInterest: NonNullable<PersonalPreferenceDraftAnswers["localInterest"]>;
+  challengeStyle: {
+    challengeStyleAnswers: NonNullable<PersonalPreferenceDraftAnswers["challengeStyleAnswers"]>;
+    itineraryMessageAnswers: NonNullable<PersonalPreferenceDraftAnswers["itineraryMessageAnswers"]>;
+    type: TravelPreferenceSurveyResult["challengeStylePreference"]["type"];
+    scores: Pick<TravelPreferenceSurveyResult["challengeStylePreference"]["scores"], "exploration" | "cautiousness">;
+    scheduleStyle: {
+      type: TravelPreferenceSurveyResult["scheduleStylePreference"]["type"];
+      components: Pick<TravelPreferenceSurveyResult["scheduleStylePreference"]["components"], "density" | "activeRestPreference">;
+    };
+  };
+  accommodation: {
+    answers: NonNullable<PersonalPreferenceDraftAnswers["accommodation"]>;
+    scores: TravelPreferenceSurveyResult["accommodationPreference"];
+  };
+  stamina: {
+    answer: NonNullable<PersonalPreferenceDraftAnswers["stamina"]>;
+    score: number;
+  };
+  budget: {
+    ranking: TravelPreferenceSurveyResult["spendingPriority"]["ranking"];
+  };
+  discovery: {
+    answers: {
+      landmarkImportance: NonNullable<PersonalPreferenceDraftAnswers["landmarkImportance"]>;
+      localInterest: NonNullable<PersonalPreferenceDraftAnswers["localInterest"]>;
+    };
+    scores: TravelPreferenceSurveyResult["discoveryPreference"];
+  };
 };
 
 export interface PreferenceResultService {
@@ -51,16 +69,40 @@ function toQuizResponses(result: TravelPreferenceSurveyResult): QuizResponses {
   return {
     surveyVersion: result.surveyVersion,
     algorithmVersion: result.algorithmVersion,
-    challengeStyleAnswers: answers.challengeStyleAnswers!,
-    itineraryMessageAnswers: answers.itineraryMessageAnswers!,
-    itineraryDays: answers.itineraryDays!,
-    mobilityModes: answers.mobilityModes!,
-    accommodation: answers.accommodation!,
-    adventure: answers.adventure!,
-    stamina: answers.stamina!,
-    budgetRanking: result.spendingPriority.ranking,
-    landmarkImportance: answers.landmarkImportance!,
-    localInterest: answers.localInterest!,
+    challengeStyle: {
+      challengeStyleAnswers: { ...answers.challengeStyleAnswers! },
+      itineraryMessageAnswers: { ...answers.itineraryMessageAnswers! },
+      type: result.challengeStylePreference.type,
+      scores: {
+        exploration: result.challengeStylePreference.scores.exploration,
+        cautiousness: result.challengeStylePreference.scores.cautiousness,
+      },
+      scheduleStyle: {
+        type: result.scheduleStylePreference.type,
+        components: {
+          density: result.scheduleStylePreference.components.density,
+          activeRestPreference: result.scheduleStylePreference.components.activeRestPreference,
+        },
+      },
+    },
+    accommodation: {
+      answers: { ...answers.accommodation! },
+      scores: { ...result.accommodationPreference },
+    },
+    stamina: {
+      answer: answers.stamina!,
+      score: result.staminaPreference.score,
+    },
+    budget: {
+      ranking: [...result.spendingPriority.ranking],
+    },
+    discovery: {
+      answers: {
+        landmarkImportance: answers.landmarkImportance!,
+        localInterest: answers.localInterest!,
+      },
+      scores: { ...result.discoveryPreference },
+    },
   };
 }
 
