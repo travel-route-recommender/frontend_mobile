@@ -72,7 +72,12 @@
     "extra": {
       "release": {
         "iosBundleIdentifierFinalized": true
+      },
+      "router": {},
+      "eas": {
+        "projectId": "5d4fa03b-bbad-4332-a3be-f5b0fc8cacad"
       }
-    }
+    },
+    "owner": "shinhh7777"
   }
 }
