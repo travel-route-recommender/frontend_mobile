@@ -428,6 +428,158 @@ export const STRESS_PERSONAS = Object.freeze([
   },
 ]);
 
+const QUIZ_CATEGORY_IDS = Object.freeze([
+  "restaurant",
+  "cafe",
+  "shopping",
+  "attraction",
+  "local",
+  "experience",
+  "nature",
+  "rest",
+]);
+const QUIZ_BUDGET_IDS = Object.freeze(["stay", "food", "activity", "shopping", "mobility"]);
+
+function clampQuizScore(value) {
+  return Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
+}
+
+function scoreToScale(value, maximum) {
+  return Math.max(1, Math.min(maximum, Math.round((clampQuizScore(value) / 100) * (maximum - 1)) + 1));
+}
+
+function scoreToSentiment(value) {
+  const score = clampQuizScore(value);
+  if (score >= 67) return "like";
+  if (score <= 33) return "dislike";
+  return "neutral";
+}
+
+function fixtureCategoryScores(account) {
+  const tags = new Set(account.onboarding.tags);
+  const quiz = account.quiz;
+  const place = quiz.placeFeatures;
+  const density = quiz.scheduleFeatures.scheduleSpanMinutes > 0
+    ? clampQuizScore((quiz.scheduleFeatures.scheduledMinutes / quiz.scheduleFeatures.scheduleSpanMinutes) * 100)
+    : 50;
+  return {
+    restaurant: tags.has("맛집") || tags.has("시장") ? 90 : tags.has("가성비") ? 75 : 50,
+    cafe: tags.has("카페") ? 90 : tags.has("휴식") ? 70 : 45,
+    shopping: tags.has("쇼핑") || tags.has("시장") ? 85 : tags.has("가성비") ? 70 : 40,
+    attraction: clampQuizScore(place.averageLandmarkScore),
+    local: clampQuizScore(place.averageLocalScore),
+    experience: clampQuizScore(quiz.challenging),
+    nature: tags.has("바다") || tags.has("산책") || tags.has("자연") ? 85 : 50,
+    rest: tags.has("휴식") || tags.has("편안한숙소") ? 90 : clampQuizScore(100 - density),
+  };
+}
+
+function fixtureBudgetRanking(allocation) {
+  const scores = {
+    stay: allocation.ACCOMMODATION ?? 0,
+    food: (allocation.FOOD ?? 0) + (allocation.CAFE_REST ?? 0),
+    activity: (allocation.TOURISM ?? 0) + (allocation.ACTIVITY ?? 0),
+    shopping: allocation.SHOPPING ?? 0,
+    mobility: allocation.TRANSPORT ?? 0,
+  };
+  return [...QUIZ_BUDGET_IDS].sort((left, right) => (
+    scores[right] - scores[left] || QUIZ_BUDGET_IDS.indexOf(left) - QUIZ_BUDGET_IDS.indexOf(right)
+  ));
+}
+
+/**
+ * 실제 앱의 preferenceSubmissionService와 같은 QuizResponsesDto shape을 만든다.
+ * 기존 fixture의 연속 점수는 raw 응답과 파생 점수를 일관된 범위로 투영하는 데만
+ * 사용하며 Backend ValidationPipe를 우회하지 않는다.
+ */
+export function buildFixtureQuizResponses(account) {
+  const quiz = account.quiz;
+  const schedule = quiz.scheduleFeatures;
+  const accommodation = quiz.accommodationPreference;
+  const place = quiz.placeFeatures;
+  const categoryScores = fixtureCategoryScores(account);
+  const density = schedule.scheduleSpanMinutes > 0
+    ? clampQuizScore((schedule.scheduledMinutes / schedule.scheduleSpanMinutes) * 100)
+    : 50;
+  const activeRestPreference = clampQuizScore(
+    100 - ((schedule.restMinutes + schedule.freeTimeMinutes) / Math.max(1, schedule.scheduleSpanMinutes)) * 100,
+  );
+  const staminaScore = quiz.staminaLevel === "HIGH" ? 100 : quiz.staminaLevel === "LOW" ? 0 : 50;
+  const scheduleScore = [density, activeRestPreference, staminaScore].sort((left, right) => left - right)[1];
+  const challenge = clampQuizScore(quiz.challenging);
+  const cautiousness = quiz.placeValidationPreference === "VALIDATED" ? 75 : 35;
+  const challengeType = challenge >= 65
+    ? "challenge_executor"
+    : cautiousness >= 65
+      ? "stable_planner"
+      : "cautious_explorer";
+  const landmarkImportance = clampQuizScore(place.averageLandmarkScore);
+  const localInterest = clampQuizScore(place.averageLocalScore);
+  const itineraryMessageAnswers = Object.fromEntries([
+    ...QUIZ_CATEGORY_IDS.map((categoryId) => [categoryId, scoreToSentiment(categoryScores[categoryId])]),
+    ["density", scoreToSentiment(density)],
+  ]);
+
+  return {
+    surveyVersion: 9,
+    algorithmVersion: 9,
+    challengeStyle: {
+      challengeStyleAnswers: {
+        i18: scoreToScale(challenge, 5),
+        i48: scoreToScale(100 - cautiousness, 5),
+        i22: scoreToScale(challenge, 5),
+        i52: scoreToScale(challenge, 5),
+        i90: scoreToScale(100 - cautiousness, 5),
+        i120: scoreToScale(challenge, 5),
+      },
+      itineraryMessageAnswers,
+      type: challengeType,
+      scores: {
+        opennessToVariety: challenge,
+        excitementSeeking: challenge,
+        cautiousness,
+        exploration: challenge,
+      },
+      scheduleStyle: {
+        type: scheduleScore > 50 ? "packed" : "relaxed",
+        score: scheduleScore,
+        components: { density, activeRestPreference, stamina: staminaScore },
+      },
+      itineraryPreference: {
+        categoryScores,
+        densityScore: density,
+      },
+    },
+    accommodation: {
+      answers: {
+        stayMeaning: scoreToScale(accommodation.stayImportance, 8),
+        locationFacility: scoreToScale(accommodation.facilityOverLocation, 8),
+        comfortPrice: scoreToScale(100 - accommodation.comfortOverPrice, 8),
+      },
+      scores: {
+        stayImportance: clampQuizScore(accommodation.stayImportance),
+        facilityOverLocation: clampQuizScore(accommodation.facilityOverLocation),
+        comfortOverPrice: clampQuizScore(accommodation.comfortOverPrice),
+      },
+    },
+    stamina: {
+      answer: quiz.staminaLevel === "HIGH" ? "high" : quiz.staminaLevel === "LOW" ? "low" : "medium",
+      level: quiz.staminaLevel,
+      score: staminaScore,
+    },
+    budget: {
+      ranking: fixtureBudgetRanking(quiz.spendingAllocation.allocation),
+    },
+    discovery: {
+      answers: {
+        landmarkImportance: scoreToScale(landmarkImportance, 4),
+        localInterest: scoreToScale(localInterest, 4),
+      },
+      scores: { landmarkImportance, localInterest },
+    },
+  };
+}
+
 class FixtureHttpError extends Error {
   constructor(message, status, payload) {
     super(message);
@@ -1193,7 +1345,7 @@ async function seedPersona(client, account, auth) {
     await client.request(`quiz/sessions/${encodeURIComponent(session.id)}/complete`, {
       method: "POST",
       token: auth.accessToken,
-      body: { responses: account.quiz },
+      body: { responses: buildFixtureQuizResponses(account) },
     });
   }
   const [verifiedStatus, verifiedProfile] = await Promise.all([

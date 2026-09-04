@@ -343,7 +343,7 @@ export function getDuriAnalysisAvailability({
     status: "no-itinerary",
     canAnalyze: true,
     readOnly: input.trip.status === "completed",
-    message: "현재 일정은 비어 있어 점검 결과는 제한적이에요. 분석 후 실제 성향·후보 근거가 있으면 검토용 자동 채우기 초안을 만들 수 있어요.",
+    message: "현재 일정이 비어 있어도 여행 날짜·후보 장소·동행자 성향을 바탕으로 검토할 초안을 바로 만들 수 있어요.",
   };
   const tripDates = new Set(getTripDates(input.trip.startDate, input.trip.endDate));
   const ids = new Set<EntityId>();

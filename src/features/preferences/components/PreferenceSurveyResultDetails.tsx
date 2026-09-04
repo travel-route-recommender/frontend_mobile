@@ -47,7 +47,7 @@ export function PreferenceSurveyResultDetails({ result }: { result: TravelPrefer
         <View style={styles.heading}><Text style={styles.dimension}>{label}</Text><Text selectable style={styles.value}>{value}점</Text></View>
         <PercentBar label={String(label)} value={Number(value)} />
       </View>)}
-      <Text style={styles.modelNotice}>이 점수와 유형은 12문항 군집을 6문항으로 재현한 초기 모델 결과이며 실제 여행 행동을 확정하지 않아요.</Text>
+      <Text style={styles.modelNotice}>이 점수와 유형은 설문 응답을 간단히 정리한 참고 결과이며 실제 여행 행동을 단정하지 않아요.</Text>
     </Card>
 
     <Text style={styles.sectionTitle}>{hasMessageAnswers ? "여행 활동 선호" : "내가 만든 여행 일정"}</Text>

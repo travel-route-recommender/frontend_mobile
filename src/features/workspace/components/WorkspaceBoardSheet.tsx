@@ -16,10 +16,9 @@ import {
   clampWorkspaceBoardHeight,
   getInitialWorkspaceBoardHeight,
   getWorkspaceBoardHeightBounds,
-  getWorkspaceBoardSnapState,
   isWorkspaceBoardCollapsed,
   resizeWorkspaceBoardHeight,
-  snapWorkspaceBoardHeight,
+  settleWorkspaceBoardHeight,
   stepWorkspaceBoardHeight,
 } from "../logic/workspaceBoardLayout";
 
@@ -44,8 +43,12 @@ export function WorkspaceBoardSheet({
   const heightRef = useRef(panelHeight);
   const dragStartRef = useRef(panelHeight);
   const collapsed = isWorkspaceBoardCollapsed(panelHeight, bounds);
-  const snapState = getWorkspaceBoardSnapState(panelHeight, bounds);
-  const snapLabel = snapState === "peek" ? "미리보기" : snapState === "half" ? "절반" : "전체";
+  const availableRange = Math.max(bounds.maxHeight - bounds.minHeight, 0);
+  const expandedPercent = availableRange > 0
+    ? Math.round(((panelHeight - bounds.minHeight) / availableRange) * 100)
+    : 0;
+  const heightLabel = collapsed ? "숨김" : expandedPercent >= 100 ? "완전히 펼침" : `${expandedPercent}% 펼침`;
+  const showHeading = panelHeight >= 72;
 
   const updateHeight = useCallback((height: number) => {
     const next = clampWorkspaceBoardHeight(height, boundsRef.current);
@@ -73,11 +76,11 @@ export function WorkspaceBoardSheet({
       onPanResponderMove: (_event, gesture) => {
         updateHeight(resizeWorkspaceBoardHeight(dragStartRef.current, gesture.dy, boundsRef.current));
       },
-      onPanResponderRelease: (_event, gesture) => {
-        updateHeight(snapWorkspaceBoardHeight(heightRef.current, gesture.vy, boundsRef.current));
+      onPanResponderRelease: () => {
+        updateHeight(settleWorkspaceBoardHeight(heightRef.current, boundsRef.current));
       },
       onPanResponderTerminate: () => {
-        updateHeight(snapWorkspaceBoardHeight(heightRef.current, 0, boundsRef.current));
+        updateHeight(settleWorkspaceBoardHeight(heightRef.current, boundsRef.current));
       },
       onPanResponderTerminationRequest: () => false,
       onShouldBlockNativeResponder: () => true,
@@ -104,29 +107,29 @@ export function WorkspaceBoardSheet({
       accessible
       accessibilityRole="adjustable"
       accessibilityLabel="후보 보드 높이 조절"
-      accessibilityHint="위아래로 끌어 미리보기, 절반, 전체 상태를 선택하거나 접근성 조절 동작을 사용하세요"
+      accessibilityHint="위아래로 끌어 원하는 높이로 조절하거나 접근성 조절 동작을 사용하세요"
       accessibilityState={{ expanded: !collapsed }}
       accessibilityValue={{
-        text: `${snapLabel} 상태`,
+        text: heightLabel,
       }}
       accessibilityActions={[
-        { name: "increment", label: "후보 보드 한 단계 펼치기" },
-        { name: "decrement", label: "후보 보드 한 단계 접기" },
+        { name: "increment", label: "후보 보드 조금 펼치기" },
+        { name: "decrement", label: "후보 보드 조금 접기" },
       ]}
       onAccessibilityAction={(event) => {
         if (event.nativeEvent.actionName === "increment") adjustHeight(1);
         if (event.nativeEvent.actionName === "decrement") adjustHeight(-1);
       }}
-      style={[styles.dragZone, !collapsed && styles.dragZoneExpanded]}
+      style={[styles.dragZone, collapsed ? styles.dragZoneCollapsed : styles.dragZoneExpanded]}
       testID="workspace-board-sheet-handle"
     >
       <View style={styles.handle} />
-      <View style={styles.peekHeading}>
+      {showHeading ? <View style={styles.peekHeading}>
         <View style={styles.peekCopy}>
           <Text style={styles.peekEyebrow}>후보 장소</Text>
           <Text style={styles.peekTitle}>미배치 {unscheduledCandidateCount}곳</Text>
         </View>
-      </View>
+      </View> : null}
     </View>
     {!collapsed ? <View style={styles.body}>
       <Text style={styles.candidateGuide}>후보를 일정에 추가한 뒤, 위 시간표에서 위치와 체류시간을 조절하세요.</Text>
@@ -147,8 +150,9 @@ export function WorkspaceBoardSheet({
 
 const styles = StyleSheet.create({
   sheet: { position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 40, elevation: 20, overflow: "hidden", borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl, borderWidth: 1, borderBottomWidth: 0, borderColor: colors.border, backgroundColor: colors.surface, ...shadows.floating },
-  dragZone: { minHeight: 116, alignItems: "center", justifyContent: "flex-start", backgroundColor: colors.surface, paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.md },
-  dragZoneExpanded: { minHeight: 72, paddingBottom: spacing.sm },
+  dragZone: { minHeight: 40, alignItems: "center", justifyContent: "flex-start", backgroundColor: colors.surface, paddingHorizontal: spacing.lg, paddingTop: spacing.sm },
+  dragZoneCollapsed: { height: 40, paddingBottom: spacing.sm },
+  dragZoneExpanded: { paddingBottom: spacing.sm },
   handle: { width: 44, height: 5, alignSelf: "center", borderRadius: radius.pill, backgroundColor: colors.borderStrong },
   peekHeading: { width: "100%", flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.sm },
   peekCopy: { flex: 1, minWidth: 0 },

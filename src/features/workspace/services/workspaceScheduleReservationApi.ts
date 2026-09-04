@@ -88,10 +88,10 @@ export class WorkspaceScheduleReservationReplacementRequiredError extends Error 
 
   constructor(reason: WorkspaceScheduleReservationReplacementRequiredError["reason"]) {
     const message = reason === "timing-mode-change"
-      ? "서버가 기존 시간 필드를 원자적으로 지우는 계약을 제공하지 않아 정확한 시각과 허용 시간창을 바로 전환할 수 없어요. 예약 정보를 삭제한 뒤 다시 등록해 주세요."
+      ? "정확한 시각과 허용 시간 범위를 한 번에 바꿀 수 없어요. 예약 정보를 삭제한 뒤 원하는 방식으로 다시 등록해 주세요."
       : reason === "timing-clear"
-        ? "서버가 기존 예약 시간을 지우는 계약을 제공하지 않아요. 예약 정보를 삭제한 뒤 필요한 정보만 다시 등록해 주세요."
-        : "서버가 기존 예약 날짜를 지우는 계약을 제공하지 않아요. 예약 정보를 삭제한 뒤 필요한 정보만 다시 등록해 주세요.";
+        ? "등록된 예약 시각만 바로 지울 수 없어요. 예약 정보를 삭제한 뒤 필요한 정보만 다시 등록해 주세요."
+        : "등록된 예약 날짜만 바로 지울 수 없어요. 예약 정보를 삭제한 뒤 필요한 정보만 다시 등록해 주세요.";
     super(message);
     this.name = "WorkspaceScheduleReservationReplacementRequiredError";
     this.reason = reason;

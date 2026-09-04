@@ -14,7 +14,7 @@ export function MemberPreferenceStatusRow({ member }: { member: MemberPreference
   const detail = member.state === "completed"
     ? member.profileType ?? "여행 성향 결과 저장됨"
     : member.state === "invalid"
-      ? member.invalidReason === "missing-user" ? "사용자 연결 정보를 확인해 주세요" : "현재 테스트 버전과 맞지 않아요"
+      ? member.invalidReason === "missing-user" ? "여행방 멤버 정보를 다시 확인해 주세요" : "저장된 응답을 확인할 수 없어 다시 응답해 주세요"
       : "완료 후 그룹 진단에 반영돼요";
   return <View accessibilityLabel={`${member.name}${member.role === "owner" ? ", 방장" : ""}, ${status.label}. ${detail}`} style={styles.row}>
     <Avatar name={member.initial || member.name} uri={member.profileImageUrl} />

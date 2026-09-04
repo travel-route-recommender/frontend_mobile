@@ -23,8 +23,11 @@
 - [ ] Android OAuth client에 package name과 debug/release/Play App Signing SHA-1 등록
 - [ ] iOS OAuth client에 bundle ID와 URL scheme 등록
 - [ ] 지도·OAuth client id/key를 환경 변수 또는 secret 저장소에 등록
-- [ ] `tripmatch://invite/:code` 딥링크 실기기 검증
-- [ ] universal link / app link 도메인 결정
+- [ ] `tripmatch://invite/:code` 하위호환 딥링크 실기기 검증
+- [ ] 공개 HTTPS 초대 도메인과 `/api/v1/invites/:code` 안내 페이지 검증
+- [ ] Android `assetlinks.json`의 package·Play/EAS SHA-256 검증
+- [ ] iOS AASA의 Team ID·bundle ID·초대 경로 검증
+- [ ] 카카오톡에서 HTTPS 링크를 눌러 설치된 Android/iOS 앱의 초대 화면 진입 검증
 - [ ] 위치·사진·알림 권한 설명 문구 검수
 
 ## 품질과 배포

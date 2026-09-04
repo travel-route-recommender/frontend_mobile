@@ -42,7 +42,7 @@ export async function pickAndUploadScheduleTicket(input: {
   }
   const size = asset.size ?? asset.file?.size;
   if (typeof size === "number" && size > MAX_TICKET_BYTES) {
-    return { status: "rejected", message: "서버 티켓 이미지는 5MB 이하만 업로드할 수 있어요." };
+    return { status: "rejected", message: "티켓 이미지는 5MB 이하만 업로드할 수 있어요." };
   }
 
   const form = new FormData();

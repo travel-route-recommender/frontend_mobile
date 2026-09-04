@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Card, SecondaryButton, TextField } from "../../../components/common";
+import { toUserFacingApiErrorMessage } from "../../../services/userFacingApiError";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import {
   deleteApiTripDocument,
@@ -11,6 +12,7 @@ import {
   pickAndUploadApiTripDocument,
   type ApiTripDocument,
   type ApiTripDocumentDownload,
+  type ApiTripDocumentMutationVersion,
 } from "../services/tripDocumentApi";
 
 type Feedback = { tone: "success" | "error"; text: string };
@@ -31,10 +33,15 @@ export type ApiTripDocumentSectionProps = {
   onReviewOnDevice?: (input: ApiTripDocumentOnDeviceReviewInput) => void | Promise<void>;
   /** 같은 화면의 TODO 등 서버 문서 선택 UI와 동기화하기 위한 읽기 전용 알림. */
   onDocumentsChange?: (documents: readonly ApiTripDocument[]) => void;
+  /** 문서 변경으로 일정·분석 revision이 바뀐 뒤 상위 화면을 다시 읽게 한다. */
+  onDocumentsMutationSettled?: (
+    kind: "upload" | "delete",
+    version?: ApiTripDocumentMutationVersion,
+  ) => void;
 };
 
 function errorMessage(error: unknown, fallback: string) {
-  return error instanceof Error && error.message.trim() ? error.message : fallback;
+  return toUserFacingApiErrorMessage(error, fallback);
 }
 
 function formatBytes(sizeBytes?: number) {
@@ -68,6 +75,7 @@ export function ApiTripDocumentSection({
   isOwner = false,
   onReviewOnDevice,
   onDocumentsChange,
+  onDocumentsMutationSettled,
 }: ApiTripDocumentSectionProps) {
   const [documents, setDocuments] = useState<ApiTripDocument[]>([]);
   const [note, setNote] = useState("");
@@ -144,8 +152,11 @@ export function ApiTripDocumentSection({
       setDocuments((current) => [result.document, ...current.filter((entry) => entry.id !== result.document.id)]);
       setNote("");
       setFeedback({ tone: "success", text: "문서를 여행방 동행자와 공유했어요." });
+      onDocumentsMutationSettled?.("upload", result);
     } catch (error) {
-      setFeedback({ tone: "error", text: errorMessage(error, "문서를 업로드하지 못했어요.") });
+      onDocumentsMutationSettled?.("upload");
+      await loadDocuments();
+      setFeedback({ tone: "error", text: errorMessage(error, "업로드 결과를 확인하지 못했어요. 새로 불러온 목록을 확인해 주세요.") });
     }
   });
 
@@ -183,12 +194,16 @@ export function ApiTripDocumentSection({
         return;
       }
       try {
-        await deleteApiTripDocument(roomId, target.id);
+        const version = await deleteApiTripDocument(roomId, target.id);
         setDocuments((current) => current.filter((document) => document.id !== target.id));
         setPendingDelete(undefined);
         setFeedback({ tone: "success", text: "공유 문서를 삭제했어요." });
+        onDocumentsMutationSettled?.("delete", version);
       } catch (error) {
-        setFeedback({ tone: "error", text: errorMessage(error, "공유 문서를 삭제하지 못했어요.") });
+        onDocumentsMutationSettled?.("delete");
+        await loadDocuments();
+        setPendingDelete(undefined);
+        setFeedback({ tone: "error", text: errorMessage(error, "삭제 결과를 확인하지 못했어요. 새로 불러온 목록을 확인해 주세요.") });
       }
     });
   };
@@ -207,9 +222,9 @@ export function ApiTripDocumentSection({
     </View>
 
     <View style={styles.serverNotice}>
-      <Text style={styles.serverNoticeTitle}>여행방에 공유됨</Text>
-      <Text style={styles.serverNoticeText}>파일과 메모만 서버에 공유됩니다. 문서 종류, OCR 확인 결과, 일정 연결은 아직 서버 공유 정보가 아니에요.</Text>
-      {onReviewOnDevice ? <Text style={styles.deviceOnlyText}>기기에서 검토한 정보는 현재 이 기기에만 남습니다.</Text> : null}
+      <Text style={styles.serverNoticeTitle}>동행자와 함께 보는 문서함</Text>
+      <Text style={styles.serverNoticeText}>올린 파일과 메모는 여행방 동행자가 함께 볼 수 있어요.</Text>
+      {onReviewOnDevice ? <Text style={styles.deviceOnlyText}>이 기기에서 확인한 날짜와 시간은 다른 동행자의 화면에 자동으로 반영되지 않아요.</Text> : null}
     </View>
 
     {loading ? <View style={styles.loading}>
@@ -296,7 +311,8 @@ export function ApiTripDocumentSection({
         <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.confirmSafeArea}>
           <View accessibilityViewIsModal style={styles.confirmCard}>
             <Text style={styles.confirmTitle}>공유 문서를 삭제할까요?</Text>
-            <Text style={styles.confirmText}>{pendingDelete?.originalName ?? "선택한 문서"} 파일이 여행방에서 삭제됩니다. 서버 파일은 복구할 수 없어요.</Text>
+            <Text style={styles.confirmText}>{pendingDelete?.originalName ?? "선택한 문서"} 파일이 여행방에서 삭제되며 복구할 수 없어요.</Text>
+            <Text style={styles.confirmImpact}>이 문서를 참조하는 예약과 TODO에서는 문서 연결만 해제돼요. 일정과 예약 내용은 그대로 유지됩니다.</Text>
             <Pressable
               accessibilityRole="button"
               accessibilityState={{ busy: busyAction?.startsWith("delete:") }}
@@ -357,6 +373,7 @@ const styles = StyleSheet.create({
   confirmCard: { width: "100%", maxWidth: 440, alignSelf: "center", gap: spacing.md, borderRadius: radius.xl, backgroundColor: colors.surface, padding: spacing.lg },
   confirmTitle: { ...typography.subtitle, color: colors.text },
   confirmText: { ...typography.body, color: colors.textSecondary },
+  confirmImpact: { ...typography.caption, color: colors.warning },
   confirmDelete: { minHeight: 52, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: colors.danger },
   confirmDeleteText: { ...typography.button, color: colors.white },
 });

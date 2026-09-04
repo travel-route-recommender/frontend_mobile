@@ -1,17 +1,19 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import type { DuriSuggestionEnvelope } from "../types";
+import { plainDuriUserText } from "../presentation/plainDuriUserText";
 
 export function SuggestionCard({ envelope, issueTitles, affectedDates, onPreview }: { envelope: DuriSuggestionEnvelope; issueTitles: string[]; affectedDates: string[]; onPreview: () => void }) {
   const suggestion = envelope.suggestion;
-  return <View accessibilityLabel={`두리 제안, ${suggestion.title}, 변경 ${suggestion.changes.length}개`} style={styles.card}>
+  const title = plainDuriUserText(suggestion.title);
+  return <View accessibilityLabel={`두리 제안, ${title}, 변경 ${suggestion.changes.length}개`} style={styles.card}>
     <View style={styles.top}><Text style={styles.priority}>{suggestion.priority === "high" ? "우선 확인" : suggestion.priority === "medium" ? "조정 제안" : "선택 제안"}</Text><Text style={styles.count}>변경 {suggestion.changes.length}개</Text></View>
-    <Text style={styles.title}>{suggestion.title}</Text>
-    <Text style={styles.summary}>{suggestion.summary}</Text>
-    {issueTitles.length ? <Text style={styles.meta}>해결 대상 · {issueTitles.join(" · ")}</Text> : null}
+    <Text style={styles.title}>{title}</Text>
+    <Text style={styles.summary}>{plainDuriUserText(suggestion.summary)}</Text>
+    {issueTitles.length ? <Text style={styles.meta}>해결 대상 · {issueTitles.map(plainDuriUserText).join(" · ")}</Text> : null}
     {affectedDates.length ? <Text style={styles.meta}>영향 날짜 · {affectedDates.join(" · ")}</Text> : null}
-    {!suggestion.canApply ? <Text accessibilityRole="alert" style={styles.unavailable}>{suggestion.unavailableReason ?? "현재 일정에는 바로 적용할 수 없어요."}</Text> : null}
-    <Pressable accessibilityRole="button" accessibilityLabel={`${suggestion.title} 변경 전후 미리보기`} onPress={onPreview} style={({ pressed }) => [styles.button, pressed && styles.pressed]}><Text style={styles.buttonText}>변경 전·후 미리보기</Text></Pressable>
+    {!suggestion.canApply ? <Text accessibilityRole="alert" style={styles.unavailable}>{plainDuriUserText(suggestion.unavailableReason ?? "현재 일정에는 바로 적용할 수 없어요.")}</Text> : null}
+    <Pressable accessibilityRole="button" accessibilityLabel={`${title} ${suggestion.canApply ? "변경 전후 미리보기" : "제안 내용 확인"}`} onPress={onPreview} style={({ pressed }) => [styles.button, pressed && styles.pressed]}><Text style={styles.buttonText}>{suggestion.canApply ? "변경 전·후 미리보기" : "제안 내용 확인"}</Text></Pressable>
   </View>;
 }
 

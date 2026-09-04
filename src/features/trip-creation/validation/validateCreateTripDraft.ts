@@ -21,13 +21,16 @@ export function validateEndConditionDraft(condition: CreateTripEndConditionDraft
 
 export interface CreateTripValidationContext {
   regionsById: Readonly<Record<EntityId, Region>>;
+  availableRegionIds?: ReadonlySet<EntityId>;
   usersById: Readonly<Record<EntityId, User>>;
   currentUserId: EntityId;
 }
 
 export function validateCreateTripStep(draft: CreateTripDraft, step: CreateTripStep, context: CreateTripValidationContext): string | undefined {
   if (!context.currentUserId || !context.usersById[context.currentUserId] || draft.ownerUserId !== context.currentUserId) return "여행방을 만들 회원 정보를 확인해 주세요.";
-  if (step >= 0 && !context.regionsById[draft.regionId]) return "여행지를 선택해 주세요.";
+  if (step >= 0
+    && !context.regionsById[draft.regionId]
+    && !context.availableRegionIds?.has(draft.regionId)) return "여행지를 선택해 주세요.";
   if (step >= 1) {
     if (draft.dateUndecided) {
       if (draft.startDate !== null || draft.endDate !== null) return "날짜 미정 상태에는 여행 날짜를 함께 저장할 수 없어요.";

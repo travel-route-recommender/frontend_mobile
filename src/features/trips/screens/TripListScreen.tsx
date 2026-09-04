@@ -8,6 +8,7 @@ import { ErrorState, LoadingState } from "../../../components/feedback";
 import { environment } from "../../../config/environment";
 import { selectCompletedTripsForCurrentUser, selectPlanningTripsForCurrentUser } from "../../../store/selectors";
 import { useDuriHydrationState, useDuriStore } from "../../../store/useDuriStore";
+import { toUserFacingApiErrorMessage } from "../../../services/userFacingApiError";
 import { colors, radius, spacing } from "../../../theme/tokens";
 import { useMemberGate } from "../../auth/hooks/useMemberGate";
 import { useAuthSessionStore } from "../../auth/store/useAuthSessionStore";
@@ -53,7 +54,7 @@ export function TripListScreen() {
   const createTrip = () => requireMember(() => router.push("/trips/new"), "여행방 만들기");
 
   if (environment.dataSource === "api") return <ApiTripListContent />;
-  if (environment.dataSource !== "mock") return <Screen includeBottomSafeArea={false}><ErrorState message="서버 여행방의 사용자 식별자 연결이 확인되기 전에는 로컬 여행방을 혼합하지 않아요." /></Screen>;
+  if (environment.dataSource !== "mock") return <Screen includeBottomSafeArea={false}><ErrorState message="로그인한 사용자 정보를 확인하지 못했어요. 다시 로그인한 뒤 확인해 주세요." /></Screen>;
   if (hydrationError) return <Screen includeBottomSafeArea={false}><ErrorState message={hydrationError} /></Screen>;
 
   const totalCount = ongoing.length + completed.length;
@@ -106,8 +107,8 @@ function ApiTripListContent() {
   const createTrip = () => requireMember(() => router.push("/trips/new"), "여행방 만들기");
 
   if (!currentUserId) return <Screen includeBottomSafeArea={false}><ErrorState message="로그인 사용자 정보를 확인하지 못했어요." /></Screen>;
-  if (query.isLoading) return <Screen includeBottomSafeArea={false}><LoadingState label="서버 여행방을 불러오고 있어요." /></Screen>;
-  if (query.error) return <Screen includeBottomSafeArea={false}><ErrorState message={query.error instanceof Error ? query.error.message : "여행방 목록을 불러오지 못했어요."} onRetry={() => void query.refetch()} /></Screen>;
+  if (query.isLoading) return <Screen includeBottomSafeArea={false}><LoadingState label="내 여행을 불러오고 있어요." /></Screen>;
+  if (query.error) return <Screen includeBottomSafeArea={false}><ErrorState message={toUserFacingApiErrorMessage(query.error, "여행방 목록을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.")} onRetry={() => void query.refetch()} /></Screen>;
 
   return <>
     <SafeAreaView edges={["top", "right", "left"]} style={styles.safeArea}>

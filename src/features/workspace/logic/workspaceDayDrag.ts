@@ -18,8 +18,16 @@ export function resolveDayDragTargetIndex(
   if (!Number.isFinite(translationX) || !Number.isFinite(tabStep) || tabStep <= 0) return targetIndex;
 
   const draggedCenterIndex = sourceIndex + translationX / tabStep;
-  const switchRatio = targetIndex === sourceIndex ? FIRST_SLOT_SWITCH_RATIO : FOLLOWING_SLOT_SWITCH_RATIO;
-  if (draggedCenterIndex > targetIndex + switchRatio) return Math.min(targetIndex + 1, lastIndex);
-  if (draggedCenterIndex < targetIndex - switchRatio) return Math.max(targetIndex - 1, 0);
-  return targetIndex;
+  let resolvedTarget = targetIndex;
+  while (resolvedTarget < lastIndex) {
+    const switchRatio = resolvedTarget === sourceIndex ? FIRST_SLOT_SWITCH_RATIO : FOLLOWING_SLOT_SWITCH_RATIO;
+    if (draggedCenterIndex <= resolvedTarget + switchRatio) break;
+    resolvedTarget += 1;
+  }
+  while (resolvedTarget > 0) {
+    const switchRatio = resolvedTarget === sourceIndex ? FIRST_SLOT_SWITCH_RATIO : FOLLOWING_SLOT_SWITCH_RATIO;
+    if (draggedCenterIndex >= resolvedTarget - switchRatio) break;
+    resolvedTarget -= 1;
+  }
+  return resolvedTarget;
 }

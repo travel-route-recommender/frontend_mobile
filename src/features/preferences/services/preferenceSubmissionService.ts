@@ -1,6 +1,7 @@
 import type { DataSourceMode } from "../../../config/environment";
 import { environment } from "../../../config/environment";
 import { ApiError, ApiNetworkError, apiClient } from "../../../services/apiClient";
+import { toUserFacingApiErrorMessage } from "../../../services/userFacingApiError";
 import { calculateTravelPreferenceSurveyResult } from "../logic/calculate-travel-preference-result";
 import { validateTravelPreferenceSurvey } from "../logic/travel-preference-survey";
 import type { PersonalPreferenceDraftAnswers, TravelPreferenceSurveyResult } from "../types";
@@ -25,11 +26,13 @@ type QuizResponses = {
     challengeStyleAnswers: NonNullable<PersonalPreferenceDraftAnswers["challengeStyleAnswers"]>;
     itineraryMessageAnswers: NonNullable<PersonalPreferenceDraftAnswers["itineraryMessageAnswers"]>;
     type: TravelPreferenceSurveyResult["challengeStylePreference"]["type"];
-    scores: Pick<TravelPreferenceSurveyResult["challengeStylePreference"]["scores"], "exploration" | "cautiousness">;
+    scores: TravelPreferenceSurveyResult["challengeStylePreference"]["scores"];
     scheduleStyle: {
       type: TravelPreferenceSurveyResult["scheduleStylePreference"]["type"];
-      components: Pick<TravelPreferenceSurveyResult["scheduleStylePreference"]["components"], "density" | "activeRestPreference">;
+      score: number;
+      components: TravelPreferenceSurveyResult["scheduleStylePreference"]["components"];
     };
+    itineraryPreference: TravelPreferenceSurveyResult["itineraryMessagePreference"];
   };
   accommodation: {
     answers: NonNullable<PersonalPreferenceDraftAnswers["accommodation"]>;
@@ -37,6 +40,7 @@ type QuizResponses = {
   };
   stamina: {
     answer: NonNullable<PersonalPreferenceDraftAnswers["stamina"]>;
+    level: TravelPreferenceSurveyResult["staminaPreference"]["level"];
     score: number;
   };
   budget: {
@@ -64,7 +68,7 @@ class LocalPreferenceResultService implements PreferenceResultService {
   }
 }
 
-function toQuizResponses(result: TravelPreferenceSurveyResult): QuizResponses {
+export function toQuizResponses(result: TravelPreferenceSurveyResult): QuizResponses {
   const answers = result.answers;
   return {
     surveyVersion: result.surveyVersion,
@@ -73,16 +77,15 @@ function toQuizResponses(result: TravelPreferenceSurveyResult): QuizResponses {
       challengeStyleAnswers: { ...answers.challengeStyleAnswers! },
       itineraryMessageAnswers: { ...answers.itineraryMessageAnswers! },
       type: result.challengeStylePreference.type,
-      scores: {
-        exploration: result.challengeStylePreference.scores.exploration,
-        cautiousness: result.challengeStylePreference.scores.cautiousness,
-      },
+      scores: { ...result.challengeStylePreference.scores },
       scheduleStyle: {
         type: result.scheduleStylePreference.type,
-        components: {
-          density: result.scheduleStylePreference.components.density,
-          activeRestPreference: result.scheduleStylePreference.components.activeRestPreference,
-        },
+        score: result.scheduleStylePreference.score,
+        components: { ...result.scheduleStylePreference.components },
+      },
+      itineraryPreference: {
+        categoryScores: { ...result.itineraryMessagePreference.categoryScores },
+        densityScore: result.itineraryMessagePreference.densityScore,
       },
     },
     accommodation: {
@@ -91,6 +94,7 @@ function toQuizResponses(result: TravelPreferenceSurveyResult): QuizResponses {
     },
     stamina: {
       answer: answers.stamina!,
+      level: result.staminaPreference.level,
       score: result.staminaPreference.score,
     },
     budget: {
@@ -108,10 +112,10 @@ function toQuizResponses(result: TravelPreferenceSurveyResult): QuizResponses {
 
 function submissionFailure(error: unknown): PreferenceCalculationOutcome {
   if (error instanceof ApiNetworkError) {
-    return { status: "error", code: "network", message: `${error.message} 답변은 기기에 그대로 보관했어요.` };
+    return { status: "error", code: "network", message: `${toUserFacingApiErrorMessage(error, "서버에 연결하지 못했어요.")} 답변은 기기에 그대로 보관했어요.` };
   }
   if (error instanceof ApiError) {
-    return { status: "error", code: "submission-failed", message: `${error.message} 답변은 기기에 그대로 보관했어요.` };
+    return { status: "error", code: "submission-failed", message: `${toUserFacingApiErrorMessage(error, "여행 성향 결과를 저장하지 못했어요.")} 답변은 기기에 그대로 보관했어요.` };
   }
   return { status: "error", code: "submission-failed", message: "여행 성향 결과를 저장하지 못했어요. 답변은 기기에 그대로 보관했어요." };
 }

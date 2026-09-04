@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
-  LinearTransition,
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
@@ -222,7 +222,7 @@ function DraggableDayTab({
     if (actionName === "increment" && index < dayCount - 1) onDrop(date.date, index + 1);
   };
 
-  return <GestureDetector gesture={dragGesture}><Animated.View layout={LinearTransition.springify().damping(18).stiffness(180)} style={animatedStyle}>
+  return <GestureDetector gesture={dragGesture}><Animated.View style={animatedStyle}>
       <Pressable
         testID={`workspace-day-tab-${date.date}`}
         accessibilityRole="tab"
@@ -260,14 +260,14 @@ function DayManagementModal({
   onDeleteDay: () => void;
 }) {
   return <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-    <View style={styles.menuOverlay}>
+    <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.menuOverlay}>
       <Pressable accessibilityRole="button" accessibilityLabel="DAY 관리 닫기" onPress={onClose} style={StyleSheet.absoluteFill} />
       <View accessibilityViewIsModal style={styles.menuCard}>
         <View style={styles.menuHeader}><View style={styles.menuCopy}><Text style={styles.menuTitle}>{selectedDay?.dayLabel ?? "DAY 관리"}</Text><Text style={styles.menuSubtitle}>{selectedDay ? `${selectedDay.monthDayLabel} ${selectedDay.weekdayLabel} · 일정 ${selectedDay.itineraryCount}개` : "선택한 DAY를 관리하세요."}</Text></View><Pressable accessibilityRole="button" onPress={onClose} style={styles.menuClose}><Text style={styles.menuCloseText}>닫기</Text></Pressable></View>
         <Pressable accessibilityRole="button" onPress={onEditDateRange} style={({ pressed }) => [styles.menuAction, pressed && styles.pressed]}><View style={styles.menuActionCopy}><Text style={styles.menuActionTitle}>여행 날짜 변경</Text><Text style={styles.menuActionDescription}>시작일과 종료일을 달력에서 다시 선택합니다.</Text></View><Text style={styles.menuChevron}>›</Text></Pressable>
         <Pressable accessibilityRole="button" accessibilityState={{ disabled: !canDelete }} disabled={!canDelete} onPress={onDeleteDay} style={({ pressed }) => [styles.menuAction, styles.menuDeleteAction, !canDelete && styles.disabled, pressed && canDelete && styles.pressed]}><View style={styles.menuActionCopy}><Text style={styles.menuDeleteTitle}>선택 DAY 삭제</Text><Text style={styles.menuActionDescription}>{canDelete ? "해당 DAY의 일정도 확인 후 함께 삭제합니다." : "여행에는 최소 DAY 1이 필요합니다."}</Text></View><Text style={styles.menuDeleteChevron}>›</Text></Pressable>
       </View>
-    </View>
+    </SafeAreaView>
   </Modal>;
 }
 

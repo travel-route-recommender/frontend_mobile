@@ -25,18 +25,24 @@ export function mapDraftToCreateTripRoomRequest(
     const endConditionError = validateEndConditionDraft(draft.endCondition);
     if (endConditionError) throw new Error(endConditionError);
   }
-  const endCondition = draft.dateUndecided || !draft.endCondition ? null : {
-    type: draft.endCondition.type,
-    location: { name: draft.endCondition.location.trim() },
-    deadline: draft.endCondition.deadline,
-    travelMinutes: Number(draft.endCondition.travelMinutes),
-    serviceBufferMinutes: Number(draft.endCondition.serviceBufferMinutes),
-    ...(draft.endCondition.note.trim() ? { note: draft.endCondition.note.trim() } : {}),
+  const condition = draft.endCondition;
+  const endConditionLocation = condition
+    ? condition.locationDetails?.name === condition.location.trim()
+      ? condition.locationDetails
+      : { name: condition.location.trim(), source: "manual" as const }
+    : null;
+  const endCondition = draft.dateUndecided || !condition || !endConditionLocation ? null : {
+    type: condition.type,
+    location: endConditionLocation,
+    deadline: condition.deadline,
+    travelMinutes: Number(condition.travelMinutes),
+    serviceBufferMinutes: Number(condition.serviceBufferMinutes),
+    ...(condition.note.trim() ? { note: condition.note.trim() } : {}),
   };
   return {
     name: draft.roomName.trim(),
     regionId: region.id,
-    regionName: region.parentName ?? region.name,
+    regionName: region.name,
     ...(region.areaCode ? { areaCode: region.areaCode } : {}),
     ...(region.sigunguCode ? { sigunguCode: region.sigunguCode } : {}),
     startDate: draft.dateUndecided ? null : draft.startDate,
@@ -46,7 +52,11 @@ export function mapDraftToCreateTripRoomRequest(
     expectedMemberCount: draft.expectedMemberCount ?? uniqueInvitedUserIds.length + 1,
     invitedUserIds: uniqueInvitedUserIds,
     transport: draft.transport,
-    accommodationLocation: accommodationName ? { name: accommodationName } : null,
+    accommodationLocation: accommodationName
+      ? draft.accommodationLocationDetails?.name === accommodationName
+        ? draft.accommodationLocationDetails
+        : { name: accommodationName, source: "manual" }
+      : null,
     endCondition,
   };
 }

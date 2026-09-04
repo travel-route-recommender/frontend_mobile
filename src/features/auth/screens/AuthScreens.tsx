@@ -18,6 +18,11 @@ function TextLink({ label, onPress }: { label: string; onPress: () => void }) {
   return <Pressable accessibilityRole="link" onPress={onPress} style={styles.textLinkButton}><Text style={styles.textLink}>{label}</Text></Pressable>;
 }
 
+function goBackOrHome() {
+  if (router.canGoBack()) router.back();
+  else router.replace("/");
+}
+
 function destinationAfterLogin(profileCompleted: boolean, onboardingIntroSeen: boolean, guest = false) {
   if (guest) return "/(tabs)/trips" as const;
   if (!profileCompleted) return "/(onboarding)/profile" as const;
@@ -128,7 +133,7 @@ export function SignupEmailScreen() {
   };
 
   const toggleAll = () => { const checked = !allAgreed; setServiceAgreed(checked); setPrivacyAgreed(checked); setErrors((value) => ({ ...value, agreements: undefined })); };
-  return <AuthLayout title="이메일로 가입하기" subtitle="안전한 계정을 만들고 여행을 시작하세요." onBack={() => router.back()} footer={<PrimaryButton label="가입하고 계속하기" loading={loading} onPress={submit} />}>
+  return <AuthLayout title="이메일로 가입하기" subtitle="안전한 계정을 만들고 여행을 시작하세요." onBack={goBackOrHome} footer={<PrimaryButton label="가입하고 계속하기" loading={loading} onPress={submit} />}>
     <AuthTextField ref={nicknameRef} label="닉네임" value={nickname} onChangeText={(value) => { setNickname(value); setErrors((old) => ({ ...old, nickname: undefined })); }} error={errors.nickname} maxLength={12} autoCapitalize="none" returnKeyType="next" onSubmitEditing={() => emailRef.current?.focus()} />
     <AuthTextField
       ref={emailRef}
@@ -223,8 +228,8 @@ export function InviteJoinScreen() {
     } finally { setLoading(false); }
   };
 
-  return <AuthLayout title={preview ? (existingParticipant ? "초대받은 여행 확인" : "게스트 닉네임 설정") : "초대 코드 확인"} subtitle={preview ? (existingParticipant ? "현재 프로필로 여행방에 참여합니다." : "이 여행방에서 사용할 이름을 정해주세요.") : "유효한 초대 코드를 확인한 뒤 여행방에 참여할 수 있어요."} onBack={() => preview ? setPreview(null) : router.back()} footer={<PrimaryButton label={preview ? (existingParticipant ? "여행방 참여하기" : "게스트로 참여하기") : "초대 코드 확인"} loading={loading} onPress={preview ? join : checkCode} />}>
-    <View style={styles.inviteHero}><Text style={styles.inviteEmoji}>✈️</Text><Text style={styles.inviteCopy}>{existingParticipant ? "현재 프로필을 유지한 채 초대받은 여행방에 참여해요." : "게스트는 초대받은 여행방 조회와 허용된 참여 기능만 이용할 수 있어요. 여행방 생성·저장 등 회원 기능은 서버에서도 차단됩니다."}</Text></View>
+  return <AuthLayout title={preview ? (existingParticipant ? "초대받은 여행 확인" : "게스트 닉네임 설정") : "초대 코드 확인"} subtitle={preview ? (existingParticipant ? "현재 프로필로 여행방에 참여합니다." : "이 여행방에서 사용할 이름을 정해 주세요.") : "유효한 초대 코드를 확인한 뒤 여행방에 참여할 수 있어요."} onBack={() => preview ? setPreview(null) : goBackOrHome()} footer={<PrimaryButton label={preview ? (existingParticipant ? "여행방 참여하기" : "게스트로 참여하기") : "초대 코드 확인"} loading={loading} onPress={preview ? join : checkCode} />}>
+    <View style={styles.inviteHero}><Text style={styles.inviteEmoji}>✈️</Text><Text style={styles.inviteCopy}>{existingParticipant ? "현재 프로필을 유지한 채 초대받은 여행방에 참여해요." : "게스트는 초대받은 여행을 확인하고 후보 장소를 함께 모을 수 있어요. 새 여행 만들기와 개인 저장은 회원가입 후 이용할 수 있어요."}</Text></View>
     {!preview ? <>
       <AuthTextField ref={inputRef} label="초대 코드" value={code} onChangeText={(value) => { setCode(normalizeInviteCode(value)); setError(undefined); setServiceError(null); }} error={error} autoCapitalize="characters" autoCorrect={false} maxLength={8} returnKeyType="done" onSubmitEditing={checkCode} />
     </> : <>
@@ -240,8 +245,17 @@ export function TermsScreen() {
   const params = useLocalSearchParams<{ type?: string }>();
   const type = (Array.isArray(params.type) ? params.type[0] : params.type) === "privacy" ? "privacy" : "service";
   const title = type === "privacy" ? "개인정보 처리방침" : "서비스 이용약관";
-  return <AuthLayout title={title} subtitle="운영 정책 확정 전 개발용 요약 문서입니다." onBack={() => router.back()} footer={<PrimaryButton label="확인" onPress={() => router.back()} />}>
-    <View style={styles.legalBox}><Text style={styles.legalHeading}>1. 목적</Text><Text style={styles.legalBody}>두리는 함께 여행을 계획하는 사용자의 일정, 장소, 취향 정보를 관리합니다.</Text><Text style={styles.legalHeading}>2. 인증 정보</Text><Text style={styles.legalBody}>비밀번호는 HTTPS로 서버에 전송되고 서버에서 단방향 해시로 보관합니다. 모바일 Refresh Token은 운영체제 보안 저장소에 저장합니다.</Text><Text style={styles.legalHeading}>3. 정식 출시 전</Text><Text style={styles.legalBody}>수집 항목·보유 기간·파기 절차와 약관 버전 동의 이력은 법무 및 개인정보 담당자 검토 후 최종 문서로 교체해야 합니다.</Text></View>
+  const sections = type === "privacy" ? [
+    ["1. 이용하는 정보", "계정 생성과 로그인을 위해 이메일과 닉네임을 이용합니다. 사용자가 입력한 여행 일정, 장소, 성향 응답과 직접 첨부한 문서는 여행 계획 기능을 제공하는 데 사용합니다."],
+    ["2. 안전한 보관", "로그인 정보는 암호화된 통신으로 전송되며, 모바일 로그인 토큰은 운영체제의 보안 저장소에 보관합니다. 여행방 정보는 참여자에게만 표시합니다."],
+    ["3. 사용자의 선택", "프로필과 여행 정보는 앱에서 확인하고 수정할 수 있습니다. 공용 기기에서는 이용 후 로그아웃하고, 초대 링크는 함께 여행할 사람에게만 공유해 주세요."],
+  ] : [
+    ["1. 서비스 목적", "두리는 동행자와 여행 장소를 모으고 일정을 함께 계획하도록 돕는 서비스입니다."],
+    ["2. 이용 시 확인 사항", "교통편, 예약 시간, 운영시간과 요금처럼 바뀔 수 있는 정보는 출발 전에 해당 제공처에서 다시 확인해 주세요. 두리의 분석과 제안은 여행 결정을 돕는 참고 정보입니다."],
+    ["3. 계정과 여행방", "계정과 초대 링크는 본인이 안전하게 관리해 주세요. 여행방의 일정과 첨부 정보는 함께 참여한 사람에게 표시될 수 있으므로 민감한 정보는 공유 전에 확인해 주세요."],
+  ];
+  return <AuthLayout title={title} subtitle="두리 이용에 필요한 내용을 안내해요." onBack={goBackOrHome} footer={<PrimaryButton label="확인" onPress={goBackOrHome} />}>
+    <View style={styles.legalBox}>{sections.map(([heading, body]) => <View key={heading} style={styles.legalSection}><Text style={styles.legalHeading}>{heading}</Text><Text style={styles.legalBody}>{body}</Text></View>)}</View>
   </AuthLayout>;
 }
 
@@ -252,5 +266,5 @@ const styles = StyleSheet.create({
   termsBox: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, padding: spacing.md }, rule: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border }, error: { ...typography.caption, color: colors.danger },
   inviteHero: { alignItems: "center", gap: spacing.sm, borderRadius: radius.lg, backgroundColor: colors.background, padding: spacing.xl }, inviteEmoji: { fontSize: 44 }, inviteCopy: { ...typography.body, color: colors.textSecondary, textAlign: "center" },
   previewBox: { gap: spacing.xs, borderWidth: 1, borderColor: colors.primary, borderRadius: radius.lg, padding: spacing.lg, backgroundColor: colors.primarySoft }, previewTitle: { ...typography.subtitle, color: colors.text }, previewMeta: { ...typography.caption, color: colors.textSecondary },
-  legalBox: { gap: spacing.sm, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, padding: spacing.lg, backgroundColor: colors.surfaceMuted }, legalHeading: { ...typography.subtitle, color: colors.text, marginTop: spacing.sm }, legalBody: { ...typography.body, color: colors.textSecondary },
+  legalBox: { gap: spacing.lg, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, padding: spacing.lg, backgroundColor: colors.surfaceMuted }, legalSection: { gap: spacing.xs }, legalHeading: { ...typography.subtitle, color: colors.text }, legalBody: { ...typography.body, color: colors.textSecondary },
 });

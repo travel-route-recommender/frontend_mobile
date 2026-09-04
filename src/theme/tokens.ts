@@ -1,4 +1,4 @@
-import type { TextStyle, ViewStyle } from "react-native";
+import { Platform, type TextStyle, type ViewStyle } from "react-native";
 
 export const colors = {
   primary: "#4388FF",
@@ -39,8 +39,14 @@ export const typography: Record<"display" | "title" | "subtitle" | "body" | "bod
 };
 
 export const shadows: Record<"card" | "floating", ViewStyle> = {
-  card: { shadowColor: "#7897D8", shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.13, shadowRadius: 14, elevation: 3 },
-  floating: { shadowColor: "#243C8F", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.2, shadowRadius: 18, elevation: 7 },
+  card: Platform.select<ViewStyle>({
+    web: { boxShadow: "0 6px 14px rgba(120, 151, 216, 0.13)" },
+    default: { shadowColor: "#7897D8", shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.13, shadowRadius: 14, elevation: 3 },
+  }),
+  floating: Platform.select<ViewStyle>({
+    web: { boxShadow: "0 8px 18px rgba(36, 60, 143, 0.20)" },
+    default: { shadowColor: "#243C8F", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.2, shadowRadius: 18, elevation: 7 },
+  }),
 };
 
 export const theme = { colors, spacing, radius, typography, shadows, sizes } as const;

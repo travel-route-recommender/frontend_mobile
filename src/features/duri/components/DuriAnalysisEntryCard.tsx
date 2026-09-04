@@ -24,25 +24,25 @@ export function DuriAnalysisEntryCard({
 }) {
   const blocked = !action.enabled;
   const actionableCount = session?.issues.filter((issue) => issue.severity !== "info").length ?? 0;
-  const title = action.kind === "create_schedule"
-    ? "일정을 추가하면 두리가 함께 점검해드려요"
+  const title = action.kind === "create_draft"
+    ? "비어 있는 일정도 두리가 초안을 만들 수 있어요"
     : stale
       ? "일정이 변경되어 다시 분석이 필요해요"
       : session
         ? `현재 분석에서 조율 항목 ${actionableCount}개를 찾았어요`
         : !engineAvailable
-          ? "두리 엔진 연결을 확인해 주세요"
+          ? engineMessage ?? "현재 일정 정보를 확인하고 있어요"
         : itineraryCount
           ? "현재 일정을 두리와 점검해보세요"
           : "일정을 추가하면 두리가 분석해드려요";
-  const status = action.kind === "create_schedule"
-    ? "일정을 만들면 동선과 속도를 점검해요"
+  const status = action.kind === "create_draft"
+    ? "후보와 여행 성향으로 첫 일정을 짜드려요"
     : stale
       ? "현재 일정으로 업데이트가 필요해요"
       : session
         ? `조율 항목 ${actionableCount}개 · 결과 저장됨`
         : !engineAvailable
-          ? engineMessage ?? "분석 연결을 확인해 주세요"
+          ? engineMessage ?? "현재 일정 정보를 확인하고 있어요"
           : "일정의 균형을 두리와 점검해보세요";
   return <Pressable
     accessibilityRole="button"

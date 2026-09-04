@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { TextField } from "../../../components/common";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
+import { toUserFacingApiErrorMessage } from "../../../services/userFacingApiError";
 import {
   type WorkspaceScheduleReservationApiGateway,
   type WorkspaceScheduleReservationDeleteResult,
@@ -59,14 +60,14 @@ type EditorDraft = {
 };
 
 const statusOptions: readonly { value: ReservationStatus; label: string; description: string }[] = [
-  { value: "confirmed", label: "확정", description: "두리의 고정 제약으로 사용" },
+  { value: "confirmed", label: "확정", description: "두리가 바꾸지 않도록 일정 보호" },
   { value: "unconfirmed", label: "미확정", description: "확인이 더 필요한 예약" },
-  { value: "cancelled", label: "취소됨", description: "기록은 남기고 제약에서 제외" },
+  { value: "cancelled", label: "취소됨", description: "기록은 남기고 일정 보호에서 제외" },
 ];
 
 const timingOptions: readonly { value: TimingKind; label: string }[] = [
   { value: "exact", label: "정확한 시각" },
-  { value: "window", label: "허용 시간창" },
+  { value: "window", label: "입장 가능 시간" },
   { value: "none", label: "시간 미정" },
 ];
 
@@ -95,7 +96,7 @@ function createDraft(input: Pick<ApiScheduleReservationEditorProps,
 }
 
 function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : "예약 정보를 저장하지 못했어요.";
+  return toUserFacingApiErrorMessage(error, "예약 정보를 저장하지 못했어요. 내용을 확인한 뒤 다시 시도해 주세요.");
 }
 
 function uniqueEvidenceOptions(
@@ -107,7 +108,7 @@ function uniqueEvidenceOptions(
     if (!result.has(option.id)) result.set(option.id, option);
   });
   selectedIds.forEach((id) => {
-    if (!result.has(id)) result.set(id, { id, label: `기존 서버 연결 · ${id}`, kind: "document" });
+    if (!result.has(id)) result.set(id, { id, label: "이름을 불러오지 못한 연결 문서", kind: "document" });
   });
   return [...result.values()];
 }
@@ -210,7 +211,7 @@ function ApiScheduleReservationEditorBody(props: ApiScheduleReservationEditorPro
       try {
         await onCommitted({ kind: "upsert", ...result });
       } catch {
-        setFeedback("서버에는 저장됐지만 화면 갱신에 실패했어요. 일정을 새로고침해 주세요.");
+        setFeedback("저장은 완료됐지만 화면 갱신에 실패했어요. 일정을 새로고침해 주세요.");
       }
     } catch (error) {
       setFeedback(errorMessage(error));
@@ -243,7 +244,7 @@ function ApiScheduleReservationEditorBody(props: ApiScheduleReservationEditorPro
       try {
         await onCommitted({ kind: "delete", ...result });
       } catch {
-        setFeedback("서버에서는 삭제됐지만 화면 갱신에 실패했어요. 일정을 새로고침해 주세요.");
+        setFeedback("삭제는 완료됐지만 화면 갱신에 실패했어요. 일정을 새로고침해 주세요.");
       }
     } catch (error) {
       setFeedback(errorMessage(error));
@@ -269,9 +270,9 @@ function ApiScheduleReservationEditorBody(props: ApiScheduleReservationEditorPro
     <View style={styles.headingRow}>
       <View style={styles.headingCopy}>
         <Text style={styles.title}>예약 정보</Text>
-        <Text style={styles.description}>사용자가 확인한 사실만 공유하며, 확정 예약은 두리의 고정 제약으로 사용돼요.</Text>
+        <Text style={styles.description}>사용자가 확인한 정보만 공유하며, 확정 예약은 두리가 바꾸지 않도록 보호해요.</Text>
       </View>
-      {currentReservation ? <Text style={styles.revision}>수정 {currentReservation.revision}회</Text> : null}
+      {currentReservation ? <Text style={styles.revision}>저장된 예약 정보</Text> : null}
     </View>
 
     <View accessibilityRole="radiogroup" style={styles.choiceRow}>
@@ -314,13 +315,13 @@ function ApiScheduleReservationEditorBody(props: ApiScheduleReservationEditorPro
     </View> : null}
 
     <TextField
-      label="시간대"
+      label="예약지 시간대"
       value={draft.timezone}
       onChangeText={(timezone) => setDraft((current) => ({ ...current, timezone }))}
       placeholder="Asia/Seoul"
       maxLength={100}
       autoCapitalize="none"
-      helperText="IANA timezone 이름을 사용해요."
+      helperText="예약 장소 기준으로 입력해 주세요. 예: Asia/Seoul"
     />
     <TextField
       label="예약 번호 (선택)"
@@ -340,7 +341,7 @@ function ApiScheduleReservationEditorBody(props: ApiScheduleReservationEditorPro
     />
 
     <View style={styles.evidenceSection}>
-      <Text style={styles.sectionLabel}>연결된 서버 문서·티켓</Text>
+      <Text style={styles.sectionLabel}>연결된 공유 문서·티켓</Text>
       {selectableEvidence.length ? <View style={styles.evidenceList}>{selectableEvidence.map((option) => {
         const selected = draft.documentTicketIds.includes(option.id);
         return <Pressable
@@ -360,7 +361,7 @@ function ApiScheduleReservationEditorBody(props: ApiScheduleReservationEditorPro
       })}</View> : <Text style={styles.helper}>연결할 수 있는 공유 문서나 티켓이 아직 없어요.</Text>}
     </View>
 
-    {hasMixedServerTiming ? <Text style={styles.warning}>서버 예약에 정확한 시각과 시간창이 함께 남아 있어요. 안전하게 삭제 후 재등록해 주세요.</Text> : null}
+    {hasMixedServerTiming ? <Text style={styles.warning}>예약 정보에 정확한 시각과 시간창이 함께 남아 있어요. 안전하게 삭제 후 다시 등록해 주세요.</Text> : null}
     {feedback ? <Text accessibilityLiveRegion="polite" style={feedback.includes("했어요") && !feedback.includes("실패") ? styles.success : styles.error}>{feedback}</Text> : null}
 
     <View style={styles.actionRow}>

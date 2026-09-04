@@ -20,6 +20,7 @@ import { CreateTripFooter, CreateTripReviewSection, CreateTripSection, CreateTri
 import { TripCreationSuccess } from "../components/TripCreationSuccess";
 import { TripDateStep } from "../components/TripDateStep";
 import { TripDestinationStep } from "../components/TripDestinationStep";
+import { TripPlaceAnchorField } from "../components/TripPlaceAnchorField";
 import { useCreateTripRoomMutation } from "../hooks/useCreateTripRoomMutation";
 import { useTripRegionOptions } from "../hooks/useTripRegionOptions";
 import { createTripDraftEditCopy, getRegionSelectionPatch, getTripEditCommitPatch } from "../logic/tripDraftEditing";
@@ -28,6 +29,7 @@ import { filterEligibleCompanionUserIds, resolveEligibleCompanionUsers } from ".
 import { mapDraftToCreateTripRoomRequest } from "../mappers/createTripRoomMapper";
 import { createTripColors } from "../presentation/createTripTheme";
 import { createTripRoomService } from "../services/createTripRoomService";
+import type { CreateTripRoomRequest } from "../services/createTripRoomService";
 import { createRegionService, mapRegionToOption } from "../services/regionService";
 import type { RegionOption } from "../services/regionService";
 import { useCreateTripDraftStore } from "../store/useCreateTripDraftStore";
@@ -43,7 +45,7 @@ const endConditionSelectionOptions: readonly { value: EndConditionSelection; lab
 ];
 
 function createEmptyEndCondition(type: TripEndConditionType): CreateTripEndConditionDraft {
-  return { type, location: "", deadline: "", travelMinutes: "", serviceBufferMinutes: "", note: "" };
+  return { type, location: "", locationDetails: null, deadline: "", travelMinutes: "", serviceBufferMinutes: "", note: "" };
 }
 
 const editTitles: Record<EditableTripStep, string> = {
@@ -93,6 +95,8 @@ export function CreateTripWizardScreen() {
   const [exitOpen, setExitOpen] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const [editSession, setEditSession] = useState<EditSession>();
+  const [selectedRegionOption, setSelectedRegionOption] = useState<RegionOption>();
+  const [createdRequest, setCreatedRequest] = useState<CreateTripRoomRequest>();
 
   const domainRegions = useMemo(() => Object.values(regionsById), [regionsById]);
   const regionService = useMemo(() => createRegionService(environment.dataSource, domainRegions), [domainRegions]);
@@ -111,12 +115,27 @@ export function CreateTripWizardScreen() {
     invitedUserIds: request.invitedUserIds,
   }), currentUserId), [createTrip, currentUserId]);
   const creation = useCreateTripRoomMutation(roomService);
+  const leaveToTrips = useCallback(() => {
+    if (router.canGoBack()) router.back();
+    else router.replace("/(tabs)/trips");
+  }, [router]);
 
   const findRegionOption = useCallback((regionId: string): RegionOption | undefined => {
     const loaded = regionState.options.find((option) => option.id === regionId);
     const domainRegion = regionsById[regionId];
-    return loaded ?? (domainRegion ? mapRegionToOption(domainRegion) : undefined);
-  }, [regionState.options, regionsById]);
+    return loaded
+      ?? (selectedRegionOption?.id === regionId ? selectedRegionOption : undefined)
+      ?? (environment.dataSource === "mock" && domainRegion ? mapRegionToOption(domainRegion) : undefined);
+  }, [regionState.options, regionsById, selectedRegionOption]);
+
+  useEffect(() => {
+    if (!draft?.regionId || findRegionOption(draft.regionId)) return;
+    let active = true;
+    void regionService.getRegion(draft.regionId).then((option) => {
+      if (active && option) setSelectedRegionOption(option);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [draft?.regionId, findRegionOption, regionService]);
 
   useEffect(() => {
     if (!isMember || !currentUserId || creation.state.status === "success") return;
@@ -166,19 +185,26 @@ export function CreateTripWizardScreen() {
   }, [requestExit]));
 
   if (environment.dataSource === "hybrid") {
-    return <Screen><AppHeader title="새 여행 만들기" onBack={() => router.back()} /><ErrorState message="hybrid 모드에서는 서버 여행방과 로컬 여행방을 섞어 만들지 않아요." /></Screen>;
+    return <Screen><AppHeader title="새 여행 만들기" onBack={leaveToTrips} /><ErrorState message="현재 실행 설정에서는 새 여행을 만들 수 없어요. 앱을 다시 시작한 뒤 시도해 주세요." /></Screen>;
   }
-  if (!isMember) return <Screen><AppHeader title="새 여행 만들기" onBack={() => router.back()} /><Card style={styles.memberGate}><Text style={styles.sectionTitle}>회원 계정이 필요해요</Text><Text style={styles.body}>여행방 생성과 동행자 선택은 회원으로 로그인한 뒤 사용할 수 있어요.</Text><PrimaryButton label="로그인 또는 가입" onPress={() => requireMember(() => undefined, "여행방 만들기")} /></Card>{memberGatePrompt}</Screen>;
+  if (!isMember) return <Screen><AppHeader title="새 여행 만들기" onBack={leaveToTrips} /><Card style={styles.memberGate}><Text style={styles.sectionTitle}>회원 계정이 필요해요</Text><Text style={styles.body}>여행방 생성과 동행자 선택은 회원으로 로그인한 뒤 사용할 수 있어요.</Text><PrimaryButton label="로그인 또는 가입" onPress={() => requireMember(() => undefined, "여행방 만들기")} /></Card>{memberGatePrompt}</Screen>;
   if (creation.state.status === "success") {
     const response = creation.state.response;
-    return <TripCreationSuccess response={response} onEnterRoom={() => enterRoom(response.roomId)} />;
+    return <TripCreationSuccess
+      response={response}
+      setupRetrying={creation.setupRetrying}
+      onRetrySetup={createdRequest && response.setupIssues?.length ? () => creation.retrySetup(createdRequest) : undefined}
+      onEnterRoom={() => enterRoom(response.roomId)}
+    />;
   }
   if (!draft) return <Screen><LoadingState label="여행방 초안을 준비하고 있어요" /></Screen>;
 
   const activeDraft = editSession?.draft ?? draft;
   const activeStep = editSession?.step ?? draft.currentStep;
-  const context = { regionsById, usersById, currentUserId };
   const region = findRegionOption(activeDraft.regionId);
+  const availableRegionIds = new Set(regionState.options.map((option) => option.id));
+  if (selectedRegionOption) availableRegionIds.add(selectedRegionOption.id);
+  const context = { regionsById, availableRegionIds, usersById, currentUserId };
   const owner = usersById[currentUserId];
   const availableMembers = resolveEligibleCompanionUsers(eligibleFriendIds, currentUserId, usersById);
   const activeSelectedMemberIds = filterEligibleCompanionUserIds(activeDraft.selectedMemberUserIds, currentUserId, eligibleFriendIds);
@@ -196,6 +222,7 @@ export function CreateTripWizardScreen() {
 
   const selectRegion = (option: RegionOption) => {
     setSubmitError("");
+    setSelectedRegionOption(option);
     if (editSession) {
       updateEditDraft(getRegionSelectionPatch(activeDraft, option.id, option.name));
     } else setRegion(option.id, option.name);
@@ -266,6 +293,7 @@ export function CreateTripWizardScreen() {
     setSubmitError("");
     const response = await creation.createRoom(request);
     if (!response) return;
+    setCreatedRequest(request);
     resetDraft();
   };
 
@@ -288,17 +316,17 @@ export function CreateTripWizardScreen() {
       <CreateTripStepHeading title={editSession ? editTitles[editSession.step] : currentStep.title} description={editSession ? "수정한 내용은 확인 화면에 바로 반영돼요." : currentStep.description} editing={Boolean(editSession)} />
       {activeStep === 0 ? <TripDestinationStep keyword={regionState.keyword} options={regionState.options} selectedId={activeDraft.regionId} isLoading={regionState.isLoading} error={regionState.error} onKeywordChange={regionState.setKeyword} onSelect={selectRegion} onRetry={regionState.reload} /> : null}
       {activeStep === 1 ? <TripDateStep startDate={activeDraft.startDate} endDate={activeDraft.endDate} dateUndecided={activeDraft.dateUndecided} onDateRangeChange={changeDateRange} onDateUndecidedChange={changeDateUndecided} /> : null}
-      {activeStep === 2 ? <ConditionsStep draft={activeDraft} onChange={(patch) => { setSubmitError(""); updateActiveDraft(patch); }} /> : null}
+      {activeStep === 2 ? <ConditionsStep draft={activeDraft} region={region} onChange={(patch) => { setSubmitError(""); updateActiveDraft(patch); }} /> : null}
       {activeStep === 3 ? <CompanionStep owner={owner} users={availableMembers} companionType={activeDraft.companionType} selectedIds={activeSelectedMemberIds} onTypeChange={changeCompanionType} onToggle={toggleActiveMember} /> : null}
       {activeStep === 4 ? <ReviewStep draft={{ ...draft, selectedMemberUserIds: reviewSelectedMemberIds }} region={region} usersById={usersById} onRoomNameChange={(roomName) => { setSubmitError(""); setRoomName(roomName); }} onEdit={startEdit} /> : null}
       {submitError || mutationError ? <Text accessibilityRole="alert" style={styles.error}>{submitError || mutationError}</Text> : stepError ? <Text accessibilityRole="alert" style={styles.validationHint}>{stepError}</Text> : null}
     </CreateTripWizardShell>
     <ConfirmModal visible={!resumeResolved && Boolean(draft && draft.ownerUserId === currentUserId)} title="작성 중인 여행방이 있어요" description={`${draft.currentStep + 1}단계부터 이어서 만들 수 있어요.`} primaryLabel="이어서 작성" onPrimary={() => setResumeResolved(true)} secondaryLabel="새로 시작" onSecondary={() => { startDraft(currentUserId); setResumeResolved(true); }} />
-    <ConfirmModal visible={exitOpen} title="여행방 만들기를 나갈까요?" description="지금까지 입력한 내용은 이 기기에 초안으로 저장돼요." primaryLabel="저장하고 나가기" onPrimary={() => { setExitOpen(false); router.back(); }} secondaryLabel="초안 삭제하고 나가기" onSecondary={() => { resetDraft(); setExitOpen(false); router.back(); }} onRequestClose={() => setExitOpen(false)} />
+    <ConfirmModal visible={exitOpen} title="여행방 만들기를 나갈까요?" description="지금까지 입력한 내용은 이 기기에 초안으로 저장돼요." primaryLabel="저장하고 나가기" onPrimary={() => { setExitOpen(false); leaveToTrips(); }} secondaryLabel="초안 삭제하고 나가기" onSecondary={() => { resetDraft(); setExitOpen(false); leaveToTrips(); }} onRequestClose={() => setExitOpen(false)} />
   </>;
 }
 
-function ConditionsStep({ draft, onChange }: { draft: CreateTripDraft; onChange(patch: Partial<CreateTripDraft>): void }) {
+function ConditionsStep({ draft, region, onChange }: { draft: CreateTripDraft; region?: RegionOption; onChange(patch: Partial<CreateTripDraft>): void }) {
   const selectEndCondition = (selection: EndConditionSelection) => {
     if (selection === "none") {
       onChange({ endCondition: null });
@@ -319,7 +347,14 @@ function ConditionsStep({ draft, onChange }: { draft: CreateTripDraft; onChange(
       <OptionGroup options={transportOptions} selected={draft.transport} onSelect={(transport) => onChange({ transport })} layout="grid" />
     </CreateTripSection>
     <CreateTripSection title="숙소" description="정해진 숙소가 있을 때만 남겨두면 돼요." optional>
-      <TextField label="숙소 위치" value={draft.accommodationLocation} onChangeText={(accommodationLocation) => onChange({ accommodationLocation })} placeholder="예: 부산역 근처 호텔" maxLength={100} />
+      <TripPlaceAnchorField
+        label="숙소 위치"
+        value={draft.accommodationLocation}
+        selected={draft.accommodationLocationDetails}
+        placeholder="예: 부산역 근처 호텔"
+        areaCode={region?.areaCode}
+        onChange={(accommodationLocation, accommodationLocationDetails) => onChange({ accommodationLocation, accommodationLocationDetails })}
+      />
     </CreateTripSection>
     {draft.dateUndecided
       ? <View style={styles.infoNote}><Text style={styles.infoNoteTitle}>날짜를 정한 뒤 입력할 수 있어요</Text><Text style={styles.infoNoteBody}>마지막 날 귀환 일정은 여행 날짜가 정해지면 활성화됩니다.</Text></View>
@@ -327,14 +362,21 @@ function ConditionsStep({ draft, onChange }: { draft: CreateTripDraft; onChange(
           <OptionGroup options={endConditionSelectionOptions} selected={draft.endCondition?.type ?? "none"} onSelect={selectEndCondition} />
           {draft.endCondition ? <View style={styles.disclosureFields}>
             <Text style={styles.disclosureTitle}>귀환 상세 정보</Text>
-            <TextField label="종료 지점" value={draft.endCondition.location} onChangeText={(location) => updateEndCondition({ location })} placeholder="예: 부산역, 렌터카 반납 지점" maxLength={100} />
+            <TripPlaceAnchorField
+              label="종료 지점"
+              value={draft.endCondition.location}
+              selected={draft.endCondition.locationDetails}
+              placeholder="예: 부산역, 렌터카 반납 지점"
+              areaCode={region?.areaCode}
+              onChange={(location, locationDetails) => updateEndCondition({ location, locationDetails })}
+            />
             <TextField label="도착 또는 반납 마감 시각" value={draft.endCondition.deadline} onChangeText={(deadline) => updateEndCondition({ deadline })} placeholder="예: 17:30" maxLength={5} helperText="마지막 여행 날짜 기준, 1분 단위 HH:mm" />
             <TextField label="종료 지점까지 예상 이동시간 (분)" value={draft.endCondition.travelMinutes} onChangeText={(travelMinutes) => updateEndCondition({ travelMinutes: travelMinutes.replace(/\D/g, "") })} placeholder="예: 45" keyboardType="number-pad" maxLength={4} helperText="실제 경로를 확인한 예상값을 입력해 주세요." />
             <TextField label="승차 준비 또는 반납 시간 (분)" value={draft.endCondition.serviceBufferMinutes} onChangeText={(serviceBufferMinutes) => updateEndCondition({ serviceBufferMinutes: serviceBufferMinutes.replace(/\D/g, "") })} placeholder="예: 30" keyboardType="number-pad" maxLength={3} />
             <TextField label="메모 (선택)" value={draft.endCondition.note} onChangeText={(note) => updateEndCondition({ note })} placeholder="예: 렌터카 연료 충전 후 반납" maxLength={300} multiline />
           </View> : null}
         </CreateTripSection>}
-    <View style={styles.dataNote}><Text style={styles.dataNoteText}>{environment.dataSource === "api" ? "이동 방식·숙소·귀환 일정은 현재 계정의 이 기기에 보관돼요." : "예산과 일정 속도 같은 개인 성향은 여행방을 만든 뒤 각자 응답해요."}</Text></View>
+    <View style={styles.dataNote}><Text style={styles.dataNoteText}>{environment.dataSource === "api" ? "이동 방식·숙소·귀환 시각은 여행방에 공유되고, 동행 유형과 귀환 메모는 이 기기에 보관돼요." : "예산과 일정 속도 같은 개인 성향은 여행방을 만든 뒤 각자 응답해요."}</Text></View>
   </View>;
 }
 
@@ -353,7 +395,7 @@ function CompanionStep({ owner, users, companionType, selectedIds, onTypeChange,
     <CreateTripSection title="바로 함께할 친구" description="저장한 친구 중 여행방에 지금 추가할 멤버만 선택해 주세요." optional>
       {users.length ? <View style={styles.friendList}>{users.map((user, index) => { const selected = selectedIds.includes(user.id); return <Pressable key={user.id} accessibilityRole="checkbox" accessibilityState={{ checked: selected }} accessibilityLabel={`${user.name} 동행자 ${selected ? "선택 해제" : "선택"}`} onPress={() => onToggle(user.id)} style={({ pressed }) => [styles.friendRow, index < users.length - 1 && styles.friendRowDivider, selected && styles.friendRowSelected, pressed && styles.pressed]}><Avatar name={user.name} uri={user.profileImageUrl} /><View style={styles.rowCopy}><Text style={styles.rowName}>{user.name}</Text><Text style={styles.rowDescription}>여행방 멤버로 바로 추가</Text></View><View style={[styles.checkbox, selected && styles.checkboxSelected]}>{selected ? <Text style={styles.checkboxMark}>✓</Text> : null}</View></Pressable>; })}</View> : <View style={styles.emptyState}><Text style={styles.emptyStateTitle}>바로 추가할 친구가 없어요</Text><Text style={styles.emptyStateBody}>지금은 나만 포함해 만들고, 여행방에서 멤버를 초대할 수 있어요.</Text></View>}
     </CreateTripSection>
-    <View style={styles.dataNote}><Text style={styles.dataNoteText}>{environment.dataSource === "api" ? "선택한 친구는 서버 여행방 멤버로 바로 추가돼요. 동행 유형은 이 기기에 보관돼요." : "친구를 선택하지 않아도 여행방을 만들 수 있어요."}</Text></View>
+    <View style={styles.dataNote}><Text style={styles.dataNoteText}>{environment.dataSource === "api" ? "선택한 친구는 여행방 멤버로 바로 추가돼요. 동행 유형 선택은 이 기기에 보관돼요." : "친구를 선택하지 않아도 여행방을 만들 수 있어요."}</Text></View>
   </View>;
 }
 

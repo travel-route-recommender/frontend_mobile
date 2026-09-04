@@ -26,9 +26,9 @@ export type WorkspacePlanningPatch = {
   lodging?: BackendPlaceAnchor | null;
   returnPoint?: BackendPlaceAnchor | null;
   transportMode?: typeof TRANSPORT_MODES[number];
-  returnDeadline?: string;
-  travelBufferMinutes?: number;
-  prepBufferMinutes?: number;
+  returnDeadline?: string | null;
+  travelBufferMinutes?: number | null;
+  prepBufferMinutes?: number | null;
   confirm?: boolean;
 };
 
@@ -49,7 +49,7 @@ function fail(field: string, message: string): never {
 function normalizeRoomId(roomId: string) {
   const normalized = roomId.trim();
   if (!MONGO_OBJECT_ID_PATTERN.test(normalized)) {
-    return fail("roomId", "서버 여행방 ObjectId 형식이어야 합니다.");
+    return fail("roomId", "여행방 정보가 올바르지 않아 설정을 저장하지 않았어요.");
   }
   return normalized;
 }
@@ -75,7 +75,7 @@ function normalizeAnchor(anchor: BackendPlaceAnchor, field: "planning.lodging" |
     return fail(field, "장소 객체여야 합니다.");
   }
   const unknownField = Object.keys(anchor).find((key) => !ANCHOR_FIELDS.has(key));
-  if (unknownField) return fail(`${field}.${unknownField}`, "Backend PlaceAnchorDto에 없는 필드입니다.");
+  if (unknownField) return fail(`${field}.${unknownField}`, "저장할 수 없는 장소 정보가 포함되어 있습니다.");
   const name = normalizeRequiredText(anchor.name, `${field}.name`);
   const hasLat = anchor.lat !== undefined;
   const hasLng = anchor.lng !== undefined;
@@ -87,7 +87,7 @@ function normalizeAnchor(anchor: BackendPlaceAnchor, field: "planning.lodging" |
     return fail(`${field}.lng`, "-180부터 180 사이의 유한한 숫자여야 합니다.");
   }
   if (anchor.placeId !== undefined && !MONGO_OBJECT_ID_PATTERN.test(anchor.placeId.trim())) {
-    return fail(`${field}.placeId`, "서버 장소 ObjectId 형식이어야 합니다.");
+    return fail(`${field}.placeId`, "장소 식별 정보가 올바르지 않습니다.");
   }
   if (anchor.source !== undefined && !ANCHOR_SOURCES.includes(anchor.source)) {
     return fail(`${field}.source`, `${ANCHOR_SOURCES.join(", ")} 중 하나여야 합니다.`);
@@ -113,14 +113,15 @@ function normalizeNonNegativeInteger(value: number, field: string) {
 
 /**
  * Build the exact UpdatePlanningDto wire body. Undefined means "do not edit";
- * only lodging and returnPoint support explicit null deletion in the Backend.
+ * End-condition fields support explicit null so clearing a return point cannot
+ * leave an old deadline or buffer active on the server.
  */
 export function buildWorkspacePlanningPatch(patch: WorkspacePlanningPatch): WorkspacePlanningPatch {
   if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
     return fail("planning", "수정 객체여야 합니다.");
   }
   const unknownField = Object.keys(patch).find((key) => !PLANNING_FIELDS.has(key));
-  if (unknownField) return fail(`planning.${unknownField}`, "Backend UpdatePlanningDto에 없는 필드입니다.");
+  if (unknownField) return fail(`planning.${unknownField}`, "저장할 수 없는 여행 설정이 포함되어 있습니다.");
   const body: WorkspacePlanningPatch = {};
   if (patch.timezone !== undefined) body.timezone = normalizeTimezone(patch.timezone);
   if (patch.lodging !== undefined) body.lodging = patch.lodging === null ? null : normalizeAnchor(patch.lodging, "planning.lodging");
@@ -132,14 +133,18 @@ export function buildWorkspacePlanningPatch(patch: WorkspacePlanningPatch): Work
     body.transportMode = patch.transportMode;
   }
   if (patch.returnDeadline !== undefined) {
-    if (!TIME_PATTERN.test(patch.returnDeadline)) return fail("planning.returnDeadline", "HH:mm 형식이어야 합니다.");
+    if (patch.returnDeadline !== null && !TIME_PATTERN.test(patch.returnDeadline)) return fail("planning.returnDeadline", "HH:mm 형식이어야 합니다.");
     body.returnDeadline = patch.returnDeadline;
   }
   if (patch.travelBufferMinutes !== undefined) {
-    body.travelBufferMinutes = normalizeNonNegativeInteger(patch.travelBufferMinutes, "planning.travelBufferMinutes");
+    body.travelBufferMinutes = patch.travelBufferMinutes === null
+      ? null
+      : normalizeNonNegativeInteger(patch.travelBufferMinutes, "planning.travelBufferMinutes");
   }
   if (patch.prepBufferMinutes !== undefined) {
-    body.prepBufferMinutes = normalizeNonNegativeInteger(patch.prepBufferMinutes, "planning.prepBufferMinutes");
+    body.prepBufferMinutes = patch.prepBufferMinutes === null
+      ? null
+      : normalizeNonNegativeInteger(patch.prepBufferMinutes, "planning.prepBufferMinutes");
   }
   if (patch.confirm !== undefined) {
     if (typeof patch.confirm !== "boolean") return fail("planning.confirm", "boolean이어야 합니다.");
@@ -169,7 +174,7 @@ export class HttpWorkspacePlanningApiGateway implements WorkspacePlanningApiGate
       auth: true,
     });
     const planning = parseBackendWorkspacePlanning(payload, "planning");
-    if (!planning) return fail("planning", "서버가 planning 객체를 반환하지 않았습니다.");
+    if (!planning) return fail("planning", "저장된 여행 설정을 확인하지 못했어요. 최신 여행방을 다시 불러와 주세요.");
     return planning;
   }
 }

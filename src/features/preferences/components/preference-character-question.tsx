@@ -16,18 +16,18 @@ function preventHangulWordBreaks(message: string) {
 function SpeechBubbleTail({ placement }: { placement: PreferenceCharacterPresentation["placement"] }) {
   return <>
     <View
-      pointerEvents="none"
       style={[
         styles.tail,
+        styles.ignorePointerEvents,
         placement === "left" && styles.tailBorderLeft,
         placement === "right" && styles.tailBorderRight,
         placement === "together" && styles.tailBorderBottom,
       ]}
     />
     <View
-      pointerEvents="none"
       style={[
         styles.tail,
+        styles.ignorePointerEvents,
         placement === "left" && styles.tailFillLeft,
         placement === "right" && styles.tailFillRight,
         placement === "together" && styles.tailFillBottom,
@@ -157,6 +157,7 @@ const styles = StyleSheet.create({
   bubbleLeft: { left: spacing.sm, width: "62%" },
   bubbleTogether: { top: spacing.sm, right: spacing.sm, left: spacing.sm },
   tail: { position: "absolute", width: 0, height: 0 },
+  ignorePointerEvents: { pointerEvents: "none" },
   tailBorderLeft: {
     bottom: 18,
     left: -12,

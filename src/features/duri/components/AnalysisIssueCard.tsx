@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import type { DuriReportIssue, DuriReportIssueCategory } from "../types";
+import { plainDuriUserText } from "../presentation/plainDuriUserText";
 import { DuriKoreanText } from "./DuriKoreanText";
 
 const categoryLabel: Record<DuriReportIssueCategory, string> = {
@@ -63,13 +64,19 @@ const actionByCategory: Record<DuriReportIssueCategory, string> = {
 };
 
 function plainLanguage(value: string) {
-  return value
+  return plainDuriUserText(value)
     .replace(/Hard Constraint/gi, "꼭 지켜야 하는 조건")
     .replace(/Soft Constraint/gi, "더 나은 여행을 위한 기준")
-    .replace(/snapshot/gi, "분석 시점의 일정")
-    .replace(/Pareto/gi, "누구에게도 더 나쁘지 않은")
-    .replace(/Nash/gi, "모두의 만족을 함께 높이는")
-    .replace(/leximin/gi, "가장 불리한 사람부터 살피는");
+    .replace(/snapshot/gi, "분석 시점의 일정");
+}
+
+function evidenceSourceLabel(value: string) {
+  const normalized = value.trim().toLocaleLowerCase("en-US");
+  if (normalized === "kakao-mobility") return "카카오모빌리티 길찾기";
+  if (normalized === "tour-api") return "한국관광공사 장소 정보";
+  if (normalized === "tourism-data-lab") return "한국관광 데이터랩";
+  if (normalized === "user-confirmed") return "사용자가 확인한 정보";
+  return plainLanguage(value);
 }
 
 function impactText(issue: DuriReportIssue) {
@@ -98,7 +105,7 @@ export function AnalysisIssueCard({
   const [entitiesExpanded, setEntitiesExpanded] = useState(false);
   const warning = issue.severity === "high" || issue.severity === "medium";
   const visibleEvidence = expanded ? issue.evidence : issue.evidence.slice(0, 1);
-  return <View accessibilityLabel={`${categoryLabel[issue.category]}, ${severityLabel[issue.severity]}, ${issue.title}`} style={[styles.card, warning && styles.warningCard]}>
+  return <View accessibilityLabel={`${categoryLabel[issue.category]}, ${severityLabel[issue.severity]}, ${plainLanguage(issue.title)}`} style={[styles.card, warning && styles.warningCard]}>
     <View style={styles.heading}><Text style={[styles.category, warning && styles.warningText]}>{categoryLabel[issue.category]}</Text><Text style={styles.severity}>{severityLabel[issue.severity]}</Text></View>
     <View style={styles.badges}><Text style={[styles.constraint, issue.constraintType === "hard" && styles.hardConstraint]}>{constraintLabel[issue.constraintType]}</Text><Text style={[
       styles.confidence,
@@ -111,8 +118,8 @@ export function AnalysisIssueCard({
     <View style={styles.explanation}><Text style={styles.explanationLabel}>무엇을 확인했나요?</Text><DuriKoreanText style={styles.summary}>{plainLanguage(issue.summary)}</DuriKoreanText></View>
     {issue.date ? <Text style={styles.date}>관련 날짜 · {issue.date}</Text> : null}
     {visibleEvidence.length ? <View style={styles.evidenceList}><Text style={styles.explanationLabel}>두리가 이렇게 판단한 이유</Text>{visibleEvidence.map((entry, index) => <View key={`${entry.label}-${index}`} style={styles.evidenceRow}>
-      <Text style={styles.evidence}>{entry.label} · {entry.value}</Text>
-      {entry.source || entry.observedAt ? <Text style={styles.evidenceMeta}>{[entry.source ? `정보 제공 ${entry.source}` : "", entry.observedAt ? `확인한 때 ${observedAtLabel(entry.observedAt)}` : ""].filter(Boolean).join(" · ")}</Text> : null}
+      <Text style={styles.evidence}>{plainLanguage(entry.label)} · {plainLanguage(entry.value)}</Text>
+      {entry.source || entry.observedAt ? <Text style={styles.evidenceMeta}>{[entry.source ? `정보 제공 ${evidenceSourceLabel(entry.source)}` : "", entry.observedAt ? `확인한 때 ${observedAtLabel(entry.observedAt)}` : ""].filter(Boolean).join(" · ")}</Text> : null}
     </View>)}</View> : null}
     {issue.evidence.length > 1 ? <Pressable accessibilityRole="button" onPress={() => setExpanded((value) => !value)} style={({ pressed }) => [styles.expand, pressed && styles.pressed]}><Text style={styles.expandText}>{expanded ? "판단 이유 접기" : `판단 이유 ${issue.evidence.length}개 모두 보기`}</Text></Pressable> : null}
     {affectedEntityLabels.length ? <View style={styles.affectedSection}>
@@ -124,7 +131,7 @@ export function AnalysisIssueCard({
     <View style={styles.guidance}><Text style={styles.explanationLabel}>이 항목이 중요한 이유</Text><Text style={styles.guidanceText}>{impactText(issue)}</Text><Text style={styles.explanationLabel}>이렇게 해보세요</Text><Text style={styles.guidanceText}>{actionByCategory[issue.category]}</Text></View>
     <Text style={styles.provenance}>사용한 정보 · {sourceLabel[issue.source]}</Text>
     {hasGeneratedSuggestion ? <Text style={styles.support}>두리가 이 항목을 반영한 개선안을 준비했어요. 적용하기 전에 달라지는 내용을 확인할 수 있어요.</Text> : null}
-    {onOpenTechnicalDetails ? <Pressable accessibilityRole="button" onPress={onOpenTechnicalDetails} style={({ pressed }) => [styles.technicalButton, pressed && styles.pressed]}><Text style={styles.technicalButtonText}>수식과 계산 과정 보기</Text></Pressable> : null}
+    {onOpenTechnicalDetails ? <Pressable accessibilityRole="button" onPress={onOpenTechnicalDetails} style={({ pressed }) => [styles.technicalButton, pressed && styles.pressed]}><Text style={styles.technicalButtonText}>자세한 판단 기준 보기</Text></Pressable> : null}
   </View>;
 }
 

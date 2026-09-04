@@ -22,7 +22,7 @@ import {
 } from "../workspace/services/workspaceScheduleContract";
 import { loadApiWorkspaceOverlaysWithStatus } from "../workspace/services/apiWorkspaceOverlayStorage";
 import { loadApiTripLocalFactsWithStatus, type ApiTripLocalFacts } from "../trip-creation/services/apiTripFactsStorage";
-import { fetchApiTripDocuments, type ApiTripDocument } from "../trip-documents/services/tripDocumentApi";
+import { fetchApiTripDocumentCollection, type ApiTripDocument } from "../trip-documents/services/tripDocumentApi";
 import { fetchApiPreferenceCompletion } from "../preferences/services/preferenceProfileApi";
 import { hasDuplicateMemberIds, parseTravelTypeSnapshotRecord, parseTravelTypeSnapshotTags } from "./logic/travelTypeSnapshot";
 import {
@@ -30,6 +30,13 @@ import {
   assertRoomPreferenceEvidenceScope,
   roomPreferenceApiGateway,
 } from "../duri/services/roomPreferenceApi";
+import {
+  normalizeLegacyRoomFactsVersion,
+  readVersionFencedTripSnapshot,
+  type TripSnapshotVersion,
+  type VersionFencedRead,
+} from "./logic/consistentTripSnapshot";
+import { resolveShareableTripInviteUrl } from "../invitations/logic/tripInviteLinks";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -95,6 +102,11 @@ export type ApiTripDetailData = {
   sharedPreferenceEvidenceStatus: SharedPreferenceEvidenceStatus;
   sharedDocuments: ApiTripDocument[];
   sharedDocumentsStatus: "loaded" | "unavailable";
+};
+
+type ApiTripAnalysisBaseline = TripSnapshotVersion & {
+  startDate: string | null;
+  endDate: string | null;
 };
 
 const MONGO_OBJECT_ID_PATTERN = /^[a-f\d]{24}$/i;
@@ -185,7 +197,13 @@ export function parseApiTripRoom(value: unknown): ApiTripRoom {
   if (hasDuplicateMemberIds(members.map((member) => member.userId))) return fail("room.members", "같은 userId가 중복될 수 없습니다.");
   if (!members.some((member) => member.role === "owner")) return fail("room.members", "방장 멤버가 필요합니다.");
   const destinationRegionCode = optionalString(destination?.regionCode, "room.destination.regionCode");
-  const inviteLink = optionalString(record.inviteLink, "room.inviteLink");
+  const inviteCode = asString(record.inviteCode, "room.inviteCode");
+  const rawInviteLink = optionalString(record.inviteLink, "room.inviteLink");
+  const inviteLink = rawInviteLink
+    ? resolveShareableTripInviteUrl(rawInviteLink, inviteCode, environment.apiBaseUrl)
+    : undefined;
+  const factsVersion = normalizeLegacyRoomFactsVersion(record.factsVersion);
+  if (factsVersion === undefined) return fail("room.factsVersion", "0 이상의 정수여야 합니다.");
   return {
     id,
     title: asString(record.title, "room.title"),
@@ -196,7 +214,7 @@ export function parseApiTripRoom(value: unknown): ApiTripRoom {
     status: parseStatus(record.status, "room.status"),
     createdBy: asString(record.createdBy, "room.createdBy"),
     members,
-    inviteCode: asString(record.inviteCode, "room.inviteCode"),
+    inviteCode,
     ...(inviteLink ? { inviteLink } : {}),
     progress: {
       label: asString(progressRecord.label, "room.progress.label"),
@@ -206,8 +224,33 @@ export function parseApiTripRoom(value: unknown): ApiTripRoom {
     candidateCount: integer(record.candidateCount, "room.candidateCount"),
     scheduleItemCount: integer(record.scheduleItemCount, "room.scheduleItemCount"),
     scheduleVersion: integer(record.scheduleVersion ?? 0, "room.scheduleVersion"),
-    factsVersion: integer(record.factsVersion, "room.factsVersion"),
+    factsVersion,
   };
+}
+
+function parseApiTripAnalysisBaseline(value: unknown): ApiTripAnalysisBaseline {
+  const record = asRecord(value, "analysisBaseline");
+  return {
+    scheduleVersion: integer(record.scheduleVersion, "analysisBaseline.scheduleVersion"),
+    factsVersion: integer(record.factsVersion, "analysisBaseline.factsVersion"),
+    startDate: optionalDateOnly(record.startDate, "analysisBaseline.startDate"),
+    endDate: optionalDateOnly(record.endDate, "analysisBaseline.endDate"),
+  };
+}
+
+async function fetchApiTripAnalysisBaseline(roomId: string, signal?: AbortSignal) {
+  return parseApiTripAnalysisBaseline(await apiClient.request<unknown>({
+    path: `/rooms/${encodeURIComponent(roomId)}/analysis-baseline`,
+    signal,
+    auth: true,
+  }));
+}
+
+function baselineMatchesRoom(baseline: ApiTripAnalysisBaseline, room: ApiTripRoom) {
+  return baseline.scheduleVersion === room.scheduleVersion
+    && baseline.factsVersion === room.factsVersion
+    && baseline.startDate === room.startDate
+    && baseline.endDate === room.endDate;
 }
 
 type ApiTripSummary = {
@@ -371,7 +414,7 @@ function regionForRoom(room: ApiTripRoom): Region {
     id: regionId,
     name: room.destinationName,
     shortName: room.destinationName,
-    description: "서버 여행방에 저장된 목적지",
+    description: "여행방에 저장된 목적지",
     spots: room.candidateCount,
     weather: "",
     imageUrl: "",
@@ -494,13 +537,28 @@ export async function fetchApiTripList(currentUserId?: string | null, signal?: A
   });
 }
 
-export async function fetchApiTripDetail(roomId: string, currentUserId?: string | null, signal?: AbortSignal): Promise<ApiTripDetailData> {
+async function fetchApiTripDetailAttempt(
+  roomId: string,
+  currentUserId?: string | null,
+  signal?: AbortSignal,
+): Promise<VersionFencedRead<ApiTripDetailData>> {
   const id = assertRoomId(roomId);
-  const room = parseApiTripRoom(await apiClient.request<unknown>({
-    path: `/rooms/${encodeURIComponent(id)}`,
-    signal,
-    auth: true,
-  }));
+  const [room, baselineBefore] = await Promise.all([
+    apiClient.request<unknown>({
+      path: `/rooms/${encodeURIComponent(id)}`,
+      signal,
+      auth: true,
+    }).then(parseApiTripRoom),
+    fetchApiTripAnalysisBaseline(id, signal),
+  ]);
+  if (!baselineMatchesRoom(baselineBefore, room)) {
+    return {
+      versions: [
+        baselineBefore,
+        { scheduleVersion: room.scheduleVersion, factsVersion: room.factsVersion },
+      ],
+    };
+  }
   const region = regionForRoom(room);
   const hasValidLocalUserScope = Boolean(currentUserId && MONGO_OBJECT_ID_PATTERN.test(currentUserId));
   const unavailableLocalUserScope = Boolean(currentUserId) && !hasValidLocalUserScope;
@@ -526,11 +584,11 @@ export async function fetchApiTripDetail(roomId: string, currentUserId?: string 
           value: null,
         };
       }),
-    fetchApiTripDocuments(id, signal)
+    fetchApiTripDocumentCollection(id, signal)
       .then((value) => ({ status: "loaded" as const, value }))
       .catch((error: unknown) => {
         if (signal?.aborted) throw error;
-        return { status: "unavailable" as const, value: [] as ApiTripDocument[] };
+        return { status: "unavailable" as const, value: null };
       }),
     fetchCurrentPreferenceCompletion(currentUserId, signal),
   ]);
@@ -601,7 +659,10 @@ export async function fetchApiTripDetail(roomId: string, currentUserId?: string 
     }
   }
   if (sharedPreferenceEvidenceStatus !== "loaded") sharedPreferenceEvidence = null;
-  return {
+  const baselineAfter = await fetchApiTripAnalysisBaseline(id, signal);
+  const datesStayedStable = baselineAfter.startDate === baselineBefore.startDate
+    && baselineAfter.endDate === baselineBefore.endDate;
+  const data: ApiTripDetailData = {
     room,
     region,
     usersById,
@@ -617,9 +678,40 @@ export async function fetchApiTripDetail(roomId: string, currentUserId?: string 
     workspaceOverlayStatus,
     sharedPreferenceEvidence,
     sharedPreferenceEvidenceStatus,
-    sharedDocuments: sharedDocumentsResult.value,
+    sharedDocuments: sharedDocumentsResult.value?.documents ?? [],
     sharedDocumentsStatus: sharedDocumentsResult.status,
   };
+  return {
+    ...(datesStayedStable ? { value: data } : {}),
+    versions: [
+      baselineBefore,
+      { scheduleVersion: room.scheduleVersion, factsVersion: room.factsVersion },
+      ...(scheduleSnapshot ? [{
+        scheduleVersion: scheduleSnapshot.scheduleVersion,
+        factsVersion: baselineBefore.factsVersion,
+      }] : []),
+      ...(sharedDocumentsResult.value ? [{
+        scheduleVersion: sharedDocumentsResult.value.scheduleVersion,
+        factsVersion: sharedDocumentsResult.value.factsVersion,
+      }] : []),
+      ...(preferenceResult.value ? [{
+        scheduleVersion: preferenceResult.value.scheduleVersion,
+        factsVersion: preferenceResult.value.factsVersion,
+      }] : []),
+      baselineAfter,
+    ],
+  };
+}
+
+export async function fetchApiTripDetail(roomId: string, currentUserId?: string | null, signal?: AbortSignal): Promise<ApiTripDetailData> {
+  const detail = await readVersionFencedTripSnapshot({
+    signal,
+    readAttempt: () => fetchApiTripDetailAttempt(roomId, currentUserId, signal),
+  });
+  return detail ?? fail(
+    "tripDetail.snapshot",
+    "여행방 정보가 계속 변경되고 있어요. 잠시 후 다시 불러와 주세요.",
+  );
 }
 
 export const apiTripRoomService = {

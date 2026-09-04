@@ -12,11 +12,12 @@ type TourPlaceImage = {
 
 type TourPlace = {
   id?: string;
-  source?: "tour" | "TOUR_API";
+  source?: "tour" | "kakao" | "manual" | "TOUR_API";
   placeId?: string | null;
   externalId?: string;
   contentTypeId?: number;
   contentTypeLabel?: string | null;
+  category?: string | null;
   lclsSystm1?: string | null;
   lclsSystm1Name?: string | null;
   lclsSystm2?: string | null;
@@ -32,14 +33,19 @@ type TourPlace = {
   lng?: number | null;
   distanceMeters?: number | string;
   overview?: string | null;
+  description?: string | null;
   tel?: string | null;
+  phone?: string | null;
   homepage?: string | null;
+  placeUrl?: string | null;
   intro?: Record<string, unknown> | null;
   areaCode?: string | null;
   sigunguCode?: string | null;
   eventStartDate?: string | null;
   eventEndDate?: string | null;
-  images?: TourPlaceImage[];
+  images?: (TourPlaceImage | string)[];
+  gallery?: TourPlaceImage[];
+  tags?: string[];
 };
 
 type TourPlacePage = {
@@ -57,6 +63,18 @@ export type BackendPlacePageResult = {
   size: number;
   total?: number;
   hasNextPage: boolean;
+};
+
+export type BackendSavedPlace = {
+  id: string;
+  savedAt?: string;
+  place: Place;
+};
+
+type BackendSavedPlaceResponse = {
+  id?: string;
+  savedAt?: string;
+  place?: TourPlace | null;
 };
 
 export type BackendPlaceSearchParams = {
@@ -200,8 +218,8 @@ function stripHtml(value: string) {
     .trim();
 }
 
-function getContentTypeLabel(contentTypeId?: number, label?: string | null) {
-  return firstString([label, contentTypeId ? TOUR_CONTENT_TYPE_LABELS[contentTypeId] : undefined], "관광지");
+function getContentTypeLabel(contentTypeId?: number, label?: string | null, category?: string | null) {
+  return firstString([label, category, contentTypeId ? TOUR_CONTENT_TYPE_LABELS[contentTypeId] : undefined], "관광지");
 }
 
 function contentTypeIdForCategory(category?: string) {
@@ -256,8 +274,8 @@ function buildTourPlaceInfoItems(place: TourPlace): PlaceInfoItem[] {
     if (/^(없음|없다|미제공|문의)$/i.test(value)) return [];
     return [{ label: field.label, value, ...(field.tag ? { tag: field.tag } : {}) }];
   });
-  const tel = normalizeInfoValue(firstString([place.tel]));
-  const homepage = normalizeInfoValue(firstString([place.homepage]));
+  const tel = normalizeInfoValue(firstString([place.tel, place.phone]));
+  const homepage = normalizeInfoValue(firstString([place.homepage, place.placeUrl]));
   const extras: PlaceInfoItem[] = [
     ...(tel && !items.some((item) => item.label === "문의") ? [{ label: "문의", value: tel }] : []),
     ...(homepage ? [{ label: "홈페이지", value: homepage }] : []),
@@ -388,8 +406,8 @@ export function mapTourPlaceToPlace(place: TourPlace): Place | null {
   const name = firstString([place.name]);
   if (!id || !name) return null;
 
-  const category = getContentTypeLabel(place.contentTypeId, place.contentTypeLabel);
-  const overview = firstString([place.overview]);
+  const category = getContentTypeLabel(place.contentTypeId, place.contentTypeLabel, place.category);
+  const overview = firstString([place.overview, place.description]);
   const latitude = asNumber(place.latitude) ?? asNumber(place.lat);
   const longitude = asNumber(place.longitude) ?? asNumber(place.lng);
   const eventStartDate = tourDateToDateOnly(place.eventStartDate);
@@ -399,22 +417,42 @@ export function mapTourPlaceToPlace(place: TourPlace): Place | null {
   const infoItems = buildTourPlaceInfoItems(place);
   const classificationTags = classification ? buildPlaceClassificationTags({ classification }) : [];
   const practicalTags = buildPracticalInfoTags(infoItems);
+  const firstImage = place.images?.[0];
+  const firstImageUrl = typeof firstImage === "string" ? firstImage : firstImage?.thumbnailUrl ?? firstImage?.url;
   const rawImage = firstString([
     place.thumbnailUrl,
-    place.images?.[0]?.thumbnailUrl,
-    place.images?.[0]?.url,
+    firstImageUrl,
+    place.gallery?.[0]?.thumbnailUrl,
+    place.gallery?.[0]?.url,
   ]);
   const image = rawImage ? normalizeTourImageUrl(rawImage) : "";
+  const normalizedSource = place.source === "TOUR_API" ? "tour" : place.source;
+  const source = normalizedSource === "tour" || normalizedSource === "kakao" || normalizedSource === "manual"
+    ? normalizedSource
+    : undefined;
+  const backendPlaceId = firstString([
+    place.placeId,
+    /^[a-f\d]{24}$/i.test(id) ? id : undefined,
+  ]);
+  const externalId = firstString([place.externalId]);
 
   return {
     id,
+    ...(externalId ? { externalId } : {}),
+    ...(backendPlaceId ? { backendPlaceId } : {}),
+    ...(source ? { source } : {}),
     regionId: inferRegionId(place),
     name,
     category,
     ...(place.contentTypeId ? { contentTypeId: place.contentTypeId } : {}),
     ...(classification ? { classification } : {}),
     ...(infoItems.length ? { infoItems } : {}),
-    tags: [...new Set([...(eventDateTag ? [eventDateTag] : []), ...classificationTags, ...practicalTags])],
+    tags: [...new Set([
+      ...(eventDateTag ? [eventDateTag] : []),
+      ...(Array.isArray(place.tags) ? place.tags.map((tag) => tag.trim()).filter(Boolean) : []),
+      ...classificationTags,
+      ...practicalTags,
+    ])],
     distanceLabel: formatDistanceLabel(place),
     ...(latitude !== undefined ? { latitude } : {}),
     ...(longitude !== undefined ? { longitude } : {}),
@@ -481,10 +519,33 @@ export async function searchBackendFestivalPage(params: BackendPlaceSearchParams
 }
 
 export async function fetchBackendRegionCodes(signal?: AbortSignal) {
-  return apiClient.request<BackendRegionCode[]>({
+  const payload = await apiClient.request<unknown>({
     path: "/tour/meta/ldong-codes?size=1000",
     signal,
   });
+  return parseBackendRegionCodes(payload);
+}
+
+function parseBackendRegionCodes(value: unknown): BackendRegionCode[] {
+  if (!Array.isArray(value)) throw new Error("지역 정보를 불러오지 못했어요.");
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const record = item as Record<string, unknown>;
+    const code = typeof record.code === "string" ? record.code.trim() : "";
+    const name = typeof record.name === "string" ? record.name.trim() : "";
+    return code && name ? [{ code, name }] : [];
+  });
+}
+
+export async function fetchBackendRegionDistrictCodes(regionCode: string, signal?: AbortSignal) {
+  const normalizedCode = regionCode.trim();
+  if (!normalizedCode) throw new Error("지역 코드를 확인하지 못했어요.");
+  const query = new URLSearchParams({ lDongRegnCd: normalizedCode, size: "1000" });
+  const payload = await apiClient.request<unknown>({
+    path: `/tour/meta/ldong-codes?${query.toString()}`,
+    signal,
+  });
+  return parseBackendRegionCodes(payload);
 }
 
 export async function fetchBackendRegionCodeTree(signal?: AbortSignal) {
@@ -560,5 +621,49 @@ export async function getBackendPlace(placeId: EntityId, signal?: AbortSignal) {
     path,
     signal,
   });
-  return mapTourPlaceToPlace(place);
+  const mapped = mapTourPlaceToPlace(place);
+  // Tour 상세을 처음 열면 서버가 Mongo placeId를 함께 만들 수 있다. 화면과
+  // 저장소에서는 목록에서 사용한 client id를 유지해야 상세 응답이 같은
+  // 카드에 합쳐지고, 뒤로 갔을 때 저장/후보 상태도 끊기지 않는다.
+  return mapped && mapped.id !== normalizedId ? { ...mapped, id: normalizedId } : mapped;
+}
+
+export async function fetchBackendSavedPlaces(signal?: AbortSignal): Promise<BackendSavedPlace[]> {
+  const response = await apiClient.request<BackendSavedPlaceResponse[]>({
+    path: "/users/me/saves",
+    signal,
+  });
+  if (!Array.isArray(response)) return [];
+  return response.flatMap((entry) => {
+    if (!entry?.place) return [];
+    const mapped = mapTourPlaceToPlace(entry.place);
+    if (!mapped) return [];
+    // Tour 탐색 목록은 `tour:{contentId}`를 사용한다. 저장 목록도 같은 id로
+    // 맞춰야 하트와 상세 화면의 상태가 서로 다른 장소처럼 갈라지지 않는다.
+    const clientId = mapped.source === "tour" && mapped.externalId
+      ? `tour:${mapped.externalId}`
+      : mapped.id;
+    return [{
+      id: firstString([entry.id], `${clientId}:saved`),
+      ...(firstString([entry.savedAt]) ? { savedAt: firstString([entry.savedAt]) } : {}),
+      place: clientId === mapped.id ? mapped : { ...mapped, id: clientId },
+    }];
+  });
+}
+
+export async function saveBackendPlace(backendPlaceId: EntityId, signal?: AbortSignal) {
+  return apiClient.request<unknown>({
+    path: "/users/me/saves",
+    method: "POST",
+    body: { placeId: backendPlaceId },
+    signal,
+  });
+}
+
+export async function removeBackendSavedPlace(backendPlaceId: EntityId, signal?: AbortSignal) {
+  return apiClient.request<{ success?: boolean }>({
+    path: `/users/me/saves/${encodeURIComponent(backendPlaceId)}`,
+    method: "DELETE",
+    signal,
+  });
 }

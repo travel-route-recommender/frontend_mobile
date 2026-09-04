@@ -154,7 +154,7 @@ function analyzeExplicitPreferenceDifferences(snapshot: DuriAnalysisSnapshot): D
       category: "preference" as const,
       severity: "medium" as const,
       title: `${dimensionLabels[dimension]} 선호 차이가 커요`,
-      summary: `${low.map((id) => memberName(snapshot, id)).join(", ")}님과 ${high.map((id) => memberName(snapshot, id)).join(", ")}님의 직접 응답이 양 끝으로 달라요. Pareto 효율 대안 중 최저 만족도와 Nash 후생을 순서대로 최대화하면 '${compromiseLabel}'가 세 선택지 안의 정확한 공동 조율점이에요. 자동 변경하지는 않아요.`,
+      summary: `${low.map((id) => memberName(snapshot, id)).join(", ")}님과 ${high.map((id) => memberName(snapshot, id)).join(", ")}님의 직접 응답이 양 끝으로 달라요. 세 선택지를 모두 비교해 가장 아쉬운 사람을 먼저 배려하고 일행 전체의 만족도도 함께 높이면 '${compromiseLabel}'가 가장 고르게 맞는 조율점이에요. 자동 변경하지는 않아요.`,
       affectedItemIds: [],
       affectedPlaceIds: [],
       affectedMemberIds: [...low, ...high].sort(),
@@ -163,12 +163,12 @@ function analyzeExplicitPreferenceDifferences(snapshot: DuriAnalysisSnapshot): D
         value: `${dimensionValueLabels[dimension][response.score]} · 직접 응답 ${response.score}/2`,
         memberIds: [response.userId],
       })).concat({
-        label: "공정 최적 조율안",
-        value: `${compromiseLabel} · 최저 만족도 ${(compromise.minimumSatisfaction * 100).toFixed(0)}% · Nash 후생 ${(compromise.nashWelfare * 100).toFixed(0)}%`,
+        label: "함께 만족하기 쉬운 조율안",
+        value: `${compromiseLabel} · 가장 낮은 예상 반영도 ${(compromise.minimumSatisfaction * 100).toFixed(0)}% · 일행 전체 균형 ${(compromise.nashWelfare * 100).toFixed(0)}%`,
         memberIds: compromise.mostAffectedMemberIds,
       }).concat({
-        label: "최적성·계산 가정",
-        value: `3개 대안 완전탐색 · Pareto 효율 ${compromise.paretoEfficient ? "충족" : "미확인"} · 응답자 동일 가중치 · 인접 단계 등거리`,
+        label: "비교 기준",
+        value: `세 선택지를 모두 비교 · ${compromise.paretoEfficient ? "누구의 만족도도 불필요하게 낮추지 않음" : "추가 확인 필요"} · 모든 응답을 같은 비중으로 반영 · 선택 단계 사이 차이를 동일하게 계산`,
         memberIds: [],
       }),
       suggestionSupported: false,
@@ -245,7 +245,7 @@ function analyzeContinuousScheduleConsensus(snapshot: DuriAnalysisSnapshot): Dur
       category: "preference" as const,
       severity: "low" as const,
       title: definition.title,
-      summary: `응답한 참여자 ${observations.length}/${totalMemberCount}명의 설문값 시간칸 구간이 서로 겹치지 않아요. 응답한 구간까지의 최대 거리를 최소화하는 조율점은 ${consensus.recommendedValue.toFixed(1)}분이고, 가장 불리한 사람의 구간 밖 차이는 ${consensus.maximumIntervalRegret.toFixed(1)}분이에요. 시간칸을 잠재 선호 구간으로 보는 모델이므로 자동 변경하지 않아요.`,
+      summary: `응답한 참여자 ${observations.length}/${totalMemberCount}명이 원하는 시간 범위가 서로 겹치지 않아요. 누구에게도 차이가 지나치게 커지지 않도록 맞춘 값은 ${consensus.recommendedValue.toFixed(1)}분이고, 가장 차이가 큰 사람은 원하는 범위에서 ${consensus.maximumIntervalRegret.toFixed(1)}분 벗어나요. 설문 시간칸을 기준으로 한 참고값이므로 자동 변경하지 않아요.`,
       affectedItemIds: [],
       affectedPlaceIds: [],
       affectedMemberIds: observations.map((entry) => entry.userId).sort(),
@@ -256,8 +256,8 @@ function analyzeContinuousScheduleConsensus(snapshot: DuriAnalysisSnapshot): Dur
           memberIds: [entry.userId],
         })),
         {
-          label: "폐구간 minimax 조율",
-          value: `${consensus.recommendedValue.toFixed(1)}분 · 최대 구간 후회 ${consensus.maximumIntervalRegret.toFixed(1)}분`,
+          label: "모두의 차이를 가장 작게 만드는 조율안",
+          value: `${consensus.recommendedValue.toFixed(1)}분 · 가장 큰 예상 차이 ${consensus.maximumIntervalRegret.toFixed(1)}분`,
           memberIds: consensus.mostAffectedMemberIds,
         },
       ],
@@ -289,18 +289,18 @@ function analyzeBudgetPriorityDifferences(snapshot: DuriAnalysisSnapshot): DuriR
   const exact = kemeny.exact;
   const optimumDescription = kemeny.allOptimalRankingsEnumerated
     ? kemeny.equallyOptimalRankings.length > 1
-      ? `${kemeny.equallyOptimalRankings.length}개 정확 공동 최적 순위 중 결정론적으로 고른 한 가지`
-      : "전수탐색으로 확인한 유일 최적 순위"
+      ? `같은 수준으로 의견 차이가 적은 ${kemeny.equallyOptimalRankings.length}개 순서 중 항상 같은 기준으로 고른 한 가지`
+      : "가능한 순서를 모두 비교해 찾은 한 가지"
     : exact
-      ? "정확한 최소 불일치 순위 한 가지(동률 전체는 열거하지 않음)"
-      : "결정론적 국소 탐색으로 찾은 근사 순위";
+      ? "의견 차이가 가장 적은 순서 한 가지(같은 결과의 다른 순서는 모두 나열하지 않음)"
+      : "정해진 계산 범위에서 의견 차이가 가장 적었던 순서";
   const totalMemberCount = tripMemberIds(snapshot).length;
   return [{
     id: `preference-budget-priority-${rankings.map((entry) => entry.userId).sort().join("-")}`,
     category: "preference",
     severity: "low",
     title: "여행비를 우선 쓰고 싶은 항목이 달라요",
-    summary: `응답한 참여자 ${rankings.length}/${totalMemberCount}명의 순위에서 Kemeny 불일치를 줄인 결과는 ${consensus.map((item) => labelFor(budgetLabels, item)).join(" → ")} 순서예요. ${optimumDescription}이며, 결제 한도나 실제 가격 데이터가 없어 자동 예산 배분에는 사용하지 않아요.`,
+    summary: `응답한 참여자 ${rankings.length}/${totalMemberCount}명의 우선순위 차이를 가장 적게 만드는 공통 순서는 ${consensus.map((item) => labelFor(budgetLabels, item)).join(" → ")}예요. ${optimumDescription}이며, 결제 한도나 실제 가격 데이터가 없어 자동 예산 배분에는 사용하지 않아요.`,
     affectedItemIds: [],
     affectedPlaceIds: [],
     affectedMemberIds: rankings.map((entry) => entry.userId).sort(),
@@ -316,7 +316,7 @@ function analyzeBudgetPriorityDifferences(snapshot: DuriAnalysisSnapshot): DuriR
         memberIds: [furthest.left, furthest.right],
       }] : []),
       {
-        label: "Kemeny 합의 품질",
+        label: "공통 순서의 의견 일치 정도",
         value: `${optimumDescription} · 전체 비교쌍 불일치 ${(disagreement * 100).toFixed(0)}%`,
         memberIds: rankings.map((entry) => entry.userId),
       },
@@ -491,7 +491,7 @@ export function analyzePreferredDailyLoad(snapshot: DuriAnalysisSnapshot, analyz
       category: "preference" as const,
       severity: result.detailedSignals.staminaScore === 0 ? "medium" as const : "low" as const,
       title: `${name}님의 희망 일정량보다 긴 날이 있어요`,
-      summary: `${name}님이 설문에서 직접 구성한 하루 평균은 ${preferred.toFixed(1)}분이고, ${worst.date} 일정은 조회된 이동시간을 포함해 최소 ${worst.minutes}분이에요. 설문 양자화 오차를 제외해도 최소 ${(worst.excess - measurementTolerance).toFixed(1)}분 긴 Soft 제약이에요.`,
+      summary: `${name}님이 설문에서 직접 구성한 하루 평균은 ${preferred.toFixed(1)}분이고, ${worst.date} 일정은 조회된 이동시간을 포함해 최소 ${worst.minutes}분이에요. 설문 선택 칸의 오차 범위를 제외해도 최소 ${(worst.excess - measurementTolerance).toFixed(1)}분 길어, 더 편한 여행을 위한 참고 항목으로 안내해요.`,
       date: worst.date,
       affectedItemIds: affected.map((item) => item.id),
       affectedPlaceIds: affected.flatMap((item) => item.placeId ? [item.placeId] : []),
@@ -526,7 +526,7 @@ export function analyzePreferredAverageStay(snapshot: DuriAnalysisSnapshot): Dur
       category: "preference" as const,
       severity: "low" as const,
       title: `${name}님의 활동 블록 길이와 차이가 있어요`,
-      summary: `${name}님이 직접 만든 설문의 비휴식 활동 블록 평균은 ${preferred.toFixed(1)}분이고, 현재 방문·식사 일정 평균은 ${actualAverage.toFixed(1)}분이에요. 분류 오차 가능성이 있어 설문 양자화 오차를 제외한 ${Math.max(0, Math.abs(difference) - tolerance).toFixed(1)}분 차이를 참고용으로만 보여줘요.`,
+      summary: `${name}님이 설문에서 만든 활동 한 번의 평균 길이는 ${preferred.toFixed(1)}분이고, 현재 방문·식사 일정 평균은 ${actualAverage.toFixed(1)}분이에요. 장소 분류와 설문 선택 칸의 오차 범위를 제외한 ${Math.max(0, Math.abs(difference) - tolerance).toFixed(1)}분 차이를 참고용으로만 보여줘요.`,
       affectedItemIds: activityItems.map((item) => item.id),
       affectedPlaceIds: activityItems.flatMap((item) => item.placeId ? [item.placeId] : []),
       affectedMemberIds: [result.userId],
@@ -572,8 +572,8 @@ function analyzeDetailedCategoryCoverage(snapshot: DuriAnalysisSnapshot): DuriRe
         ? `${name}님이 좋아한다고 답한 활동이 아직 없어요`
         : `${name}님이 높은 비중을 둔 활동이 아직 없어요`,
       summary: explicitLevels
-        ? `직접 ‘좋아요’로 답한 ${missingLabels.join(", ")} 유형을 현재 장소 분류·태그에서 찾지 못했어요. 분류가 부정확할 수 있어 Soft 제약으로만 안내해요.`
-        : `이전 설문에서 상대적으로 높은 시간을 배분한 ${missingLabels.join(", ")} 유형을 현재 장소 분류·태그에서 찾지 못했어요. 직접 ‘좋아요’ 응답으로 해석하지 않고 Soft 참고로만 보여줘요.`,
+        ? `직접 ‘좋아요’로 답한 ${missingLabels.join(", ")} 유형을 현재 장소 분류·관심사에서 찾지 못했어요. 장소 정보가 정확하지 않을 수 있어 참고 항목으로만 안내해요.`
+        : `이전 설문에서 상대적으로 높은 시간을 배분한 ${missingLabels.join(", ")} 유형을 현재 장소 분류·관심사에서 찾지 못했어요. 직접 ‘좋아요’ 응답으로 해석하지 않고 참고로만 보여줘요.`,
       affectedItemIds: [],
       affectedPlaceIds: [...new Set(candidatePlaceIds)],
       affectedMemberIds: [result.userId],
@@ -613,7 +613,7 @@ function analyzeSharedCandidateSignalConflicts(snapshot: DuriAnalysisSnapshot): 
           memberIds: conflict.internallyContradictoryMemberIds,
           placeIds: [conflict.placeId],
         }] : []),
-        { label: "판정 근거", value: "같은 placeId의 mustVisit=true와 avoid=true가 동시에 존재", placeIds: [conflict.placeId] },
+        { label: "판정 근거", value: "같은 장소에 ‘반드시 방문’과 ‘피하고 싶음’이 동시에 저장되어 있어요.", placeIds: [conflict.placeId] },
       ],
       suggestionSupported: false,
       constraintType: "hard" as const,
@@ -624,10 +624,10 @@ function analyzeSharedCandidateSignalConflicts(snapshot: DuriAnalysisSnapshot): 
 }
 
 const sharedAxisDefinitions = [
-  { id: "scheduleDensity", label: "일정 밀도 파생 축" },
-  { id: "landmarkNecessity", label: "대표 명소 배분 파생 축" },
-  { id: "localInterest", label: "로컬 장소 배분 파생 축" },
-  { id: "challenging", label: "새롭고 검증이 적은 선택 파생 축" },
+  { id: "scheduleDensity", label: "원하는 일정 밀도" },
+  { id: "landmarkNecessity", label: "대표 명소 선호" },
+  { id: "localInterest", label: "현지 분위기 장소 선호" },
+  { id: "challenging", label: "새로운 장소를 고르는 정도" },
 ] as const;
 
 function analyzeSharedDerivedAxisDifferences(snapshot: DuriAnalysisSnapshot): DuriReportIssue[] {
@@ -649,19 +649,19 @@ function analyzeSharedDerivedAxisDifferences(snapshot: DuriAnalysisSnapshot): Du
       category: "preference" as const,
       severity: "low" as const,
       title: `${definition.label}이 서로 달라요`,
-      summary: `응답한 ${observations.length}/${totalMemberCount}명의 서버 파생 점수를 미응답자 0점 없이 비교했어요. 각 값의 명시된 해상도 구간이 겹치지 않으며, 구간 밖 최대 차이를 최소화하는 조율점은 ${consensus.recommendedValue.toFixed(1)}점이에요. 원본 응답이 아닌 파생 축이므로 자동 변경 근거 하나로 쓰지는 않아요.`,
+      summary: `응답한 ${observations.length}/${totalMemberCount}명의 여행 성향 점수를 비교했어요. 응답하지 않은 사람을 0점으로 넣지 않았고, 각 점수의 오차 범위가 겹치지 않았어요. 누구에게도 차이가 지나치게 커지지 않도록 맞춘 값은 ${consensus.recommendedValue.toFixed(1)}점이에요. 여러 응답을 정리한 값이므로 이것만으로 일정을 자동 변경하지는 않아요.`,
       affectedItemIds: [],
       affectedPlaceIds: [],
       affectedMemberIds: observations.map((entry) => entry.userId).sort(),
       evidence: [
         ...consensus.observations.map((entry) => ({
           label: memberName(snapshot, entry.userId),
-          value: `${entry.value}점 · 측정 구간 ${entry.lower.toFixed(1)}~${entry.upper.toFixed(1)} · rule-based-4axis`,
+          value: `${entry.value}점 · 측정 구간 ${entry.lower.toFixed(1)}~${entry.upper.toFixed(1)} · 여행 성향 응답을 바탕으로 계산`,
           memberIds: [entry.userId],
         })),
         {
-          label: "폐구간 minimax 조율",
-          value: `${consensus.recommendedValue.toFixed(1)}점 · 최대 구간 후회 ${consensus.maximumIntervalRegret.toFixed(1)}점`,
+          label: "모두의 차이를 가장 작게 만드는 조율안",
+          value: `${consensus.recommendedValue.toFixed(1)}점 · 가장 큰 예상 차이 ${consensus.maximumIntervalRegret.toFixed(1)}점`,
           memberIds: consensus.mostAffectedMemberIds,
         },
       ],

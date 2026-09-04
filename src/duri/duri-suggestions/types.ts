@@ -74,6 +74,8 @@ export interface DuriSuggestion {
   changes: ScheduleChangePreview[];
   canApply: boolean;
   unavailableReason?: string;
+  /** 적용 전에 사용자가 직접 확인해야 하는, 위반은 아니지만 아직 확인되지 않은 사실. */
+  reviewWarnings?: string[];
   itineraryFingerprint: string;
 }
 

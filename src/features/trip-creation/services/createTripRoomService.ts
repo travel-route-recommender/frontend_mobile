@@ -1,7 +1,14 @@
 import type { TripEndCondition, TripLocation, TripTransport } from "../../../domain";
-import { apiClient } from "../../../services/apiClient";
+import { apiClient, type ApiClient } from "../../../services/apiClient";
 import { isValidISODate } from "../../../utils/formatters";
 import { isValidClockTime } from "../../../utils/schedule";
+import { environment } from "../../../config/environment";
+import { resolveShareableTripInviteUrl } from "../../invitations/logic/tripInviteLinks";
+import {
+  workspacePlanningApiGateway,
+  type WorkspacePlanningApiGateway,
+  type WorkspacePlanningPatch,
+} from "../../workspace/services/workspacePlanningApi";
 import { saveApiTripLocalFacts } from "./apiTripFactsStorage";
 
 export type CreateTripRoomRequest = {
@@ -28,11 +35,20 @@ export type CreateTripRoomResponse = {
   inviteUrl?: string;
   roomTitle?: string;
   warnings?: string[];
+  setupIssues?: CreateTripSetupIssue[];
   source?: "mock" | "api";
+};
+
+export type CreateTripSetupStep = "destination" | "dates" | "planning" | "local-details";
+
+export type CreateTripSetupIssue = {
+  step: CreateTripSetupStep;
+  message: string;
 };
 
 export interface CreateTripRoomService {
   createTripRoom(request: CreateTripRoomRequest): Promise<CreateTripRoomResponse>;
+  retryTripRoomSetup(roomId: string, request: CreateTripRoomRequest, steps: readonly CreateTripSetupStep[]): Promise<CreateTripSetupIssue[]>;
 }
 
 export type MockTripRoomCreator = (request: CreateTripRoomRequest) => string | Promise<string>;
@@ -70,6 +86,10 @@ class MockCreateTripRoomService implements CreateTripRoomService {
     if (!roomId) throw new Error("여행방을 만들지 못했어요. 입력값과 회원 정보를 확인해 주세요.");
     return { roomId, inviteToken: `mock-${roomId}`, roomTitle: request.name, source: "mock" };
   }
+
+  async retryTripRoomSetup() {
+    return [];
+  }
 }
 
 type CreatedRoomPayload = {
@@ -91,63 +111,100 @@ function parseCreatedRoom(value: unknown): CreatedRoomPayload {
     const userId = (member as Record<string, unknown>).userId;
     return typeof userId === "string" && /^[a-f\d]{24}$/i.test(userId) ? [{ userId }] : [];
   }) : [];
+  const inviteCode = typeof record.inviteCode === "string" && record.inviteCode.trim()
+    ? record.inviteCode.trim()
+    : undefined;
+  const rawInviteLink = typeof record.inviteLink === "string" && record.inviteLink.trim()
+    ? record.inviteLink.trim()
+    : undefined;
   return {
     id,
     title,
     members,
-    ...(typeof record.inviteCode === "string" && record.inviteCode.trim() ? { inviteCode: record.inviteCode.trim() } : {}),
-    ...(typeof record.inviteLink === "string" && record.inviteLink.trim() ? { inviteLink: record.inviteLink.trim() } : {}),
+    ...(inviteCode ? { inviteCode } : {}),
+    ...(rawInviteLink && inviteCode
+      ? { inviteLink: resolveShareableTripInviteUrl(rawInviteLink, inviteCode, environment.apiBaseUrl) }
+      : {}),
+  };
+}
+
+type ApiCreateTripRoomDependencies = {
+  client: ApiClient;
+  planningGateway: WorkspacePlanningApiGateway;
+  saveLocalFacts: typeof saveApiTripLocalFacts;
+};
+
+const allSetupSteps: readonly CreateTripSetupStep[] = ["destination", "dates", "planning", "local-details"];
+
+export function buildCreateTripPlanningPatch(request: CreateTripRoomRequest): WorkspacePlanningPatch {
+  const toAnchor = (location: TripLocation) => ({
+    name: location.name,
+    ...(location.lat !== undefined && location.lng !== undefined ? { lat: location.lat, lng: location.lng } : {}),
+    ...(location.placeId ? { placeId: location.placeId } : {}),
+    ...(location.externalId ? { externalId: location.externalId } : {}),
+    source: location.source ?? "manual" as const,
+  });
+  return {
+    timezone: "Asia/Seoul",
+    transportMode: request.transport === "car" ? "car" : "transit",
+    lodging: request.accommodationLocation ? toAnchor(request.accommodationLocation) : null,
+    returnPoint: request.endCondition ? toAnchor(request.endCondition.location) : null,
+    ...(request.endCondition ? {
+      returnDeadline: request.endCondition.deadline,
+      travelBufferMinutes: request.endCondition.travelMinutes,
+      prepBufferMinutes: request.endCondition.serviceBufferMinutes,
+    } : {}),
+    confirm: true,
   };
 }
 
 class ApiCreateTripRoomService implements CreateTripRoomService {
-  constructor(private readonly currentUserId: string | null) {}
+  constructor(
+    private readonly currentUserId: string | null,
+    private readonly dependencies: ApiCreateTripRoomDependencies,
+  ) {}
 
-  async createTripRoom(request: CreateTripRoomRequest): Promise<CreateTripRoomResponse> {
-    const validationError = validateCreateTripRoomRequest(request);
-    if (validationError) throw new Error(validationError);
-    if (!this.currentUserId || !/^[a-f\d]{24}$/i.test(this.currentUserId)) throw new Error("로그인 사용자 ID를 확인하지 못했어요.");
+  private async configureRoom(
+    roomId: string,
+    request: CreateTripRoomRequest,
+    requestedSteps: readonly CreateTripSetupStep[],
+  ) {
+    const steps = new Set(requestedSteps);
+    const issues: CreateTripSetupIssue[] = [];
+    const attempt = async (step: CreateTripSetupStep, message: string, task: () => Promise<unknown>) => {
+      if (!steps.has(step)) return;
+      try {
+        await task();
+      } catch {
+        issues.push({ step, message });
+      }
+    };
 
-    const created = parseCreatedRoom(await apiClient.request<unknown>({
-      path: request.invitedUserIds.length ? "/rooms/from-compatibility" : "/rooms",
-      method: "POST",
-      body: request.invitedUserIds.length
-        ? { title: request.name, memberUserIds: request.invitedUserIds }
-        : { title: request.name },
+    await attempt("destination", "여행지가 아직 저장되지 않았어요.", () => this.dependencies.client.request<unknown>({
+      path: `/rooms/${encodeURIComponent(roomId)}/destination`,
+      method: "PATCH",
+      body: {
+        name: request.regionName,
+        regionCode: request.areaCode ?? request.regionId,
+      },
       auth: true,
     }));
-    const warnings: string[] = [];
-
-    try {
-      await apiClient.request<unknown>({
-        path: `/rooms/${encodeURIComponent(created.id)}/destination`,
-        method: "PATCH",
-        body: { name: request.regionName, regionCode: request.regionId },
-        auth: true,
-      });
-    } catch {
-      warnings.push("여행방은 생성됐지만 목적지 저장에 실패했어요. 여행방에서 다시 확인해 주세요.");
-    }
 
     if (!request.dateUndecided && request.startDate && request.endDate) {
-      try {
-        await apiClient.request<unknown>({
-          path: `/rooms/${encodeURIComponent(created.id)}`,
-          method: "PATCH",
-          body: { startDate: request.startDate, endDate: request.endDate },
-          auth: true,
-        });
-      } catch {
-        warnings.push("여행방은 생성됐지만 날짜 저장에 실패했어요. 여행방에서 다시 확인해 주세요.");
-      }
+      await attempt("dates", "여행 날짜가 아직 저장되지 않았어요.", () => this.dependencies.client.request<unknown>({
+        path: `/rooms/${encodeURIComponent(roomId)}`,
+        method: "PATCH",
+        body: { startDate: request.startDate, endDate: request.endDate },
+        auth: true,
+      }));
     }
 
-    const acceptedMemberIds = new Set(created.members.map((member) => member.userId));
-    const missingInviteCount = request.invitedUserIds.filter((userId) => !acceptedMemberIds.has(userId)).length;
-    if (missingInviteCount) warnings.push(`선택한 동행자 중 ${missingInviteCount}명은 서버 여행방에 추가되지 않았어요.`);
+    await attempt("planning", "이동 방식·숙소·귀환 일정이 아직 저장되지 않았어요.", () => (
+      this.dependencies.planningGateway.update(roomId, buildCreateTripPlanningPatch(request))
+    ));
 
-    try {
-      await saveApiTripLocalFacts(this.currentUserId, created.id, {
+    await attempt("local-details", "동행 유형과 귀환 메모를 이 기기에 저장하지 못했어요.", () => (
+      this.dependencies.saveLocalFacts(this.currentUserId as string, roomId, {
         startDate: request.dateUndecided ? null : request.startDate,
         endDate: request.dateUndecided ? null : request.endDate,
       }, {
@@ -156,10 +213,30 @@ class ApiCreateTripRoomService implements CreateTripRoomService {
         endCondition: request.endCondition,
         companionType: request.companionType,
         expectedMemberCount: request.expectedMemberCount,
-      });
-    } catch {
-      warnings.push("이동 방식·숙소·종료 조건을 이 기기에 저장하지 못했어요. 서버에는 아직 이 필드 계약이 없어요.");
-    }
+      })
+    ));
+    return issues;
+  }
+
+  async createTripRoom(request: CreateTripRoomRequest): Promise<CreateTripRoomResponse> {
+    const validationError = validateCreateTripRoomRequest(request);
+    if (validationError) throw new Error(validationError);
+    if (!this.currentUserId || !/^[a-f\d]{24}$/i.test(this.currentUserId)) throw new Error("로그인 사용자 ID를 확인하지 못했어요.");
+
+    const created = parseCreatedRoom(await this.dependencies.client.request<unknown>({
+      path: request.invitedUserIds.length ? "/rooms/from-compatibility" : "/rooms",
+      method: "POST",
+      body: request.invitedUserIds.length
+        ? { title: request.name, memberUserIds: request.invitedUserIds }
+        : { title: request.name },
+      auth: true,
+    }));
+    const warnings: string[] = [];
+    const setupIssues = await this.configureRoom(created.id, request, allSetupSteps);
+
+    const acceptedMemberIds = new Set(created.members.map((member) => member.userId));
+    const missingInviteCount = request.invitedUserIds.filter((userId) => !acceptedMemberIds.has(userId)).length;
+    if (missingInviteCount) warnings.push(`선택한 동행자 중 ${missingInviteCount}명은 바로 추가되지 않았어요. 초대 링크를 보내 참여를 요청해 주세요.`);
 
     return {
       roomId: created.id,
@@ -168,14 +245,27 @@ class ApiCreateTripRoomService implements CreateTripRoomService {
       inviteCode: created.inviteCode,
       inviteUrl: created.inviteLink,
       ...(warnings.length ? { warnings } : {}),
+      ...(setupIssues.length ? { setupIssues } : {}),
       source: "api",
     };
+  }
+
+  async retryTripRoomSetup(roomId: string, request: CreateTripRoomRequest, steps: readonly CreateTripSetupStep[]) {
+    const validationError = validateCreateTripRoomRequest(request);
+    if (validationError) throw new Error(validationError);
+    if (!this.currentUserId || !/^[a-f\d]{24}$/i.test(this.currentUserId)) throw new Error("로그인 사용자 ID를 확인하지 못했어요.");
+    if (!/^[a-f\d]{24}$/i.test(roomId)) throw new Error("여행방 정보를 확인하지 못했어요.");
+    return this.configureRoom(roomId, request, [...new Set(steps)].filter((step) => allSetupSteps.includes(step)));
   }
 }
 
 class UnavailableCreateTripRoomService implements CreateTripRoomService {
   async createTripRoom(): Promise<CreateTripRoomResponse> {
-    throw new Error("hybrid 모드에서는 서버와 로컬 여행방을 혼합해 생성하지 않아요.");
+    throw new Error("현재 실행 설정에서는 새 여행방을 만들 수 없어요. 앱을 다시 시작한 뒤 시도해 주세요.");
+  }
+
+  async retryTripRoomSetup(): Promise<CreateTripSetupIssue[]> {
+    throw new Error("현재 실행 설정에서는 여행방 정보를 저장할 수 없어요.");
   }
 }
 
@@ -183,8 +273,13 @@ export function createTripRoomService(
   mode: "mock" | "api" | "hybrid",
   createMockRoom: MockTripRoomCreator,
   currentUserId: string | null = null,
+  apiDependencies: Partial<ApiCreateTripRoomDependencies> = {},
 ): CreateTripRoomService {
   if (mode === "mock") return new MockCreateTripRoomService(createMockRoom);
-  if (mode === "api") return new ApiCreateTripRoomService(currentUserId);
+  if (mode === "api") return new ApiCreateTripRoomService(currentUserId, {
+    client: apiDependencies.client ?? apiClient,
+    planningGateway: apiDependencies.planningGateway ?? workspacePlanningApiGateway,
+    saveLocalFacts: apiDependencies.saveLocalFacts ?? saveApiTripLocalFacts,
+  });
   return new UnavailableCreateTripRoomService();
 }

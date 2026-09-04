@@ -1,12 +1,10 @@
-export const WORKSPACE_BOARD_PEEK_HEIGHT_PX = 116;
-export const WORKSPACE_BOARD_COLLAPSED_HEIGHT_PX = WORKSPACE_BOARD_PEEK_HEIGHT_PX;
+// 접었을 때는 후보 내용이 일정표를 가리지 않고, 다시 펼칠 손잡이만 남긴다.
+export const WORKSPACE_BOARD_COLLAPSED_HEIGHT_PX = 40;
+export const WORKSPACE_BOARD_INITIAL_HEIGHT_PX = 116;
 export const WORKSPACE_BOARD_RESERVED_VIEWPORT_PX = 104;
-
-export type WorkspaceBoardSnapState = "peek" | "half" | "full";
 
 export type WorkspaceBoardHeightBounds = {
   minHeight: number;
-  halfHeight: number;
   maxHeight: number;
 };
 
@@ -31,54 +29,26 @@ export function getWorkspaceBoardHeightBounds(
       - finiteNonNegative(bottomInset),
     0,
   );
-  const minHeight = Math.min(WORKSPACE_BOARD_PEEK_HEIGHT_PX, safeViewportHeight);
+  const minHeight = Math.min(WORKSPACE_BOARD_COLLAPSED_HEIGHT_PX, safeViewportHeight);
   const maxHeight = Math.max(
     minHeight,
     safeViewportHeight - WORKSPACE_BOARD_RESERVED_VIEWPORT_PX,
   );
-  const halfHeight = Math.min(
-    Math.max(Math.round(safeViewportHeight * 0.54), minHeight),
-    maxHeight,
-  );
-  return { minHeight, halfHeight, maxHeight };
-}
-
-export function getWorkspaceBoardSnapState(
-  height: number,
-  bounds: WorkspaceBoardHeightBounds,
-): WorkspaceBoardSnapState {
-  const value = clampWorkspaceBoardHeight(height, bounds);
-  const points: [WorkspaceBoardSnapState, number][] = [
-    ["peek", bounds.minHeight],
-    ["half", bounds.halfHeight],
-    ["full", bounds.maxHeight],
-  ];
-  return points.reduce((nearest, point) => (
-    Math.abs(point[1] - value) < Math.abs(nearest[1] - value) ? point : nearest
-  ))[0];
-}
-
-export function getWorkspaceBoardSnapHeight(
-  state: WorkspaceBoardSnapState,
-  bounds: WorkspaceBoardHeightBounds,
-) {
-  if (state === "peek") return bounds.minHeight;
-  if (state === "half") return bounds.halfHeight;
-  return bounds.maxHeight;
+  return { minHeight, maxHeight };
 }
 
 export function isWorkspaceBoardCollapsed(
   height: number,
   bounds: WorkspaceBoardHeightBounds,
 ) {
-  return getWorkspaceBoardSnapState(height, bounds) === "peek";
+  return clampWorkspaceBoardHeight(height, bounds) <= bounds.minHeight + 0.5;
 }
 
 export function getInitialWorkspaceBoardHeight(
   viewportHeight: number,
   bounds: WorkspaceBoardHeightBounds,
 ) {
-  return clampWorkspaceBoardHeight(Math.min(viewportHeight, bounds.minHeight), bounds);
+  return clampWorkspaceBoardHeight(Math.min(viewportHeight, WORKSPACE_BOARD_INITIAL_HEIGHT_PX), bounds);
 }
 
 export function resizeWorkspaceBoardHeight(
@@ -95,19 +65,15 @@ export function stepWorkspaceBoardHeight(
   direction: -1 | 1,
   bounds: WorkspaceBoardHeightBounds,
 ) {
-  const states: WorkspaceBoardSnapState[] = ["peek", "half", "full"];
-  const currentState = getWorkspaceBoardSnapState(currentHeight, bounds);
-  const nextIndex = Math.min(
-    Math.max(states.indexOf(currentState) + direction, 0),
-    states.length - 1,
-  );
-  return getWorkspaceBoardSnapHeight(states[nextIndex], bounds);
+  const availableRange = Math.max(bounds.maxHeight - bounds.minHeight, 0);
+  const step = Math.max(44, Math.round(availableRange / 4));
+  return clampWorkspaceBoardHeight(currentHeight + direction * step, bounds);
 }
 
-export function snapWorkspaceBoardHeight(
+export function settleWorkspaceBoardHeight(
   currentHeight: number,
-  _velocityY: number,
   bounds: WorkspaceBoardHeightBounds,
 ) {
-  return getWorkspaceBoardSnapHeight(getWorkspaceBoardSnapState(currentHeight, bounds), bounds);
+  // 드래그를 놓은 위치를 그대로 유지한다. 세 단계로 강제 이동하지 않는다.
+  return clampWorkspaceBoardHeight(currentHeight, bounds);
 }

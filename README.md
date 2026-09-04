@@ -2,10 +2,10 @@
 
 함께 여행할 사람들의 장소 후보, 일정, 여행 성향을 한곳에서 조율하는 **두리**의 React Native + Expo 모바일 애플리케이션입니다.
 
-이 저장소는 웹에서 검증한 핵심 여행 계획 흐름을 Android, iOS, Web에서 실행 가능한 모바일 UI로 옮긴 프론트엔드 프로토타입입니다. 인증은 백엔드 API를 사용하고, 여행·장소 데이터와 두리 분석 엔진은 환경 변수로 구현 단계를 선택합니다.
+이 저장소는 Android, iOS, Web에서 실행하는 두리 프론트엔드입니다. 인증과 공유 여행 데이터는 백엔드 API를 사용하고, 두리 일정 분석은 검증된 로컬 엔진으로 실행합니다.
 
 > **현재 상태**
-> 인증 성공은 실제 백엔드 응답으로만 확정합니다. 여행·장소 기능의 `mock`, `api`, `hybrid`, `server` 모드는 계약이 확정되지 않은 기능을 다른 데이터로 몰래 대체하지 않고 명시적인 연결 대기 상태를 보여줍니다.
+> 출시 빌드는 `EXPO_PUBLIC_DATA_SOURCE=api`를 사용합니다. `mock`은 개발용 독립 데모이며 API 데이터와 섞지 않습니다. 일정 분석과 제안은 데이터 모드와 관계없이 검증된 프론트엔드 엔진으로 실행합니다.
 
 ## 목차
 
@@ -225,11 +225,8 @@ npm run web
 
 | 변수 | 허용 값 | 기본값 | 현재 동작 |
 | --- | --- | --- | --- |
-| `EXPO_PUBLIC_DATA_SOURCE` | `mock`, `api`, `hybrid` | `mock` | `mock`만 전체 로컬 흐름 제공. 나머지는 계약 대기 상태 표시 |
-| `EXPO_PUBLIC_API_BASE_URL` | API base URL | `http://localhost:3000/api/v1` | 향후 API client가 사용할 주소. 현재 endpoint 미구현 |
-| `EXPO_PUBLIC_DURI_ENGINE` | `local`, `server` | `local` | `local` 분석 사용. `server`는 계약 대기 상태 표시 |
-| `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` | Google Cloud의 Web OAuth client ID | 빈 값 | Google ID Token의 audience로 사용 |
-| `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID` | Google Cloud의 iOS OAuth client ID | 빈 값 | iOS Google Sign-In과 callback URL scheme 구성 |
+| `EXPO_PUBLIC_DATA_SOURCE` | `mock`, `api`, `hybrid` | `api` | `api`는 인증·여행방·장소·저장을 실제 API에서 조회. `mock`은 로컬 데모 |
+| `EXPO_PUBLIC_API_BASE_URL` | API base URL | `http://localhost:3000/api/v1` | 인증·여행방·장소 등 API 요청의 공통 주소 |
 | `EXPO_PUBLIC_KAKAO_NATIVE_APP_KEY` | Kakao Native app key | 빈 값 | 네이티브 Kakao 로그인 SDK 초기화 |
 | `EXPO_PUBLIC_KAKAO_MAP_JAVASCRIPT_KEY` | Kakao JavaScript key | 빈 값 | 탐색 지도 WebView에서 Kakao 지도 SDK를 로드 |
 | `EXPO_PUBLIC_KAKAO_MAP_BASE_URL` | Kakao 플랫폼 등록 도메인 | `http://localhost:3000` | WebView inline HTML의 base URL |
@@ -239,9 +236,6 @@ npm run web
 ```dotenv
 EXPO_PUBLIC_DATA_SOURCE=api
 EXPO_PUBLIC_API_BASE_URL=http://localhost:3000/api/v1
-EXPO_PUBLIC_DURI_ENGINE=local
-EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID=
-EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID=
 EXPO_PUBLIC_KAKAO_NATIVE_APP_KEY=
 EXPO_PUBLIC_KAKAO_MAP_JAVASCRIPT_KEY=
 EXPO_PUBLIC_KAKAO_MAP_BASE_URL=http://localhost:3000
@@ -249,7 +243,9 @@ EXPO_PUBLIC_KAKAO_MAP_BASE_URL=http://localhost:3000
 
 `EXPO_PUBLIC_*` 값은 앱 번들에 포함될 수 있으므로 비밀번호, API secret, private key, refresh token을 넣으면 안 됩니다. 환경 변수를 바꾼 뒤에는 Expo 개발 서버를 다시 시작하세요.
 
-Google/Kakao 네이티브 로그인은 Expo Go에서 실행되지 않으므로 Android/iOS development build에서 확인합니다. Google은 Web, Android, iOS OAuth client를 같은 Google Cloud project에 만들고, 앱에서 ID Token을 요청할 때 Web OAuth client ID를 `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`에 사용합니다. Android OAuth client에는 package name `com.tripmatch.app.dev`와 빌드 인증서 SHA-1을 등록하고, iOS OAuth client에는 bundle ID `com.tripmatch.app.dev`를 등록합니다. 백엔드의 `GOOGLE_OIDC_AUDIENCES`에도 같은 Web client ID를 허용해야 합니다.
+카카오 로그인은 Expo Go가 아닌 Android/iOS development build에서 확인합니다. Kakao Developers에 실제 package name, key hash, iOS bundle identifier와 URL scheme을 등록해야 합니다.
+
+출시 빌드는 `.env.production.example`을 기준으로 실제 원격 주소와 공개 클라이언트 키, `DURI_ANDROID_PACKAGE`, `DURI_IOS_BUNDLE_IDENTIFIER`, 플랫폼별 빌드 번호를 설정합니다. `npm run verify:release-config`는 Expo 동적 설정까지 적용한 결과에서 로컬 주소, `.dev` 식별자, 누락된 키와 빌드 번호를 차단합니다.
 
 ## 인증 개발 환경
 
@@ -272,7 +268,7 @@ Expo Router의 route group은 URL에 포함되지 않습니다.
 | 두리 제안 | `/trips/[tripId]/suggestions/[suggestionId]` | 제안 비교·확인·적용 |
 | 개인 성향 | `/tests/personal`, `/tests/personal/review`, `/tests/personal/result` | 테스트·검토·결과 |
 | 친구·궁합도 | `/friends`, `/tests/compatibility`, `/tests/compatibility/result` | 친구 저장·선택과 여행 궁합도 결과 |
-| 딥링크 | `/invite/[code]` | `tripmatch://invite/:code` 수신 경계 |
+| 초대 링크 | `/invite/[code]` | 운영 HTTPS App/Universal Link와 `tripmatch://invite/:code` 호환 경계 |
 
 잘못된 `placeId`, `tripId`, 초대 코드와 존재하지 않는 route에는 복구 가능한 오류 상태 또는 not-found 화면을 제공합니다.
 
@@ -379,7 +375,7 @@ Bottom Sheet: 28% / 58% / 88%
 5. 사용자가 적용하기 직전에 fingerprint와 전체 next itinerary를 다시 검증합니다.
 6. `applyDuriSuggestionAtomically`이 해당 여행의 일정을 Zustand update 한 번으로 교체합니다.
 
-분석 뒤 사용자가 일정을 수동으로 바꾸면 기존 제안은 stale 상태가 되어 적용되지 않습니다. 현재는 local 엔진만 동작하며, server 분석과 Schedule batch API는 계약 확정 후 연결할 예정입니다.
+분석 뒤 사용자가 일정을 수동으로 바꾸면 기존 제안은 오래된 결과로 판정되어 적용되지 않습니다. 일정 적용은 최신 사실·일정 버전을 다시 확인하는 Schedule API를 사용하며, 분석 계산은 현재 검증된 local 엔진에서 수행합니다.
 
 ## 검증과 빌드
 
@@ -432,29 +428,27 @@ npm run build
 
 ## 현재 제약 사항
 
-### 백엔드 계약 대기
+### 추가 백엔드 기능이 필요한 항목
 
-- 운영 Auth 서버 smoke/E2E와 Google/Kakao 계정 병합 정책
-- 여행방·장소·저장·후보·일정 API
-- 초대 코드 조회·수락과 실제 사용자 초대
-- 두리 server engine과 일정 batch mutation
+- Google/Kakao 계정 충돌 시 계정 연결 정책
 - guest 계정을 정식 member 계정으로 병합하는 정책
+- 친구 관계와 친구 궁합 공유 API
+- 대중교통·막차 경로와 알림 API의 실제 데이터
+- 원격 두리 분석 엔진(현재 출시는 검증된 local 엔진 사용)
 
 ### 네이티브·출시 준비 대기
 
-- 좌표 기반 실제 지도와 위치 권한
 - push notification과 universal/app link 배포 도메인
 - Android package, iOS bundle identifier, EAS project ID
 - store signing, TestFlight, Play Internal Testing
 - 정식 앱 아이콘·splash·스토어 screenshot
 - 확정된 이용약관과 개인정보 처리방침
 
-### 현재 사용하는 대체 구현
+### 개발 모드
 
-- 지도 화면은 좌표 marker 대신 장소·지역 탐색 보드를 제공합니다.
-- 초대는 실제 검색이나 알림 없이 기존 mock 사용자를 여행방에 추가합니다.
-- Auth UI와 SecureStore adapter는 있으나 실제 token 발급·refresh는 없습니다.
-- Web export는 모바일 UI 확인용이며 production 웹 서비스 배포 설정은 포함하지 않습니다.
+- `mock` 모드는 네트워크 없이 UI와 알고리즘을 검증하는 독립 데이터셋입니다.
+- `api` 모드는 인증·여행방·장소·저장·후보·일정·문서·TODO·초대를 실제 API에 저장합니다.
+- Web export는 정적 번들 검증용이며 production 웹 호스팅 설정은 별도로 필요합니다.
 
 ## 문제 해결
 

@@ -2,10 +2,11 @@ import { useCallback, useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
-import { Card, Screen } from "../../../components/common";
+import { AppHeader, Card, Screen } from "../../../components/common";
 import { ErrorState, LoadingState } from "../../../components/feedback";
 import { queryKeys } from "../../../query/keys";
 import { queryClient } from "../../../query/queryClient";
+import { toUserFacingApiErrorMessage } from "../../../services/userFacingApiError";
 import { colors, spacing, typography } from "../../../theme/tokens";
 import { useAuthSessionStore } from "../../auth/store/useAuthSessionStore";
 import { buildTripExploreHref } from "../../explore/logic/exploreNavigation";
@@ -33,21 +34,29 @@ import type { TripPreparationStepId } from "../types";
 
 export function ApiTripDetailContent({ tripId, created }: { tripId: string; created: boolean }) {
   const router = useRouter();
+  const leave = useCallback(() => {
+    if (router.canGoBack()) router.back();
+    else router.replace("/(tabs)/trips");
+  }, [router]);
   const currentUserId = useAuthSessionStore((state) => state.currentSessionUserId);
-  const sessionKind = useAuthSessionStore((state) => state.sessionKind);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [sharedDocuments, setSharedDocuments] = useState<readonly ApiTripDocument[]>([]);
   const handleDocumentsChange = useCallback((documents: readonly ApiTripDocument[]) => {
     setSharedDocuments(documents);
+  }, []);
+  const handleDocumentsMutated = useCallback((kind: "upload" | "delete") => {
     if (!currentUserId) return;
-    queryClient.setQueryData<Awaited<ReturnType<typeof fetchApiTripDetail>>>(
-      queryKeys.trips.detail(tripId, currentUserId),
-      (current) => current ? {
-        ...current,
-        sharedDocuments: [...documents],
-        sharedDocumentsStatus: "loaded",
-      } : current,
-    );
+    const invalidations = [
+      queryClient.invalidateQueries({ queryKey: queryKeys.trips.detail(tripId, currentUserId) }),
+      queryClient.invalidateQueries({
+        queryKey: [...queryKeys.trips.all, "api", currentUserId],
+        exact: true,
+      }),
+    ];
+    if (kind === "delete") {
+      invalidations.push(queryClient.invalidateQueries({ queryKey: queryKeys.trips.todos(tripId, currentUserId) }));
+    }
+    void Promise.all(invalidations);
   }, [currentUserId, tripId]);
   const startTripExplore = useExploreSearchStore((state) => state.startTripExplore);
   const syncActiveTripRegion = useExploreSearchStore((state) => state.syncActiveTripRegion);
@@ -76,9 +85,9 @@ export function ApiTripDetailContent({ tripId, created }: { tripId: string; crea
   }), [analysisInput, data?.scheduleSnapshot]);
   const currentMember = data?.preferenceSummary.members.find((member) => member.userId === currentUserId);
   const completed = data?.room.status === "completed";
-  if (!currentUserId) return <Screen><ErrorState message="로그인 사용자 정보를 확인하지 못했어요." /></Screen>;
-  if (query.isLoading) return <Screen><LoadingState label="서버 여행방과 일정을 불러오고 있어요." /></Screen>;
-  if (query.error || !data) return <Screen><ErrorState message={query.error instanceof Error ? query.error.message : "여행방을 불러오지 못했어요."} onRetry={() => void query.refetch()} /></Screen>;
+  if (!currentUserId) return <Screen><AppHeader title="여행방" onBack={leave} /><ErrorState message="로그인 사용자 정보를 확인하지 못했어요." /></Screen>;
+  if (query.isLoading) return <Screen><AppHeader title="여행방" onBack={leave} /><LoadingState label="여행방과 일정을 불러오고 있어요." /></Screen>;
+  if (query.error || !data) return <Screen><AppHeader title="여행방" onBack={leave} /><ErrorState message={toUserFacingApiErrorMessage(query.error, "여행방을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.")} onRetry={() => void query.refetch()} /></Screen>;
 
   const isOwner = data.room.members.some((member) => member.userId === currentUserId && member.role === "owner");
   const documentOptions = sharedDocuments.map((document) => ({
@@ -120,8 +129,8 @@ export function ApiTripDetailContent({ tripId, created }: { tripId: string; crea
   });
 
   return <Screen padded={false} testID="api-trip-home-screen"><View style={styles.page}>
-    <TripHomeHero trip={data.room} region={data.region} usersById={data.usersById} currentUserId={currentUserId} onBack={() => router.back()} />
-    {created ? <Pressable accessibilityRole="button" accessibilityLabel="여행방 생성 완료 안내 닫기" onPress={() => router.setParams({ created: undefined })} style={styles.successBanner}><Text style={styles.successTitle}>여행방을 만들었어요</Text><Text style={styles.successText}>서버 여행방을 불러왔어요. · 닫기</Text></Pressable> : null}
+    <TripHomeHero trip={data.room} region={data.region} usersById={data.usersById} currentUserId={currentUserId} onBack={leave} />
+    {created ? <Pressable accessibilityRole="button" accessibilityLabel="여행방 생성 완료 안내 닫기" onPress={() => router.setParams({ created: undefined })} style={styles.successBanner}><Text style={styles.successTitle}>여행방을 만들었어요</Text><Text style={styles.successText}>동행자를 초대하고 여행 계획을 시작해 보세요. · 닫기</Text></Pressable> : null}
     <TripPreparationCard preparation={data.preparation} nextAction={nextAction} onAction={handlePreparationAction} readOnly={completed} />
     <TripQuickActions completed={completed} onWorkspace={openWorkspace} onExplore={explore} onInvite={() => setInviteOpen(true)} />
 
@@ -134,13 +143,13 @@ export function ApiTripDetailContent({ tripId, created }: { tripId: string; crea
       onRetakeMyTest={() => router.push({ pathname: "/tests/personal/result", params: { retest: "1" } })}
     />
     <Card style={styles.contractNotice}>
-      <Text style={styles.noticeTitle}>서버에 저장된 성향 결과를 반영했어요</Text>
-      <Text style={styles.noticeText}>여행방 응답에는 멤버별 성향 유형 스냅샷만 포함돼요. 세부 문항 축을 임의로 복원하지 않고, 완료 여부와 유형만 표시합니다.</Text>
+      <Text style={styles.noticeTitle}>완료한 동행자의 여행 성향을 반영해요</Text>
+      <Text style={styles.noticeText}>성향 조사를 마친 동행자의 결과만 일정 추천에 사용해요. 아직 참여하지 않은 동행자의 취향은 임의로 추측하지 않아요.</Text>
     </Card>
     </View>
 
     <TripPlanningSection trip={data.room} candidates={data.candidates} placesById={data.placesById} usersById={data.usersById} itinerary={data.itinerary} onExplore={explore} onWorkspace={openWorkspace} />
-    <DuriAnalysisCard state={duriState} onPress={duriState.kind === "no-itinerary" ? openWorkspace : openAnalysis} />
+    <DuriAnalysisCard state={duriState} onPress={openAnalysis} />
 
     <View style={styles.recordsSection}>
       <Text style={styles.sectionHeading}>여행 기록</Text>
@@ -151,6 +160,7 @@ export function ApiTripDetailContent({ tripId, created }: { tripId: string; crea
           readOnly={completed}
           isOwner={isOwner}
           onDocumentsChange={handleDocumentsChange}
+          onDocumentsMutationSettled={handleDocumentsMutated}
         />
         <ApiTripTodoSection
       tripId={tripId}

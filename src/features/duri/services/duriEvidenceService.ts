@@ -520,8 +520,8 @@ async function collectCongestionEvidence(
         usablePlaceCount: 0,
         matchedPlaceDateCount: 0,
         unavailableReason: requests.length
-          ? "관광지 집중률 공급자가 연결되지 않아 날짜별 혼잡 예측을 사용하지 않았어요."
-          : "TourAPI 출처로 확인된 일정 장소가 없어 날짜별 혼잡 예측을 조회하지 않았어요.",
+          ? "날짜별 혼잡 정보가 충분하지 않아 이번 점검에서는 혼잡 예측을 제외했어요."
+          : "날짜별 혼잡 정보를 확인할 수 있는 일정 장소가 없어 이번 점검에서는 혼잡 예측을 제외했어요.",
       } satisfies NonNullable<DuriEvidenceCollection["congestion"]>,
     };
   }

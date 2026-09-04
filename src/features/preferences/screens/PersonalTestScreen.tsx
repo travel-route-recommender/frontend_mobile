@@ -94,7 +94,7 @@ export function PersonalTestScreen() {
   }, [ownedDraft, owner, startTest]);
 
   if (!owner) return <Screen><ErrorState message="여행 성향 테스트를 시작하려면 로그인하거나 ‘둘러보기’를 먼저 선택해 주세요." onRetry={() => router.replace("/(auth)/login")} /></Screen>;
-  if (!preferenceSteps.length) return <Screen><AppHeader title="여행 성향 테스트" onBack={() => router.back()} /><ErrorState message="여행 성향 항목을 불러오지 못했어요." /></Screen>;
+  if (!preferenceSteps.length) return <Screen><AppHeader title="여행 성향 테스트" onBack={requestExit} /><ErrorState message="여행 성향 항목을 불러오지 못했어요." /></Screen>;
   if (!draft || !ownedDraft) return <Screen scroll={false}><LoadingState label="여행 성향 테스트를 준비하고 있어요." /></Screen>;
 
   const step = preferenceSteps[draft.currentQuestionIndex];
@@ -112,7 +112,7 @@ export function PersonalTestScreen() {
     return <Screen
       backgroundColor={colors.surface}
       contentContainerStyle={styles.resumeContent}
-      header={<PreferenceFlowHeader onBack={() => router.back()} />}
+      header={<PreferenceFlowHeader onBack={requestExit} />}
     >
       <Card style={styles.resumeCard}>
         <View style={styles.resumeIcon}><Text style={styles.resumeIconText}>✓</Text></View>

@@ -1,4 +1,5 @@
 import { ApiError } from "../../../services/apiClient";
+import { toUserFacingApiErrorMessage } from "../../../services/userFacingApiError";
 import type { SessionKind } from "../types";
 
 export type RestrictedFeature =
@@ -54,5 +55,5 @@ export function apiPermissionMessage(
   if (error instanceof ApiError && error.status === 403) {
     return restrictedFeatureMessage(sessionKind, feature);
   }
-  return error instanceof Error ? error.message : fallback;
+  return toUserFacingApiErrorMessage(error, fallback);
 }

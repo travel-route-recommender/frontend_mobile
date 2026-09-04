@@ -194,7 +194,7 @@ export function DuriTechnicalDetailsModal({
         <Pressable accessibilityRole="button" accessibilityLabel="계산 상세 닫기" onPress={onClose} style={({ pressed }) => [styles.close, pressed && styles.pressed]}><Text style={styles.closeText}>닫기</Text></Pressable>
       </View>
       <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator keyboardShouldPersistTaps="handled">
-        <View style={styles.devNotice}><Text style={styles.devNoticeTitle}>일반 리포트와 분리된 계산 기록이에요</Text><Text style={styles.description}>아래에는 모델 이름, 수식, 실제 대입값, 계산 순서와 한계를 그대로 표시합니다. 개발 중 결과를 재현하거나 판정을 검토할 때 사용해 주세요.</Text></View>
+        <View style={styles.devNotice}><Text style={styles.devNoticeTitle}>일반 리포트와 분리된 계산 기록이에요</Text><Text style={styles.description}>아래에는 모델 이름, 수식, 실제 대입값, 계산 순서와 한계를 그대로 표시합니다. 분석 결과가 나온 과정을 자세히 확인할 때 사용해 주세요.</Text></View>
         {issue ? <IssueTechnicalDetails issue={issue} /> : <OverallTechnicalDetails session={session} />}
         <SecondaryButton label="계산 상세 닫기" onPress={onClose} />
       </ScrollView>

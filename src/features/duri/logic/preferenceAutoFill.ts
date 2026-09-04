@@ -181,6 +181,8 @@ export type PreferenceAutoFillCertificate = {
   discoveryCandidatePlaceIds: EntityId[];
   localApplyEligible: boolean;
   localApplyBlockReasons: string[];
+  /** 위반은 아니지만 적용 전에 사용자가 확인해야 하는 외부 사실. */
+  localApplyReviewWarnings: string[];
   dayAllocations: {
     date: string;
     existingMinutes: number;
@@ -225,7 +227,7 @@ export type PreferenceAutoFillCertificate = {
   };
   transitionBuffer: {
     minutes: number;
-    basis: "observed-route-duration" | "editing-grid-placeholder";
+    basis: "observed-route-duration" | "editing-grid-default";
   };
   operatingFacts: {
     checkedAssignmentCount: number;
@@ -321,6 +323,12 @@ type UtilityRange = { minimum: number; maximum: number };
 type BundleStructuralContext = {
   candidates: readonly CandidateModel[];
   distanceMatrix?: readonly (readonly number[])[];
+  /**
+   * 후보 좌표를 단위 구면의 3차원 벡터로 바꾼 값이다. Beam의 미완성 묶음은
+   * 아직 어떤 후보로 완성될지 모르므로 exact MST를 계산하지 않고, 이 벡터의
+   * pairwise chord dispersion을 O(k)에 계산해 지리적으로 뭉칠 가능성만 비교한다.
+   */
+  unitSphereCoordinates?: readonly (readonly [number, number, number])[];
   mstDistanceByIndexKey: Map<string, number>;
 };
 
@@ -339,6 +347,7 @@ type BundleEvaluation = {
   sharedPreferenceStrengthScore: number;
   recognizedCategoryCount: number;
   categoryConcentrationPairs: number;
+  sphericalDispersion?: number;
   mstDistanceMeters?: number;
   mstDistanceResolved: boolean;
   structuralContext: BundleStructuralContext;
@@ -368,13 +377,14 @@ function emptyCertificate(): PreferenceAutoFillCertificate {
     discoveryCandidatePlaceIds: [],
     localApplyEligible: false,
     localApplyBlockReasons: [],
+    localApplyReviewWarnings: [],
     dayAllocations: [],
     normalizedSatisfactionByMember: {},
     fairnessNormalizationBasis: "unavailable",
     durationEstimates: [],
     durationPackingExact: false,
     durationPackingExpandedStates: 0,
-    transitionBuffer: { minutes: SLOT_MINUTES, basis: "editing-grid-placeholder" },
+    transitionBuffer: { minutes: SLOT_MINUTES, basis: "editing-grid-default" },
     operatingFacts: {
       checkedAssignmentCount: 0,
       windowRestrictedAssignmentCount: 0,
@@ -630,12 +640,12 @@ export function derivePreferenceAutoFillDefaults(input: DuriAnalysisInput): Pref
     )
     : undefined;
   const sources: string[] = [];
-  if (start !== undefined && end !== undefined) sources.push(`설문 시간표 첫·마지막 활동 ${observations.filter((entry) => entry.start && entry.end).length}명 구간 minimax`);
+  if (start !== undefined && end !== undefined) sources.push(`설문 시간표 첫·마지막 활동 ${observations.filter((entry) => entry.start && entry.end).length}명의 차이를 고르게 맞춘 값`);
   if (provisionalTimeWindowUsed && itineraryWindow) {
     sources.push(`편집 템플릿을 현재 일정 ${itineraryWindow.observedDayCount}일의 실제 첫·마지막 배치 범위까지 확장`);
   }
-  if (duration !== undefined) sources.push(`설문 비휴식 활동 블록 ${observations.filter((entry) => entry.duration).length}명 구간 minimax`);
-  if (daily !== undefined) sources.push(`설문 하루 일정량 ${observations.filter((entry) => entry.daily).length}명 구간 minimax`);
+  if (duration !== undefined) sources.push(`설문 비휴식 활동 블록 ${observations.filter((entry) => entry.duration).length}명의 차이를 고르게 맞춘 값`);
+  if (daily !== undefined) sources.push(`설문 하루 일정량 ${observations.filter((entry) => entry.daily).length}명의 차이를 고르게 맞춘 값`);
   if (provisionalTimeWindowUsed) {
     sources.push(`설문 시간대가 없는 날짜의 편집 가능한 낮은 신뢰도 활동 창 ${minutesToTimeString(PROVISIONAL_DAY_START_MINUTES)}~${minutesToTimeString(PROVISIONAL_DAY_END_MINUTES)}`);
   }
@@ -753,6 +763,17 @@ function createBundleStructuralContext(candidates: readonly CandidateModel[]): B
     return { candidates, mstDistanceByIndexKey: new Map() };
   }
   const located = coordinates as StructuralCoordinates[];
+  const radians = (value: number) => value * Math.PI / 180;
+  const unitSphereCoordinates = located.map(({ latitude, longitude }) => {
+    const latitudeRadians = radians(latitude);
+    const longitudeRadians = radians(longitude);
+    const latitudeRadius = Math.cos(latitudeRadians);
+    return [
+      latitudeRadius * Math.cos(longitudeRadians),
+      latitudeRadius * Math.sin(longitudeRadians),
+      Math.sin(latitudeRadians),
+    ] as const;
+  });
   const distanceMatrix = located.map(() => Array<number>(located.length).fill(0));
   for (let left = 0; left < located.length; left += 1) {
     for (let right = left + 1; right < located.length; right += 1) {
@@ -761,7 +782,29 @@ function createBundleStructuralContext(candidates: readonly CandidateModel[]): B
       distanceMatrix[right][left] = distance;
     }
   }
-  return { candidates, distanceMatrix, mstDistanceByIndexKey: new Map() };
+  return { candidates, distanceMatrix, unitSphereCoordinates, mstDistanceByIndexKey: new Map() };
+}
+
+/**
+ * 단위 구면 벡터 x_i에 대해
+ *   sum_{i<j} ||x_i - x_j||^2 = k^2 - ||sum_i x_i||^2
+ * 이므로 모든 쌍을 열거하지 않고 O(k)에 응집도를 계산할 수 있다. 실제 도로
+ * 거리나 최종 MST를 대신하는 값은 아니며, 미완성 beam 상태의 tie-break에만 쓴다.
+ */
+function sphericalChordDispersion(context: BundleStructuralContext, indexes: readonly number[]) {
+  const unitSphereCoordinates = context.unitSphereCoordinates;
+  if (!unitSphereCoordinates || indexes.length < 2) return unitSphereCoordinates ? 0 : undefined;
+  let x = 0;
+  let y = 0;
+  let z = 0;
+  indexes.forEach((index) => {
+    const coordinate = unitSphereCoordinates[index];
+    x += coordinate[0];
+    y += coordinate[1];
+    z += coordinate[2];
+  });
+  const count = indexes.length;
+  return Math.max(0, count * count - (x * x + y * y + z * z));
 }
 
 function minimumSpanningTreeDistanceMeters(context: BundleStructuralContext, indexes: readonly number[]) {
@@ -804,7 +847,11 @@ function resolvedMstDistanceMeters(evaluation: BundleEvaluation) {
   return evaluation.mstDistanceMeters;
 }
 
-function compareBundle(left: BundleEvaluation, right: BundleEvaluation) {
+function compareBundle(
+  left: BundleEvaluation,
+  right: BundleEvaluation,
+  geographicTieBreak: "exact-mst" | "partial-dispersion" = "exact-mst",
+) {
   const minimum = compareFraction(left.sortedFractions[0] ?? { numerator: 0n, denominator: 1n }, right.sortedFractions[0] ?? { numerator: 0n, denominator: 1n });
   if (minimum !== 0) return minimum;
   const nash = left.nashNumerator * right.nashDenominator - right.nashNumerator * left.nashDenominator;
@@ -821,6 +868,14 @@ function compareBundle(left: BundleEvaluation, right: BundleEvaluation) {
   if (left.numericPreferenceScore !== right.numericPreferenceScore) return left.numericPreferenceScore - right.numericPreferenceScore;
   if (left.recognizedCategoryCount !== right.recognizedCategoryCount) return left.recognizedCategoryCount - right.recognizedCategoryCount;
   if (left.categoryConcentrationPairs !== right.categoryConcentrationPairs) return right.categoryConcentrationPairs - left.categoryConcentrationPairs;
+  if (geographicTieBreak === "partial-dispersion") {
+    const leftDispersion = left.sphericalDispersion;
+    const rightDispersion = right.sphericalDispersion;
+    if (leftDispersion !== undefined && rightDispersion !== undefined && leftDispersion !== rightDispersion) {
+      return rightDispersion - leftDispersion;
+    }
+    return -compareText(left.stableKey, right.stableKey);
+  }
   const leftMstDistance = resolvedMstDistanceMeters(left);
   const rightMstDistance = resolvedMstDistanceMeters(right);
   if (leftMstDistance !== undefined && rightMstDistance !== undefined && leftMstDistance !== rightMstDistance) {
@@ -885,6 +940,7 @@ function evaluationFromTotals(
     recognizedCategoryCount: Object.keys(categoryCounts).filter((key) => key !== "unknown").length,
     categoryConcentrationPairs: Object.values(categoryCounts)
       .reduce((sum, count) => sum + count * (count - 1) / 2, 0),
+    sphericalDispersion: sphericalChordDispersion(structuralContext, sortedIndexes),
     mstDistanceResolved: false,
     structuralContext,
     stableKey: sortedIndexes.map((index) => candidates[index].place.id).join("\u0000"),
@@ -1135,6 +1191,10 @@ function heuristicBundleSearch(
       .sort((left, right) => -compareBundle(
         rankingEvaluation(left),
         rankingEvaluation(right),
+        // 미완성 묶음의 MST는 최종 묶음의 MST가 아니며 beam 확장마다 O(k^2)를
+        // 반복한다. 이 단계에서는 O(k) 구면 응집도만 쓰고, 완성 묶음과 1-swap
+        // 이웃은 기존의 exact MST로 최종 비교한다.
+        complete ? "exact-mst" : "partial-dispersion",
       ))
       .slice(0, adaptiveBeamWidth);
     if (!beam.length) break;
@@ -2106,7 +2166,7 @@ function observedTransitionBuffer(input: DuriAnalysisInput) {
       : []
   ));
   if (!routeDurations.length) {
-    return { minutes: SLOT_MINUTES, basis: "editing-grid-placeholder" as const };
+    return { minutes: SLOT_MINUTES, basis: "editing-grid-default" as const };
   }
   return {
     minutes: Math.max(SLOT_MINUTES, snapDurationUpper(median(routeDurations))),
@@ -2785,8 +2845,9 @@ export function planPreferenceAutoFill(input: DuriAnalysisInput, request: Prefer
   const mode = input.itinerary.length ? "partial-itinerary" as const : "empty-itinerary" as const;
   const tripDates = getTripDates(input.trip.startDate, input.trip.endDate);
   if (!tripDates.length) return emptyPlan(input, "insufficient-data", "여행 날짜를 먼저 확정해 주세요.");
-  // 아래 세 원본을 못 읽어도 저장 불가능한 preview는 계속 만든다. 읽지 못한
-  // facts를 '없음'으로 확정하지 않고 certificate에 명시하며 자동 적용은 계속 막는다.
+  // 아래 원본을 못 읽어도 facts를 '없음'으로 확정하지 않고 해당 신호를 계산에서
+  // 제외한다. 정보 부재 자체를 Hard Constraint 위반으로 간주하지는 않는다.
+  // 실제 적용은 최신 schedule/facts version과 잠금·예약 보호를 다시 검증한다.
   const degradedEvidence: PreferenceAutoFillCertificate["degradedEvidence"] = [
     ...(input.documentCollectionStatus === "unavailable" ? ["documents" as const] : []),
     ...(input.localPlanningFactsStatus === "unavailable" ? ["planning" as const] : []),
@@ -2818,7 +2879,7 @@ export function planPreferenceAutoFill(input: DuriAnalysisInput, request: Prefer
   if (preference.tooMany) return emptyPlan(input, "insufficient-data", `참여자 ${MAX_AUTO_FILL_MEMBERS}명 한도를 넘어 기기에서 공정 선택을 실행하지 않았어요.`);
   const constraints = input.confirmedScheduleConstraints ?? [];
   if (constraints.some((constraint) => !isUsableConfirmedScheduleConstraint(constraint, input.trip))) {
-    return emptyPlan(input, "insufficient-data", "확정 예약 중 날짜·시각 계약이 올바르지 않은 항목이 있어 자동 초안을 만들지 않았어요.");
+    return emptyPlan(input, "insufficient-data", "확정 예약 중 날짜나 시각을 확인할 수 없는 항목이 있어 자동 초안을 만들지 않았어요.");
   }
   if (hasMismatchedLinkedConstraint(input, constraints)) {
     return emptyPlan(input, "insufficient-data", "일정표의 날짜·시간·장소와 연결된 확정 예약 사실이 서로 달라 자동 초안을 만들지 않았어요. 먼저 확정 일정을 다시 맞춰 주세요.");
@@ -3144,17 +3205,37 @@ export function planPreferenceAutoFill(input: DuriAnalysisInput, request: Prefer
       .filter((availability) => availability.status === "closed").length, 0),
   };
   const localApplyBlockReasons = [
-    "새 후보의 실제 앞뒤 이동시간 상한을 확인하지 못했습니다.",
     ...(discoveryCandidatePlaceIds.length ? ["일부 장소는 아직 여행방 후보로 확정되지 않은 지역 발견 후보입니다."] : []),
-    ...(mobilityRequirementMembers.length ? ["동행자의 계단·경사·장거리 도보 접근 조건을 후보별 경로 데이터로 검증하지 못했습니다."] : []),
-    ...(operatingFacts.unknownAssignmentCount ? ["일부 새 후보의 구조화된 운영·휴무 시간창을 확인하지 못했습니다."] : []),
-    ...(degradedEvidence.includes("documents") ? ["첨부 문서·예약 잠금 목록을 최신 상태로 확인하지 못했습니다."] : []),
-    ...(degradedEvidence.includes("planning") ? ["여행방 이동수단·복귀 정보를 최신 상태로 확인하지 못했습니다."] : []),
-    ...(degradedEvidence.includes("shared-preferences") ? ["공유 성향과 필수·제외 의견을 최신 상태로 확인하지 못했습니다."] : []),
-    ...(input.scheduleOverlayStatus === "unavailable" ? ["기기 잠금 overlay를 읽지 못했습니다."] : []),
-    ...(hasIncompleteConstraint ? ["종료 시각이 없는 확정 예약이 있습니다."] : []),
-    ...(unresolvedTimeSensitiveDocuments.length ? ["일정에 연결되지 않은 시간 민감 문서가 있습니다."] : []),
     ...(input.trip.status === "completed" ? ["완료된 여행방입니다."] : []),
+  ];
+  const localApplyReviewWarnings = [
+    ...(mobilityRequirementMembers.length
+      ? ["동행자 " + mobilityRequirementMembers.length + "명의 계단·경사·장거리 도보 접근 조건은 장소별 경로 정보가 없어 자동 확인하지 못했어요. 적용 전에 방문지 접근 방법을 확인해 주세요."]
+      : []),
+    transitionBuffer.basis === "observed-route-duration"
+      ? "새 장소와 앞뒤 일정 사이의 실제 경로는 아직 확인되지 않았어요. 이번 여행에서 확인된 이동시간을 여유 기준으로 사용했으니 적용 후 길찾기를 확인해 주세요."
+      : "새 장소와 앞뒤 일정 사이의 실제 이동시간은 아직 확인되지 않았어요. 일정 사이에 기본 편집 여유만 두었으니 적용 후 길찾기를 확인해 주세요.",
+    ...(operatingFacts.unknownAssignmentCount
+      ? [`${operatingFacts.unknownAssignmentCount}개 장소는 방문일의 운영시간과 휴무일을 확인하지 못했어요. 적용하기 전에 각 장소의 최신 안내를 확인해 주세요.`]
+      : []),
+    ...(degradedEvidence.includes("documents")
+      ? ["첨부 문서 목록을 최신 상태로 확인하지 못했어요. 적용 시 서버가 일정에 연결된 예약·티켓 보호 조건을 다시 확인하지만, 연결하지 않은 문서가 있다면 직접 확인해 주세요."]
+      : []),
+    ...(degradedEvidence.includes("planning")
+      ? ["여행방의 이동수단·복귀 정보를 최신 상태로 확인하지 못했어요. 적용 전에 여행 설정을 확인해 주세요."]
+      : []),
+    ...(degradedEvidence.includes("shared-preferences")
+      ? ["공유 성향과 필수·제외 의견을 최신 상태로 확인하지 못해 해당 신호는 이번 선정에서 제외했어요."]
+      : []),
+    ...(input.scheduleOverlayStatus === "unavailable"
+      ? ["이 기기에 저장된 사용자 잠금 표시를 확인하지 못했어요. 기존 일정은 움직이지 않으며, 적용 시 서버 잠금과 예약을 다시 확인해요."]
+      : []),
+    ...(hasIncompleteConstraint
+      ? ["종료 시각이 없는 확정 예약이 있어 연결 장소와 확인된 시작 시각 이후를 피해서 배치했어요. 예약의 전체 시간은 직접 확인해 주세요."]
+      : []),
+    ...(unresolvedTimeSensitiveDocuments.length
+      ? [`일정에 연결되지 않은 예약·티켓 문서 ${unresolvedTimeSensitiveDocuments.length}개는 시간 충돌 여부를 계산하지 못했어요. 적용 전에 문서 시간을 확인해 주세요.`]
+      : []),
   ];
   const selectedCountByDate = assignments.reduce<Record<string, number>>((counts, assignment) => ({
     ...counts,
@@ -3191,20 +3272,20 @@ export function planPreferenceAutoFill(input: DuriAnalysisInput, request: Prefer
   } : undefined;
   const limitations = [
     ...(operatingFacts.checkedAssignmentCount
-      ? [`제안 ${operatingFacts.checkedAssignmentCount}곳은 TourAPI에서 명확히 해석된 운영시간·휴무·행사기간을 배치 가능 구간에 반영했습니다.${operatingFacts.unknownAssignmentCount ? ` 나머지 ${operatingFacts.unknownAssignmentCount}곳은 운영 사실을 확인하지 못했습니다.` : ""}`]
+      ? [`제안 ${operatingFacts.checkedAssignmentCount}곳은 한국관광공사에서 확인한 운영시간·휴무·행사기간을 배치 가능한 시간에 반영했습니다.${operatingFacts.unknownAssignmentCount ? ` 나머지 ${operatingFacts.unknownAssignmentCount}곳은 운영 정보를 확인하지 못했습니다.` : ""}`]
       : ["후보 장소의 구조화된 운영시간·휴무일을 확인하지 못해 모든 운영 조건 충족으로 단정하지 않습니다."]),
-    `${transitionBuffer.minutes}분 전환 여유를 장소 사이에 확보했습니다. ${transitionBuffer.basis === "observed-route-duration" ? "같은 여행에서 조회된 실제 경로시간 중앙값을 15분 단위로 올려 사용했습니다." : "실제 이동시간 관측이 없어 15분 편집 격자 한 칸을 임시로 사용했으며 실제 이동시간을 뜻하지 않습니다."}`,
+    `${transitionBuffer.minutes}분 전환 여유를 장소 사이에 확보했습니다. ${transitionBuffer.basis === "observed-route-duration" ? "같은 여행에서 조회된 실제 경로시간 중앙값을 15분 단위로 올려 사용했습니다." : "실제 이동시간 관측이 없어 15분 편집 격자 한 칸을 기본 여유로 사용했으며 실제 이동시간을 뜻하지 않습니다."}`,
     geographicPlacement
-      ? `좌표가 연결된 같은 빈 구간의 방문 순서는 Haversine 직선거리 경로를 줄이도록 다시 정렬했습니다.${geographicPlacement.exactSequence ? " 계산 범위 안에서는 해당 구간 순서를 모두 비교했습니다." : " 큰 구간은 cheapest insertion과 2-opt를 사용해 전역 최적을 보장하지 않습니다."} 실제 도로·대중교통 이동시간은 아닙니다.`
+      ? `좌표가 연결된 같은 빈 시간의 방문 순서는 직선거리상 덜 돌아가도록 다시 정렬했습니다.${geographicPlacement.exactSequence ? " 이 구간에서 가능한 순서를 모두 비교했습니다." : " 장소가 많은 구간은 가까운 위치부터 넣고 한 번 더 순서를 바꾸어 보았으므로, 가능한 모든 순서 중 가장 짧다고 단정할 수는 없습니다."} 실제 도로·대중교통 이동시간은 아닙니다.`
       : "새 후보와 앞뒤 일정 사이의 좌표·실제 이동시간 근거가 없어 배치 순서와 도착 가능성을 최적화하지 않았습니다.",
     ...(officialDurationAssignmentCount
-      ? [`${officialDurationAssignmentCount}개 장소는 TourAPI 안내 소요시간의 하한보다 짧아지지 않게 배치했습니다.${officialOnlyDurationAssignmentCount ? ` 이 중 ${officialOnlyDurationAssignmentCount}개는 상한을 알 수 없어 통계 범위로 표시하지 않았습니다.` : ""}`]
+      ? [`${officialDurationAssignmentCount}개 장소는 한국관광공사가 안내한 최소 소요시간보다 짧아지지 않게 배치했습니다.${officialOnlyDurationAssignmentCount ? ` 이 중 ${officialOnlyDurationAssignmentCount}개는 최대 소요시간을 알 수 없어 범위로 표시하지 않았습니다.` : ""}`]
       : ["초안 체류시간은 같은 여행의 장소 분류 표본, 동행자 활동시간 합의, 사용자 예비 입력에서 추정했으며 공식 안내시간이 없는 장소에 임의의 업종별 고정값을 넣지 않았습니다."]),
     ...(hasIncompleteConstraint ? ["시각 구간이 완전하지 않은 확정 사실은 연결 장소를 자동 후보에서 제외했습니다. 시작 시각만 확인된 경우에는 그 시각 이후 배치도 제외했습니다."] : []),
-    ...(input.localPlanningFactsStatus === "missing" ? ["여행방 planning이 미설정 상태라 입력되지 않은 복귀 조건을 만들어내지 않았습니다."] : []),
-    ...(snapshotEvidenceMemberIds.length ? ["서버 여행 유형 태그는 상세 수치 설문보다 낮은 신뢰도의 정확 태그 일치 근거로만 사용했습니다."] : []),
-    ...(candidateSelectionOnlyMemberIds.length ? ["성향 설문이 없는 참여자는 본인이 직접 담은 후보에 한해서만 효용을 모델링했습니다."] : []),
-    ...(sharedEvidenceMemberIds.length ? ["서버 파생 축은 결측을 0으로 채우지 않았고, 장소 taxonomy와 의미가 직접 연결되는 대표 명소·로컬 축만 후보 효용에 사용했습니다."] : []),
+    ...(input.localPlanningFactsStatus === "missing" ? ["여행 기본 정보가 아직 없어 입력되지 않은 복귀 조건을 임의로 만들지 않았습니다."] : []),
+    ...(snapshotEvidenceMemberIds.length ? ["여행방에 저장된 여행 유형은 상세 설문보다 참고 비중을 낮추고, 장소 관심사와 정확히 맞을 때만 반영했습니다."] : []),
+    ...(candidateSelectionOnlyMemberIds.length ? ["성향 설문이 없는 참여자는 본인이 직접 담은 후보만 장소 선택 근거로 반영했습니다."] : []),
+    ...(sharedEvidenceMemberIds.length ? ["여행방 성향 정보에서 응답하지 않은 값을 0점으로 채우지 않았고, 장소와 의미가 직접 연결되는 대표 명소·현지 분위기 선호만 반영했습니다."] : []),
     ...(candidateModelResult.excludedAvoidPlaceIds.length ? [`명시적으로 제외한 후보 ${candidateModelResult.excludedAvoidPlaceIds.length}곳은 자동 초안 후보군에서 제거했습니다.`] : []),
     ...(sharedSignalConflicts.length ? [`반드시 방문과 제외 의견이 충돌한 후보 ${sharedSignalConflicts.length}곳만 보류하고, 충돌 없는 후보로 초안을 계속 만들었습니다.`] : []),
     ...(candidateModelResult.missingDurationPlaceIds.length ? [`체류시간 근거가 전혀 없는 후보 ${candidateModelResult.missingDurationPlaceIds.length}곳은 임의 상수로 채우지 않고 제외했습니다.`] : []),
@@ -3218,15 +3299,15 @@ export function planPreferenceAutoFill(input: DuriAnalysisInput, request: Prefer
     ...(prefiltered.omittedCount ? [`기기 탐색을 멈추지 않도록 ${prefiltered.originalEligibleCount}개 후보에서 필수 후보를 모두 보존하고 장소 분류별 순환 선택으로 ${MAX_AUTO_FILL_CANDIDATES}개를 비교했습니다. ${prefiltered.omittedCount}개는 이번 초안 비교에서 제외했습니다.`] : []),
     ...(discoveryCandidatePlaceIds.length ? [`기존 여행방 후보만으로 초안을 만들 수 없어 지역 장소 목록에서 ${discoveryCandidatePlaceIds.length}곳을 발견 후보로 골랐습니다. 후보 보드나 일정에는 자동 저장하지 않았으며 사용자가 확인해야 합니다.`] : []),
     ...(mobilityRequirementMembers.length ? [`동행자 ${mobilityRequirementMembers.length}명의 이동 접근 조건은 보존했지만, 장소·경로별 계단·경사 정보와 개인별 최대 도보 허용치가 없어 후보 점수나 자동 제외에 사용하지 않았습니다.`] : []),
-    ...(degradedEvidence.includes("documents") ? ["첨부 문서 목록을 읽지 못한 상태라 숨은 예약·잠금이 있을 수 있습니다. 초안은 저장되지 않습니다."] : []),
-    ...(degradedEvidence.includes("planning") ? ["여행 기본 정보를 읽지 못한 상태라 숨은 복귀 조건·이동수단이 있을 수 있습니다. 초안은 저장되지 않습니다."] : []),
-    ...(degradedEvidence.includes("shared-preferences") ? ["공유 성향 facts가 없거나 오래되어 해당 신호는 점수와 필수·제외 판단에서 빼고 초안을 만들었습니다."] : []),
+    ...(degradedEvidence.includes("documents") ? ["첨부 문서 목록을 읽지 못해 일정에 연결되지 않은 예약·티켓은 이번 배치에 반영하지 못했습니다."] : []),
+    ...(degradedEvidence.includes("planning") ? ["여행 기본 정보를 읽지 못해 확인되지 않은 복귀 조건·이동수단은 이번 배치에 반영하지 못했습니다."] : []),
+    ...(degradedEvidence.includes("shared-preferences") ? ["여행방 성향 정보가 없거나 오래되어 해당 내용은 장소 점수와 필수·제외 판단에서 빼고 초안을 만들었습니다."] : []),
     ...(fixedUnlinkedCandidatePlaceIds.length ? [`확정 사실에 일정 ID 없이 연결된 후보 ${fixedUnlinkedCandidatePlaceIds.length}개는 임의 시간에 배치하지 않고 제외했습니다.`] : []),
-    ...(dailyPreferenceExceededDates.length ? [`사용자가 요청한 추가 개수를 보존해 ${dailyPreferenceExceededDates.join(", ")}은 설문 하루 일정량 Soft 목표를 넘습니다.`] : []),
+    ...(dailyPreferenceExceededDates.length ? [`사용자가 요청한 추가 개수를 우선해 ${dailyPreferenceExceededDates.join(", ")}은 설문에서 원하는 하루 일정량보다 많습니다.`] : []),
     ...(neutralSelection ? ["후보와 연결되는 직접 선호 근거가 없어 개인 만족도를 계산하지 않았습니다. 장소 분류 중복과 좌표가 완전한 경우의 직선거리 분산만 보조 기준으로 사용했습니다."] : []),
     ...(feasibleCountRange ? [`하루 일정량 관측이 없어 운영시간·체류시간·전환 여유와 실제 빈 구간을 통과하는 가장 큰 묶음 ${feasibleCountRange.selected}곳을 구성했습니다.${feasibleCountRange.maximumCertified ? " 현재 비교 후보와 빈 시간 안에서 더 많은 장소를 넣을 수 없음을 확인했습니다." : " 기기 탐색 한도 때문에 추가 후보가 더 들어갈 가능성은 남아 있습니다."}`] : []),
-    "Tour contentTypeId와 장소 category/tag의 명시적 taxonomy에 매핑되지 않는 상세 category 점수는 추정하지 않았습니다.",
-    "장소별 운영 가능 구간·체류시간·전환 여유를 함께 packing한 뒤, 운영시간을 계속 만족하는 경우에만 같은 구간의 좌표 기반 방문 순서를 적용했습니다. 날짜별 부하 균형은 지리적 근접성보다 먼저 비교합니다.",
+    "공식 관광 유형이나 장소 분류·관심사와 명확히 연결되지 않는 세부 선호 점수는 추정하지 않았습니다.",
+    "장소별 운영시간·체류시간·이동 여유를 함께 맞춘 뒤, 운영시간을 지킬 수 있을 때만 같은 구간의 좌표를 이용해 방문 순서를 정리했습니다. 날짜별 일정량 균형을 장소 사이 거리보다 먼저 비교합니다.",
     ...(!exactSearch ? [`완전 탐색 한도(조합 ${EXACT_BUNDLE_EVALUATION_LIMIT.toString()}개·효용 누적 ${EXACT_BUNDLE_UTILITY_WORK_LIMIT.toString()}회)를 넘어 adaptive beam ${searched.beamWidth}개와 bounded 1-swap을 사용했습니다. ${searched.localSearchConverged ? "검사한 1-swap 이웃에서는 개선안이 없습니다." : `${LOCAL_SEARCH_ROUND_LIMIT}회 한도에서 끝나 local optimum도 보장하지 않습니다.`} 전역 최적 보장은 없습니다.`] : []),
     ...(exactSearch && !exact ? [`체류시간 bin-packing이 ${EXACT_DURATION_PACKING_STATE_LIMIT.toLocaleString()}개 상태 한도에 닿아 일부 후보 묶음의 배치 가능성을 증명하지 못했습니다. 반환한 배치는 실제로 겹치지 않지만 전체 최적 선택 보장은 없습니다.`] : []),
     ...(fairnessNormalizationBasis === "relaxed-candidate-bound" && modeledEvidence.length ? ["참여자 조율 순서는 후보별 순위의 느슨한 상·하한으로 비교했지만, 실제 배치 가능한 개인별 최선·최악을 모두 증명하지 못해 만족도 퍼센트는 표시하지 않았습니다."] : []),
@@ -3260,10 +3341,12 @@ export function planPreferenceAutoFill(input: DuriAnalysisInput, request: Prefer
       mandatorySharedPlaceIds: mandatoryCandidates.map((candidate) => candidate.place.id).sort(compareText),
       excludedAvoidPlaceIds: [...candidateModelResult.excludedAvoidPlaceIds].sort(compareText),
       discoveryCandidatePlaceIds,
-      // 조건부 원자 저장은 연결됐지만, 새 후보의 경로·운영 시간창 Hard
-      // 근거가 없으므로 local/API 모두 정상 일정이라고 표시하지 않는다.
-      localApplyEligible: false,
+      // 기존 일정의 Hard Constraint 위반은 이 지점 전에 생성 자체를 중단한다.
+      // 여기서는 미저장 발견 후보·완료 상태만 막고, 외부 정보의 부재는 확인 경고로 분리한다.
+      // 최신 버전과 잠금·예약 보호는 실제 적용 직전에 다시 원자적으로 검증한다.
+      localApplyEligible: localApplyBlockReasons.length === 0,
       localApplyBlockReasons,
+      localApplyReviewWarnings,
       dayAllocations,
       minimumNormalizedSatisfaction: fairnessNormalizationBasis === "feasible-schedule-exact" && searched.best.sortedFractions.length
         ? Number(searched.best.sortedFractions[0].numerator) / Number(searched.best.sortedFractions[0].denominator)
@@ -3346,11 +3429,9 @@ export function buildPreferenceAutoFillSuggestionEnvelope(
   const itineraryFingerprint = buildItineraryFingerprint(session.snapshot.itinerary);
   const responseCoverage = `${plan.certificate.preferenceEvidenceMemberIds.length}/${session.snapshot.trip.members.length}명`;
   const exactText = plan.certificate.selectionExact
-    ? `후보 묶음 ${plan.certificate.evaluatedBundleCount}개와 장소별 체류시간 배치를 모두 비교(실제 이동 경로는 제외)`
-    : `제한 탐색 ${plan.certificate.evaluatedBundleCount}개 평가 후 ${plan.certificate.localSearchConverged ? "검사한 1-swap 이웃에서 수렴" : "bounded 1-swap 종료(local optimum 미보장)"}`;
-  // 새 후보의 실제 경로·운영 시간창을 배치안별로 재검증하는 계약이 생기기 전에는
-  // local/mock에서도 저장 가능한 정상 일정이라고 주장하지 않는다.
-  const canApply = false;
+    ? `가능한 후보 조합 ${plan.certificate.evaluatedBundleCount}개와 체류시간 배치를 빠짐없이 비교했어요(실제 도로 이동시간은 별도 확인 필요)`
+    : `후보 조합 ${plan.certificate.evaluatedBundleCount}개를 비교하고 ${plan.certificate.localSearchConverged ? "주변의 다른 선택보다 나은지 다시 확인했어요" : "정해진 계산 범위 안에서 가장 나은 안을 골랐어요"}`;
+  const canApply = plan.certificate.localApplyEligible;
   const neutralSelection = plan.certificate.selectionBasis === "neutral-structural";
   const base = {
     tripId: session.tripId,
@@ -3360,15 +3441,18 @@ export function buildPreferenceAutoFillSuggestionEnvelope(
     title: `${neutralSelection ? "중립 후보" : "성향 기반"} 일정 초안 ${plan.assignments.length}개`,
     summary: plan.message,
     reason: neutralSelection
-      ? `후보와 연결되는 선호 근거가 없어 장소 분류·실제 빈 시간·체류시간 근거로 구성 · ${exactText}. 기존 일정과 보호 항목은 변경하지 않았어요.`
-      : `실제 성향 근거 ${responseCoverage} · ${exactText}. 기존 일정과 보호 항목은 변경하지 않았어요.`,
+      ? `직접 확인된 선호가 부족해 장소 종류가 겹치지 않도록 하고, 실제 빈 시간과 체류시간 근거를 맞춰 구성했어요. ${exactText}. 기존 일정과 보호 항목은 변경하지 않았어요.`
+      : `확인 가능한 일행 성향 ${responseCoverage}을 반영했어요. ${exactText}. 기존 일정과 보호 항목은 변경하지 않았어요.`,
     affectedItemIds: plan.assignments.map((assignment) => assignment.itemId),
     affectedPlaceIds: plan.assignments.map((assignment) => assignment.placeId),
     changes,
     canApply,
+    ...(canApply && plan.certificate.localApplyReviewWarnings.length
+      ? { reviewWarnings: [...plan.certificate.localApplyReviewWarnings] }
+      : {}),
     ...(!canApply ? {
       unavailableReason: plan.certificate.localApplyBlockReasons[0]
-        ?? "새 후보의 실제 이동·운영시간 근거가 없어 검토용 미리보기만 제공합니다.",
+        ?? "현재 여행방의 보호 조건 때문에 이 초안을 적용할 수 없습니다.",
     } : {}),
     itineraryFingerprint,
   };

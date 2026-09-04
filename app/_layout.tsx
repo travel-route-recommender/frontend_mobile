@@ -1,5 +1,5 @@
 import { QueryClientProvider } from "@tanstack/react-query";
-import { Redirect, Stack, usePathname } from "expo-router";
+import { Redirect, Stack, useGlobalSearchParams, usePathname, type ErrorBoundaryProps } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
 import { StyleSheet, View } from "react-native";
@@ -10,6 +10,7 @@ import { ErrorState, LoadingState } from "../src/components/feedback";
 import { useAuthSessionHydration } from "../src/features/auth/hooks/useAuthSessionHydration";
 import { useAuthSessionBootstrap } from "../src/features/auth/hooks/useAuthSessionBootstrap";
 import { useAuthSessionStore } from "../src/features/auth/store/useAuthSessionStore";
+import { buildAuthReturnPath } from "../src/features/auth/services/inviteFlowPolicy";
 import { useFriendCompatibilityHydration } from "../src/features/compatibility/hooks/use-friend-compatibility-hydration";
 import { useTripInviteHydration } from "../src/features/invitations/hooks/useTripInviteHydration";
 import { usePreferenceDraftHydration } from "../src/features/preferences/hooks/usePreferenceDraftHydration";
@@ -23,6 +24,21 @@ import { queryClient } from "../src/query/queryClient";
 import { useStoreHydration } from "../src/store/useStoreHydration";
 import { useDuriStore } from "../src/store/useDuriStore";
 import { colors } from "../src/theme/tokens";
+
+export function ErrorBoundary({ retry }: ErrorBoundaryProps) {
+  return (
+    <GestureHandlerRootView style={styles.root}>
+      <SafeAreaProvider>
+        <Screen>
+          <ErrorState
+            message="일시적인 문제가 생겼어요. 화면을 다시 불러와 주세요."
+            onRetry={() => { void retry(); }}
+          />
+        </Screen>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
+  );
+}
 
 export default function RootLayout() {
   return <GestureHandlerRootView style={styles.root}><SafeAreaProvider><QueryClientProvider client={queryClient}><HydratedNavigator /></QueryClientProvider></SafeAreaProvider></GestureHandlerRootView>;
@@ -69,6 +85,7 @@ function HydratedNavigator() {
 
 function SessionAwareNavigator() {
   const pathname = usePathname();
+  const searchParams = useGlobalSearchParams();
   const sessionKind = useAuthSessionStore((state) => state.sessionKind);
   const sessionUserId = useAuthSessionStore((state) => state.currentSessionUserId);
   const preferenceTestCompleted = useAuthSessionStore((state) => state.preferenceTestCompleted);
@@ -98,7 +115,7 @@ function SessionAwareNavigator() {
   const member = sessionKind === "member";
   const publicPath = pathname === "/" || pathname === "/login" || pathname === "/signup-choice" || pathname === "/signup-email" || pathname === "/terms" || pathname === "/invite" || pathname === "/guest-room-limit" || pathname.startsWith("/invite/") || pathname === "/+not-found";
   if (!authenticated && !publicPath) {
-    return <Redirect href={{ pathname: "/(auth)/login", params: { returnTo: pathname } }} />;
+    return <Redirect href={{ pathname: "/(auth)/login", params: { returnTo: buildAuthReturnPath(pathname, searchParams) } }} />;
   }
   return <><StatusBar style="dark" /><Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}>
     <Stack.Screen name="(auth)" />

@@ -1,7 +1,8 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import { router } from "expo-router";
+import { Redirect, router } from "expo-router";
 import { AppHeader, Avatar, Card, Screen } from "../../../components/common";
 import { ErrorState } from "../../../components/feedback";
+import { environment } from "../../../config/environment";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import { useAuthSessionStore } from "../../auth/store/useAuthSessionStore";
 import { MOCK_FRIEND_IDS, mockFriendDescriptions, mockFriendProfiles } from "../config/mock-friends";
@@ -12,13 +13,19 @@ export function FriendManagementScreen() {
   const userId = useAuthSessionStore((state) => state.currentSessionUserId);
   const savedFriendIds = useFriendCompatibilityStore((state) => selectSavedFriendIds(state, userId));
   const toggleSavedFriend = useFriendCompatibilityStore((state) => state.toggleSavedFriend);
+  const leave = () => {
+    if (router.canGoBack()) router.back();
+    else router.replace("/(tabs)/mypage");
+  };
+
+  if (environment.dataSource !== "mock") return <Redirect href="/(tabs)/mypage" />;
 
   if (sessionKind !== "member" || !userId) {
-    return <Screen><AppHeader title="친구" onBack={() => router.back()} /><ErrorState message="친구를 저장하려면 회원 로그인이 필요해요." onRetry={() => router.replace("/(auth)/login")} /></Screen>;
+    return <Screen><AppHeader title="친구" onBack={leave} /><ErrorState message="친구를 저장하려면 회원 로그인이 필요해요." onRetry={() => router.replace("/(auth)/login")} /></Screen>;
   }
 
   return <Screen testID="friend-management">
-    <AppHeader title="친구" subtitle="함께 궁합을 확인할 가상 친구를 저장해 보세요." onBack={() => router.back()} />
+    <AppHeader title="친구" subtitle="함께 궁합 흐름을 확인할 예시 친구를 저장해 보세요." onBack={leave} />
     <View style={styles.summary}><Text style={styles.summaryValue}>{savedFriendIds.length}명</Text><Text style={styles.summaryLabel}>저장한 친구</Text></View>
     <View style={styles.list}>{MOCK_FRIEND_IDS.map((friendId) => {
       const friend = mockFriendProfiles[friendId];
@@ -31,7 +38,7 @@ export function FriendManagementScreen() {
         </Card>
       </Pressable>;
     })}</View>
-    <Text style={styles.notice}>현재 친구 목록은 궁합도 확인을 위한 mock 데이터예요. 백엔드 친구 API가 연결되면 같은 저장 목록 자리에 실제 친구가 표시돼요.</Text>
+    <Text style={styles.notice}>이 목록은 체험용 예시이며 실제 친구 계정과 연결되지 않아요.</Text>
   </Screen>;
 }
 

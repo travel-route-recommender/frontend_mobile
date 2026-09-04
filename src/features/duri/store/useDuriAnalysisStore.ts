@@ -13,6 +13,7 @@ type DuriAnalysisFeatureState = {
   suggestionErrorByTripId: Record<string, string | undefined>;
   clearAll: () => void;
   beginAnalysis: (tripId: string) => boolean;
+  cancelAnalysis: (tripId: string) => void;
   completeAnalysis: (session: DuriAnalysisSession) => void;
   failAnalysis: (tripId: string, message: string) => void;
   beginSuggestionGeneration: (tripId: string) => boolean;
@@ -50,6 +51,12 @@ export const useDuriAnalysisStore = create<DuriAnalysisFeatureState>((set) => ({
     });
     return started;
   },
+  cancelAnalysis: (tripId) => set((state) => state.analysisStatusByTripId[tripId] !== "loading"
+    ? state
+    : {
+        analysisStatusByTripId: { ...state.analysisStatusByTripId, [tripId]: "idle" },
+        analysisErrorByTripId: { ...state.analysisErrorByTripId, [tripId]: undefined },
+      }),
   completeAnalysis: (session) => set((state) => ({
     sessionsByTripId: { ...state.sessionsByTripId, [session.tripId]: session },
     suggestionsByTripId: { ...state.suggestionsByTripId, [session.tripId]: undefined },

@@ -172,10 +172,10 @@ function normalizeRoomIdentity(roomId: string, tripId: string) {
   const normalizedRoomId = roomId.trim();
   const normalizedTripId = tripId.trim();
   if (!MONGO_OBJECT_ID_PATTERN.test(normalizedRoomId)) {
-    throw new WorkspaceTripDatePlanError("scope-mismatch", "서버 여행방 ObjectId 형식이어야 합니다.");
+    throw new WorkspaceTripDatePlanError("scope-mismatch", "여행방 정보가 올바르지 않아 날짜를 변경하지 않았어요.");
   }
   if (normalizedRoomId !== normalizedTripId) {
-    throw new WorkspaceTripDatePlanError("scope-mismatch", "서버 여행방과 로컬 여행 ID가 달라 날짜 변경을 중단했어요.");
+    throw new WorkspaceTripDatePlanError("scope-mismatch", "다른 여행방의 일정이 섞이지 않도록 날짜 변경을 중단했어요. 여행방을 다시 열어 주세요.");
   }
   return { roomId: normalizedRoomId, tripId: normalizedTripId };
 }
@@ -322,6 +322,23 @@ function currentVersionFromApiError(error: ApiError): number | undefined {
   return Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : undefined;
 }
 
+function protectedItemIdsFromApiError(error: ApiError): string[] | undefined {
+  if (!error.payload || typeof error.payload !== "object" || Array.isArray(error.payload)) return undefined;
+  const payload = error.payload as { code?: unknown; itemId?: unknown; itemIds?: unknown };
+  const protectedCodes = new Set([
+    "PROTECTED_DATE_CHANGE_REQUIRES_ACTION",
+    "FIXED_BOOKING_DATE_CONFLICT",
+    "RESERVATION_DATE_MISMATCH",
+    "SCHEDULE_ITEM_LOCKED",
+  ]);
+  if (typeof payload.code !== "string" || !protectedCodes.has(payload.code)) return undefined;
+  const ids = [
+    ...(typeof payload.itemId === "string" ? [payload.itemId] : []),
+    ...(Array.isArray(payload.itemIds) ? payload.itemIds.filter((id): id is string => typeof id === "string") : []),
+  ].map((id) => id.trim()).filter(Boolean);
+  return ids.length ? [...new Set(ids)] : undefined;
+}
+
 function overlaysFromPlan(plan: WorkspaceTripDateChangePlan): Record<string, WorkspaceScheduleLocalOverlay> {
   return Object.fromEntries(plan.nextItinerary.map((item) => [item.id, {
     itemType: item.itemType,
@@ -343,7 +360,7 @@ export function mapWorkspaceTripDateUpdateResponse(input: {
   const startDate = normalizeWireDate(response.startDate, "tripDates.startDate");
   const endDate = normalizeWireDate(response.endDate, "tripDates.endDate");
   if (startDate !== input.plan.startDate || endDate !== input.plan.endDate) {
-    return failResponse("tripDates", "서버가 요청과 다른 여행 날짜를 반환했습니다.");
+    return failResponse("tripDates", "저장된 여행 날짜가 요청한 날짜와 달라 변경을 확정하지 않았어요. 최신 여행방을 다시 불러와 주세요.");
   }
   const parsedSchedule = mapBackendScheduleToWorkspace({
     payload: response,
@@ -481,6 +498,8 @@ export class HttpWorkspaceTripDatesApiGateway implements WorkspaceTripDatesApiGa
       });
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) {
+        const protectedItemIds = protectedItemIdsFromApiError(error);
+        if (protectedItemIds) throw new WorkspaceTripDateProtectedItemError(protectedItemIds);
         throw new WorkspaceScheduleVersionConflictError(
           plan.baseScheduleVersion,
           currentVersionFromApiError(error),

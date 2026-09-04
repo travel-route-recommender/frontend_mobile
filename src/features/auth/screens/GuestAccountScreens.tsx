@@ -17,12 +17,16 @@ export function GuestRoomLimitScreen() {
   const existingRoomId = Array.isArray(params.existingRoomId) ? params.existingRoomId[0] : params.existingRoomId;
   const sessionKind = useAuthSessionStore((state) => state.sessionKind);
   const canContinueGuest = sessionKind === "guest" && Boolean(existingRoomId);
+  const goBack = () => {
+    if (router.canGoBack()) router.back();
+    else router.replace(sessionKind === "guest" ? "/(tabs)/trips" : "/(auth)/login");
+  };
 
-  return <AuthLayout title="이미 참여 중인 여행이 있어요" subtitle="게스트는 진행 중인 여행방 하나에만 참여할 수 있어요." onBack={() => router.back()} testID="guest-room-limit-screen">
+  return <AuthLayout title="이미 참여 중인 여행이 있어요" subtitle="게스트는 진행 중인 여행방 하나에만 참여할 수 있어요." onBack={goBack} testID="guest-room-limit-screen">
     <Card style={styles.notice}>
       <Text style={styles.emoji}>🧳</Text>
       <Text style={styles.noticeTitle}>새 초대는 아직 참여하지 않았어요</Text>
-      <Text style={styles.noticeBody}>기존 여행을 계속 보거나, 회원 계정으로 로그인하거나, 현재 게스트 데이터를 유지한 채 계정을 업그레이드할 수 있어요.</Text>
+      <Text style={styles.noticeBody}>기존 여행을 계속 보거나 회원 계정으로 로그인할 수 있어요. 새 회원 계정에는 현재 게스트 여행이 자동으로 옮겨지지 않으니 필요한 내용을 먼저 확인해 주세요.</Text>
     </Card>
     <View style={styles.actions}>
       <PrimaryButton
@@ -52,6 +56,10 @@ export function GuestUpgradeScreen() {
   const passwordRef = useRef<TextInput>(null);
   const confirmationRef = useRef<TextInput>(null);
   const { applyAuthSuccess } = useAuthFlow();
+  const goBack = () => {
+    if (router.canGoBack()) router.back();
+    else router.replace(sessionKind === "guest" ? "/(tabs)/mypage" : "/(auth)/login");
+  };
 
   const submit = async () => {
     const next = {
@@ -76,24 +84,24 @@ export function GuestUpgradeScreen() {
   };
 
   if (sessionKind !== "guest") {
-    return <AuthLayout title="게스트 계정 업그레이드" onBack={() => router.back()}>
-      <Card style={styles.notice}><Text style={styles.noticeTitle}>게스트 세션이 필요해요</Text><Text style={styles.noticeBody}>{sessionKind === "member" ? "이미 회원 계정으로 이용 중이에요." : "참여 중인 게스트 데이터를 유지하려면 해당 게스트 세션으로 먼저 접속해 주세요."}</Text></Card>
+    return <AuthLayout title="게스트 계정 업그레이드" onBack={goBack}>
+      <Card style={styles.notice}><Text style={styles.noticeTitle}>게스트로 다시 들어와 주세요</Text><Text style={styles.noticeBody}>{sessionKind === "member" ? "이미 회원 계정으로 이용 중이에요." : "참여 중인 여행 정보를 유지하려면 해당 여행방에 게스트로 먼저 들어와 주세요."}</Text></Card>
       <PrimaryButton label={sessionKind === "member" ? "여행 목록으로 이동" : "로그인"} onPress={() => router.replace(sessionKind === "member" ? "/(tabs)/trips" : "/(auth)/login")} />
     </AuthLayout>;
   }
 
   if (!authCapabilities.guestUpgrade) {
-    return <AuthLayout title="게스트 계정 업그레이드" onBack={() => router.back()}>
+    return <AuthLayout title="회원으로 시작하기" onBack={goBack}>
       <Card style={styles.notice}>
-        <Text style={styles.noticeTitle}>현재 서버에서는 지원하지 않아요</Text>
-        <Text style={styles.noticeBody}>게스트 데이터를 유지한 회원 전환 API가 추가된 뒤 사용할 수 있어요. 지금은 별도 회원 계정으로 로그인하거나 가입해 주세요.</Text>
+        <Text style={styles.noticeTitle}>새 회원 계정을 만들어 주세요</Text>
+        <Text style={styles.noticeBody}>회원가입 후 여행방 만들기와 개인 저장을 이용할 수 있어요. 지금 참여 중인 게스트 여행은 자동으로 옮겨지지 않으니 필요한 내용을 먼저 확인해 주세요.</Text>
       </Card>
       <PrimaryButton label="회원가입" onPress={() => router.replace("/(auth)/signup-email")} />
       <SecondaryButton label="로그인" onPress={() => router.replace("/(auth)/login")} />
     </AuthLayout>;
   }
 
-  return <AuthLayout title="게스트 계정 업그레이드" subtitle="현재 여행방과 후보 데이터를 유지하면서 이메일 회원으로 전환해요." onBack={() => router.back()} footer={<PrimaryButton label="데이터 유지하고 회원 전환" loading={loading} onPress={submit} />} testID="guest-upgrade-screen">
+  return <AuthLayout title="게스트 계정 업그레이드" subtitle="현재 여행방과 후보 데이터를 유지하면서 이메일 회원으로 전환해요." onBack={goBack} footer={<PrimaryButton label="데이터 유지하고 회원 전환" loading={loading} onPress={submit} />} testID="guest-upgrade-screen">
     <Card style={styles.summary}><Text style={styles.summaryTitle}>{nickname}님의 참여 데이터는 그대로 유지돼요</Text><Text style={styles.noticeBody}>전환 후 여행방 생성, 일정 편집, 저장 장소, 두리 분석을 이용할 수 있어요.</Text></Card>
     <AuthTextField ref={emailRef} label="이메일" value={email} onChangeText={(value) => { setEmail(value); setErrors((old) => ({ ...old, email: undefined })); }} error={errors.email} keyboardType="email-address" autoCapitalize="none" autoComplete="email" returnKeyType="next" onSubmitEditing={() => passwordRef.current?.focus()} />
     <PasswordField ref={passwordRef} label="새 비밀번호" value={password} onChangeText={(value) => { setPassword(value); setErrors((old) => ({ ...old, password: undefined })); }} error={errors.password} helperText="12자 이상이며 이메일과 다른 비밀번호를 사용해 주세요." autoComplete="new-password" returnKeyType="next" onSubmitEditing={() => confirmationRef.current?.focus()} />

@@ -17,6 +17,8 @@ export type ApiRequest = {
   signal?: AbortSignal;
   auth?: boolean;
   retryUnauthorized?: boolean;
+  /** Uploads can opt into a longer bound; ordinary requests use 30 seconds. */
+  timeoutMs?: number;
 };
 
 export interface ApiClient {
@@ -53,14 +55,21 @@ export class ApiError extends Error {
 
 export class ApiNetworkError extends Error {
   constructor(cause?: unknown) {
-    super("서버에 연결할 수 없어요. 네트워크와 서버 주소를 확인해 주세요.", { cause });
+    super("연결이 원활하지 않아요. 인터넷 연결을 확인한 뒤 다시 시도해 주세요.", { cause });
     this.name = "ApiNetworkError";
+  }
+}
+
+export class ApiTimeoutError extends Error {
+  constructor(cause?: unknown) {
+    super("응답이 늦어지고 있어요. 잠시 후 다시 시도해 주세요.", { cause });
+    this.name = "ApiTimeoutError";
   }
 }
 
 export class ApiContractUnavailableError extends Error {
   constructor() {
-    super("이 기능의 백엔드 API 계약이 아직 연결되지 않았습니다.");
+    super("지금은 이 기능을 사용할 수 없어요. 잠시 후 다시 시도해 주세요.");
     this.name = "ApiContractUnavailableError";
   }
 }
@@ -109,6 +118,7 @@ export class NativeApiClient implements ApiClient {
     signal,
     auth = true,
     retryUnauthorized = true,
+    timeoutMs,
   }: ApiRequest): Promise<ResponseBody> {
     const execute = async () => {
       const headers = new Headers(inputHeaders);
@@ -117,13 +127,32 @@ export class NativeApiClient implements ApiClient {
       if (body !== undefined && !multipart) headers.set("Content-Type", "application/json");
       const accessToken = auth ? await authBindings?.getAccessToken() : null;
       if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
-      const response = await fetch(this.buildUrl(path, query), {
-        method,
-        headers,
-        signal,
-        ...(body !== undefined ? { body: multipart ? body : JSON.stringify(body) } : {}),
-      });
-      return { response, payload: await parseResponse(response) };
+      const controller = new AbortController();
+      const requestTimeoutMs = Math.max(1_000, Math.min(120_000, timeoutMs ?? (multipart ? 60_000 : 30_000)));
+      let timedOut = false;
+      const abortFromCaller = () => controller.abort();
+      if (signal?.aborted) controller.abort();
+      else signal?.addEventListener("abort", abortFromCaller, { once: true });
+      const timeout = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, requestTimeoutMs);
+
+      try {
+        const response = await fetch(this.buildUrl(path, query), {
+          method,
+          headers,
+          signal: controller.signal,
+          ...(body !== undefined ? { body: multipart ? body : JSON.stringify(body) } : {}),
+        });
+        return { response, payload: await parseResponse(response) };
+      } catch (error) {
+        if (timedOut) throw new ApiTimeoutError(error);
+        throw error;
+      } finally {
+        clearTimeout(timeout);
+        signal?.removeEventListener("abort", abortFromCaller);
+      }
     };
 
     let first: Awaited<ReturnType<typeof execute>>;
@@ -131,7 +160,7 @@ export class NativeApiClient implements ApiClient {
       first = await execute();
     } catch (error) {
       if (signal?.aborted) throw error;
-      if (error instanceof ApiError || error instanceof ApiNetworkError) throw error;
+      if (error instanceof ApiError || error instanceof ApiNetworkError || error instanceof ApiTimeoutError) throw error;
       throw new ApiNetworkError(error);
     }
     if (first.response.ok) return first.payload as ResponseBody;
@@ -144,7 +173,7 @@ export class NativeApiClient implements ApiClient {
         retried = await execute();
       } catch (error) {
         if (signal?.aborted) throw error;
-        if (error instanceof ApiError || error instanceof ApiNetworkError) throw error;
+        if (error instanceof ApiError || error instanceof ApiNetworkError || error instanceof ApiTimeoutError) throw error;
         throw new ApiNetworkError(error);
       }
       if (retried.response.ok) return retried.payload as ResponseBody;

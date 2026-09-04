@@ -310,7 +310,7 @@ export function analyzePlaceOperatingConstraints(snapshot: DuriAnalysisSnapshot,
         category: "opening-hours",
         severity: "high",
         title: "정기 휴무일에 일정이 배치되어 있어요",
-        summary: `${place.name}의 명시된 정기 휴무 요일과 현재 방문일이 겹쳐요. 임시 변경 여부는 장소에 다시 확인해 주세요.`,
+        summary: `${place.name}의 명시된 정기 휴무 요일과 현재 방문일이 겹쳐요. 당일 운영 여부는 장소에 다시 확인해 주세요.`,
         evidence: [{ label: "TourAPI 휴무일 원문", value: normalizedText(restDate), source: "한국관광공사 TourAPI", observedAt: placeEvidence.fetchedAt }, { label: "현재 방문일", value: item.date }],
       });
     }

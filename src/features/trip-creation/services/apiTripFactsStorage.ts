@@ -100,14 +100,21 @@ function sameScope(left: ApiTripLocalFactsScope, right: ApiTripLocalFactsScope) 
 
 function parseLocation(value: unknown): TripLocation | null {
   if (!value || typeof value !== "object") return null;
-  const candidate = value as { name?: unknown; address?: unknown };
+  const candidate = value as { name?: unknown; address?: unknown; lat?: unknown; lng?: unknown; placeId?: unknown; externalId?: unknown; source?: unknown };
   if (typeof candidate.name !== "string" || !candidate.name.trim()) return null;
   if (candidate.address !== undefined && typeof candidate.address !== "string") return null;
+  const lat = typeof candidate.lat === "number" && Number.isFinite(candidate.lat) ? candidate.lat : undefined;
+  const lng = typeof candidate.lng === "number" && Number.isFinite(candidate.lng) ? candidate.lng : undefined;
+  const source = candidate.source === "tour" || candidate.source === "kakao" || candidate.source === "manual" ? candidate.source : undefined;
   return {
     name: candidate.name.trim(),
     ...(typeof candidate.address === "string" && candidate.address.trim()
       ? { address: candidate.address.trim() }
       : {}),
+    ...(lat !== undefined && lng !== undefined ? { lat, lng } : {}),
+    ...(typeof candidate.placeId === "string" && candidate.placeId.trim() ? { placeId: candidate.placeId.trim() } : {}),
+    ...(typeof candidate.externalId === "string" && candidate.externalId.trim() ? { externalId: candidate.externalId.trim() } : {}),
+    ...(source ? { source } : {}),
   };
 }
 

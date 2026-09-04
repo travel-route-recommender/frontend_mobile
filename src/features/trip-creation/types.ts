@@ -1,6 +1,6 @@
-import type { EntityId, TripEndConditionType, TripTransport } from "../../domain";
+import type { EntityId, TripEndConditionType, TripLocation, TripTransport } from "../../domain";
 
-export const CREATE_TRIP_DRAFT_VERSION = 3;
+export const CREATE_TRIP_DRAFT_VERSION = 4;
 export const CREATE_TRIP_STEP_COUNT = 5;
 
 export type CreateTripStep = 0 | 1 | 2 | 3 | 4;
@@ -10,6 +10,7 @@ export type TripCompanionType = "friends" | "family" | "couple" | "group" | "und
 export interface CreateTripEndConditionDraft {
   type: TripEndConditionType;
   location: string;
+  locationDetails?: TripLocation | null;
   deadline: string;
   travelMinutes: string;
   serviceBufferMinutes: string;
@@ -26,6 +27,7 @@ export interface CreateTripDraft {
   dateUndecided: boolean;
   transport: TripTransport | null;
   accommodationLocation: string;
+  accommodationLocationDetails?: TripLocation | null;
   endCondition: CreateTripEndConditionDraft | null;
   companionType: TripCompanionType | null;
   expectedMemberCount: number | null;

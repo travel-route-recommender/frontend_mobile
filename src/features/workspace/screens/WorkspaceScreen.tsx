@@ -164,10 +164,12 @@ function LocalWorkspaceScreen() {
   const tripFactsDraft = useMemo<WorkspaceTripFactsDraft>(() => ({
     transport: trip?.transport ?? "public",
     accommodationLocation: trip?.accommodationLocation?.name ?? "",
+    accommodationLocationDetails: trip?.accommodationLocation ? { ...trip.accommodationLocation } : null,
     endCondition: trip?.endCondition
       ? {
           type: trip.endCondition.type,
           location: trip.endCondition.location.name,
+          locationDetails: { ...trip.endCondition.location },
           deadline: trip.endCondition.deadline,
           travelMinutes: String(trip.endCondition.travelMinutes),
           serviceBufferMinutes: String(trip.endCondition.serviceBufferMinutes),
@@ -228,9 +230,8 @@ function LocalWorkspaceScreen() {
     itineraryCount: workspace?.itineraryCount ?? 0,
     hasAnalysis: Boolean(analysisState.session),
     stale: analysisStale,
-    canCreateSchedule: Boolean(workspace?.permissions.canAddSchedule),
     canUseAnalysis: analysisEngineAvailable && analysisState.status !== "loading",
-  }), [analysisEngineAvailable, analysisStale, analysisState.session, analysisState.status, workspace?.itineraryCount, workspace?.permissions.canAddSchedule]);
+  }), [analysisEngineAvailable, analysisStale, analysisState.session, analysisState.status, workspace?.itineraryCount]);
 
   useEffect(() => {
     if (trip && trip.members.some((member) => member.userId === source.currentUserId)) setActiveTrip(trip.id);
@@ -253,7 +254,7 @@ function LocalWorkspaceScreen() {
     });
   }, [documentsHydrated, source.currentUserId, tripDocuments, tripId]);
 
-  if (!workspaceScheduleService.available) return <Screen><AppHeader title="여행 일정" onBack={returnFromWorkspace} /><ErrorState message={workspaceScheduleService.message ?? "워크스페이스 데이터 계약을 확인하고 있어요."} /></Screen>;
+  if (!workspaceScheduleService.available) return <Screen><AppHeader title="여행 일정" onBack={returnFromWorkspace} /><ErrorState message={workspaceScheduleService.message ?? "일정 정보를 확인하지 못했어요. 여행방을 다시 열어 주세요."} /></Screen>;
   if (hydrationError) return <Screen><AppHeader title="여행 일정" onBack={returnFromWorkspace} /><ErrorState message={hydrationError} /></Screen>;
   const canView = Boolean(trip && (sessionKind === "member" || sessionKind === "guest") && trip.members.some((member) => member.userId === source.currentUserId));
   if (!trip || !workspace || !canView) return <Screen><AppHeader title="여행 일정" onBack={returnFromWorkspace} /><ErrorState message={!trip ? "여행 정보를 찾을 수 없어요." : trip.dateUndecided ? "날짜 미정 여행방은 Day 1 초기 상태로 준비되어 있어요. 실제 날짜를 정하면 일정 편집 보드가 열립니다." : sessionKind === "anonymous" ? "로그인하거나 초대받은 여행방에 참여한 뒤 워크스페이스를 볼 수 있어요." : "여행 기간이 잘못되었거나 이 여행방의 참여 권한이 없어요."} /></Screen>;

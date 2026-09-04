@@ -3,6 +3,7 @@ import {
   Animated,
   Modal,
   PanResponder,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -10,6 +11,7 @@ import {
   View,
   type GestureResponderHandlers,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import {
   SLOT_HEIGHT_PX,
   SLOT_MINUTES,
@@ -154,7 +156,7 @@ export function WorkspaceScheduleGrid({
 
 function WorkspaceScheduleHelpModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   return <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-    <View style={styles.helpOverlay}>
+    <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.helpOverlay}>
       <Pressable accessibilityRole="button" accessibilityLabel="일정 사용법 닫기" onPress={onClose} style={StyleSheet.absoluteFill} />
       <View accessibilityViewIsModal style={styles.helpCard}>
         <View style={styles.helpHeader}>
@@ -168,7 +170,7 @@ function WorkspaceScheduleHelpModal({ visible, onClose }: { visible: boolean; on
           <View style={styles.helpItem}><Text style={styles.helpBullet}>•</Text><Text style={styles.helpText}>후보 장소는 아래에서 일정에 추가할 수 있어요.</Text></View>
         </View>
       </View>
-    </View>
+    </SafeAreaView>
   </Modal>;
 }
 
@@ -208,8 +210,7 @@ function EndConditionTimelineMarker({ entry }: { entry: TripEndConditionTimeline
   return <View
     accessible
     accessibilityLabel={accessibilityLabel}
-    pointerEvents="none"
-    style={StyleSheet.absoluteFill}
+    style={[StyleSheet.absoluteFill, styles.ignorePointerEvents]}
   >
     <View style={[styles.endConditionWindow, { top: startTop, height: windowHeight }]} />
     <View style={[styles.endConditionDeadlineLine, { top: deadlineTop }]} />
@@ -476,6 +477,7 @@ const styles = StyleSheet.create({
   timeAxis: { position: "relative", width: TIME_AXIS_WIDTH, height: WORKSPACE_GRID_HEIGHT_PX, borderRightWidth: 1, borderRightColor: colors.border, backgroundColor: colors.surface },
   timeLabel: { position: "absolute", right: spacing.xs, ...typography.caption, fontSize: 10, color: colors.textMuted },
   dayColumn: { position: "relative", flex: 1, height: WORKSPACE_GRID_HEIGHT_PX, backgroundColor: colors.surface },
+  ignorePointerEvents: { pointerEvents: "none" },
   endConditionWindow: { position: "absolute", left: 0, right: 0, zIndex: 1, borderLeftWidth: 3, borderLeftColor: colors.warning, backgroundColor: "rgba(255, 193, 7, 0.14)" },
   endConditionDeadlineLine: { position: "absolute", left: 0, right: 0, zIndex: 2, borderTopWidth: 2, borderTopColor: colors.warning, borderStyle: "dashed" },
   endConditionMarker: { position: "absolute", left: spacing.xs, right: spacing.xs, zIndex: 3, minHeight: 50, justifyContent: "center", borderRadius: radius.md, borderWidth: 1, borderColor: colors.warning, backgroundColor: colors.warningSoft, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
@@ -491,7 +493,7 @@ const styles = StyleSheet.create({
   emptyText: { ...typography.caption, color: colors.textSecondary, textAlign: "center" },
   emptyAction: { minHeight: 44, alignItems: "center", justifyContent: "center", alignSelf: "stretch", borderRadius: radius.md, backgroundColor: "#7569BE", marginTop: spacing.xs },
   emptyActionText: { ...typography.bodyStrong, color: colors.white },
-  item: { position: "absolute", left: spacing.xs, right: spacing.xs, zIndex: 5, overflow: "hidden", borderRadius: radius.md, borderWidth: 1, borderColor: "#9DD5BA", backgroundColor: "#DFF4E9", shadowColor: colors.success, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.13, shadowRadius: 8, elevation: 4 },
+  item: { position: "absolute", left: spacing.xs, right: spacing.xs, zIndex: 5, overflow: "hidden", borderRadius: radius.md, borderWidth: 1, borderColor: "#9DD5BA", backgroundColor: "#DFF4E9", ...Platform.select({ web: { boxShadow: "0 4px 8px rgba(46, 155, 102, 0.13)" }, default: { shadowColor: colors.success, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.13, shadowRadius: 8, elevation: 4 } }) },
   itemConflict: { borderColor: colors.danger, backgroundColor: colors.dangerSoft },
   itemMoving: { zIndex: 20, opacity: 0.92, elevation: 12 },
   itemOpen: { height: "100%", paddingLeft: spacing.sm, paddingRight: 48, paddingTop: spacing.xs, paddingBottom: 18 },

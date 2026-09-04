@@ -1,5 +1,6 @@
 import type { DuriReportIssue } from "../../duri/types";
 import type { ItineraryItem } from "../../../domain";
+import { plainDuriUserText } from "../../duri/presentation/plainDuriUserText";
 import {
   createWorkspaceScheduleImpactTodoSeeds,
   isDuriIssueTodoActionable,
@@ -32,8 +33,8 @@ function priorityFor(issue: DuriReportIssue) {
 }
 
 function descriptionFor(issue: DuriReportIssue) {
-  const evidence = issue.evidence.slice(0, 6).map((entry) => `- ${entry.label}: ${entry.value}`).join("\n");
-  return [issue.summary, evidence && `\n확인 근거\n${evidence}`].filter(Boolean).join("\n").slice(0, 2000);
+  const evidence = issue.evidence.slice(0, 6).map((entry) => `- ${plainDuriUserText(entry.label)}: ${plainDuriUserText(entry.value)}`).join("\n");
+  return [plainDuriUserText(issue.summary), evidence && `\n확인 근거\n${evidence}`].filter(Boolean).join("\n").slice(0, 2000);
 }
 
 /**
@@ -58,7 +59,7 @@ export async function syncApiDuriIssueTodos(input: {
   )))];
   const operations = [
     ...actionable.map((issue) => createApiRoomTodo(input.roomId, {
-      title: issue.title.slice(0, 200),
+      title: plainDuriUserText(issue.title).slice(0, 200),
       description: descriptionFor(issue),
       status: "open",
       priority: priorityFor(issue),
@@ -78,7 +79,7 @@ export async function syncApiDuriIssueTodos(input: {
       source: {
         kind: "duriAnalysis",
         dedupeKey: apiDuriIssueTodoDedupeKey(issue.id),
-        cause: issue.summary,
+        cause: plainDuriUserText(issue.summary),
         baseRevision: input.baseRevision,
       },
       clientMutationId: createApiTodoMutationId(`duri-${stableHash(issue.id)}`),

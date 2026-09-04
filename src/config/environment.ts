@@ -1,13 +1,12 @@
 export type DataSourceMode = "mock" | "api" | "hybrid";
-export type DuriEngineMode = "local" | "server";
 export type PlacesDataSourceMode = "mock" | "api";
 
-function parseDataSource(value: string | undefined): DataSourceMode {
-  return value === "api" || value === "hybrid" ? value : "mock";
-}
+declare const __DEV__: boolean;
 
-function parseDuriEngine(value: string | undefined): DuriEngineMode {
-  return value === "server" ? "server" : "local";
+function parseDataSource(value: string | undefined): DataSourceMode {
+  // A missing or misspelled release variable must never expose demo data.
+  // Mock/hybrid behavior is available only when a developer opts into it.
+  return value === "mock" || value === "hybrid" ? value : "api";
 }
 
 function parsePlacesDataSource(value: string | undefined): PlacesDataSourceMode | undefined {
@@ -30,15 +29,18 @@ const apiBaseUrl =
   platformApiBaseUrl?.trim() ||
   process.env.EXPO_PUBLIC_API_BASE_URL?.trim() ||
   "http://localhost:3000/api/v1";
+const developerMode = typeof __DEV__ !== "undefined" && __DEV__;
 
 export const environment = {
   dataSource,
   placesDataSource,
   apiBaseUrl,
-  duriEngine: parseDuriEngine(process.env.EXPO_PUBLIC_DURI_ENGINE),
   googleWebClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
   googleIosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
   kakaoNativeAppKey: process.env.EXPO_PUBLIC_KAKAO_NATIVE_APP_KEY,
   kakaoMapJavascriptKey: process.env.EXPO_PUBLIC_KAKAO_MAP_JAVASCRIPT_KEY,
   kakaoMapBaseUrl: process.env.EXPO_PUBLIC_KAKAO_MAP_BASE_URL ?? "https://localhost:3000",
+  // 수식·내부 계산 식별자는 일반 사용자에게 노출하지 않고, 개발 중 명시적으로
+  // 요청한 경우에만 상세 화면을 연다. Release bundle에서는 항상 false다.
+  showDuriDiagnostics: developerMode && process.env.EXPO_PUBLIC_SHOW_DURI_DIAGNOSTICS === "true",
 } as const;

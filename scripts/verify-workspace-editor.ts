@@ -13,10 +13,9 @@ import {
   clampWorkspaceBoardHeight,
   getInitialWorkspaceBoardHeight,
   getWorkspaceBoardHeightBounds,
-  getWorkspaceBoardSnapState,
   isWorkspaceBoardCollapsed,
   resizeWorkspaceBoardHeight,
-  snapWorkspaceBoardHeight,
+  settleWorkspaceBoardHeight,
   stepWorkspaceBoardHeight,
 } from "../src/features/workspace/logic/workspaceBoardLayout";
 import {
@@ -176,15 +175,15 @@ assert(!readOnlyPermissions.permissions.canAddSchedule
 const editablePermissions = buildWorkspaceMutationPermissions({ sessionKind: "member", currentUserId: "owner", trip: trip() });
 assert(Object.values(editablePermissions.permissions).every(Boolean), "28b. 편집 가능 여행은 기존 일정 mutation 권한을 유지");
 
-const createScheduleAction = resolveDuriWorkspaceAction({ itineraryCount: 0, hasAnalysis: true, stale: true, canCreateSchedule: true, canUseAnalysis: true });
-const runAnalysisAction = resolveDuriWorkspaceAction({ itineraryCount: 3, hasAnalysis: false, stale: false, canCreateSchedule: true, canUseAnalysis: true });
-const viewAnalysisAction = resolveDuriWorkspaceAction({ itineraryCount: 3, hasAnalysis: true, stale: false, canCreateSchedule: true, canUseAnalysis: false });
-const reanalyzeAction = resolveDuriWorkspaceAction({ itineraryCount: 3, hasAnalysis: true, stale: true, canCreateSchedule: true, canUseAnalysis: true });
-assert(createScheduleAction.kind === "create_schedule" && createScheduleAction.label === "일정 먼저 만들기" && createScheduleAction.destination === "schedule-add-flow", "28c. DURI 일정 0개 상태는 stale보다 먼저 기존 일정 추가 흐름을 선택");
+const createScheduleAction = resolveDuriWorkspaceAction({ itineraryCount: 0, hasAnalysis: true, stale: true, canUseAnalysis: true });
+const runAnalysisAction = resolveDuriWorkspaceAction({ itineraryCount: 3, hasAnalysis: false, stale: false, canUseAnalysis: true });
+const viewAnalysisAction = resolveDuriWorkspaceAction({ itineraryCount: 3, hasAnalysis: true, stale: false, canUseAnalysis: false });
+const reanalyzeAction = resolveDuriWorkspaceAction({ itineraryCount: 3, hasAnalysis: true, stale: true, canUseAnalysis: true });
+assert(createScheduleAction.kind === "create_draft" && createScheduleAction.label === "일정 초안 만들기" && createScheduleAction.destination === "analysis-route", "28c. DURI 일정 0개 상태는 stale보다 먼저 자동 초안 흐름을 선택");
 assert(runAnalysisAction.kind === "run_analysis" && runAnalysisAction.label === "DURI 분석하기", "28d. DURI 일정 있음·분석 없음 상태");
 assert(viewAnalysisAction.kind === "view_analysis" && viewAnalysisAction.label === "분석 결과 보기" && viewAnalysisAction.enabled, "28e. DURI 유효 분석 결과는 엔진 실행 가능 여부와 무관하게 열람 가능");
 assert(reanalyzeAction.kind === "reanalyze" && reanalyzeAction.label === "다시 분석하기", "28f. DURI stale 분석 상태");
-assert(!resolveDuriWorkspaceAction({ itineraryCount: 0, hasAnalysis: false, stale: false, canCreateSchedule: false, canUseAnalysis: true }).enabled, "28g. 읽기 전용 일정 0개에서는 DURI 일정 추가 CTA도 비활성화");
+assert(!resolveDuriWorkspaceAction({ itineraryCount: 0, hasAnalysis: false, stale: false, canUseAnalysis: false }).enabled, "28g. 분석 입력을 확인하지 못한 일정 0개에서는 자동 초안 CTA를 비활성화");
 
 const demo = createDemoData();
 const restored = normalizePersistedState(demo);
@@ -326,6 +325,7 @@ const dayTabStep = 120;
 assert(resolveDayDragTargetIndex(0, 0, dayTabStep * 0.36, 3, dayTabStep) === 1, "65. 첫 인접 DAY 위치를 빠르게 감지");
 assert(resolveDayDragTargetIndex(0, 1, dayTabStep * 1.4, 3, dayTabStep) === 1, "66. 중간 DAY 드롭 위치를 안정적으로 유지");
 assert(resolveDayDragTargetIndex(0, 1, dayTabStep * 1.66, 3, dayTabStep) === 2, "67. 다음 DAY 경계를 넘으면 한 칸씩 이동");
+assert(resolveDayDragTargetIndex(0, 0, dayTabStep * 4.8, 6, dayTabStep) === 5, "67b. 빠른 드래그 한 번으로 여러 DAY를 건너뛰어도 손가락 위치를 즉시 반영");
 assert(resolveDayDragTargetIndex(2, 2, dayTabStep * -0.36, 3, dayTabStep) === 1, "68. 왼쪽 중간 DAY 위치를 빠르게 감지");
 assert(resolveDayDragTargetIndex(4, 4, 0, 3, dayTabStep) === -1, "69. 유효하지 않은 드래그 시작 인덱스 거부");
 assert(shouldActivateWorkspaceDaySwipe(16, 4) && !shouldActivateWorkspaceDaySwipe(8, 1) && !shouldActivateWorkspaceDaySwipe(16, 20), "69b. 시간표의 명확한 가로 제스처만 DAY swipe로 활성화");
@@ -353,19 +353,20 @@ assert(WORKSPACE_HOUR_LABEL_COUNT === 25, "75b. 00:00부터 24:00까지 모든 �
 
 const boardBounds = getWorkspaceBoardHeightBounds(900, 20, 30);
 const boardInitialHeight = getInitialWorkspaceBoardHeight(900, boardBounds);
-assert(boardBounds.minHeight === WORKSPACE_BOARD_COLLAPSED_HEIGHT_PX && boardBounds.halfHeight === 459 && boardBounds.maxHeight === 746, "76. Peek/Half/Full 후보 보드 경계");
-assert(boardInitialHeight === boardBounds.minHeight && getWorkspaceBoardSnapState(boardInitialHeight, boardBounds) === "peek", "76b. 초기 후보 보드는 Timeline을 가리지 않는 Peek");
+assert(boardBounds.minHeight === WORKSPACE_BOARD_COLLAPSED_HEIGHT_PX && boardBounds.maxHeight === 746, "76. 후보 보드의 안전한 연속 높이 경계");
+assert(boardInitialHeight === 116 && !isWorkspaceBoardCollapsed(boardInitialHeight, boardBounds), "76b. 초기 후보 보드는 제목을 보여주되 일정표를 크게 가리지 않음");
 assert(resizeWorkspaceBoardHeight(boardInitialHeight, -37, boardBounds) === boardInitialHeight + 37, "77. 드래그 중에는 연속 높이 확장");
-assert(resizeWorkspaceBoardHeight(boardBounds.halfHeight, 37, boardBounds) === boardBounds.halfHeight - 37, "77b. Half에서도 드래그 중 연속 높이 축소");
+assert(resizeWorkspaceBoardHeight(430, 37, boardBounds) === 393, "77b. 임의 높이에서도 드래그 중 연속 높이 축소");
 assert(resizeWorkspaceBoardHeight(boardInitialHeight, -10_000, boardBounds) === boardBounds.maxHeight, "78. 후보 보드 최대 높이 clamp");
 const collapsedBoardHeight = resizeWorkspaceBoardHeight(boardInitialHeight, 10_000, boardBounds);
-assert(collapsedBoardHeight === boardBounds.minHeight && isWorkspaceBoardCollapsed(collapsedBoardHeight, boardBounds), "79. 후보 보드를 끝까지 내리면 Peek로 clamp");
-assert(snapWorkspaceBoardHeight(430, 0, boardBounds) === boardBounds.halfHeight && getWorkspaceBoardSnapState(430, boardBounds) === "half", "79b. 드래그 해제 시 가장 가까운 Half로 snap");
-assert(snapWorkspaceBoardHeight(700, 0, boardBounds) === boardBounds.maxHeight && getWorkspaceBoardSnapState(700, boardBounds) === "full", "79c. 확장 해제 시 가장 가까운 Full로 snap");
-assert(stepWorkspaceBoardHeight(boardInitialHeight, 1, boardBounds) === boardBounds.halfHeight, "80. 접근성 높이 증가는 다음 의미 상태로 이동");
-assert(stepWorkspaceBoardHeight(boardBounds.minHeight, -1, boardBounds) === boardBounds.minHeight && stepWorkspaceBoardHeight(boardBounds.halfHeight, 1, boardBounds) === boardBounds.maxHeight, "80b. 접근성 Peek/Half/Full 단계 clamp");
+assert(collapsedBoardHeight === boardBounds.minHeight && isWorkspaceBoardCollapsed(collapsedBoardHeight, boardBounds), "79. 후보 보드를 끝까지 내리면 손잡이 높이로 clamp");
+assert(settleWorkspaceBoardHeight(430, boardBounds) === 430, "79b. 드래그 해제 시 사용자가 놓은 연속 높이를 유지");
+assert(settleWorkspaceBoardHeight(700, boardBounds) === 700, "79c. 큰 높이에서도 세 단계로 강제 snap하지 않음");
+const boardAccessibilityStep = stepWorkspaceBoardHeight(boardInitialHeight, 1, boardBounds);
+assert(boardAccessibilityStep > boardBounds.minHeight && boardAccessibilityStep < boardBounds.maxHeight, "80. 접근성 높이 증가는 연속 범위 안에서 이동");
+assert(stepWorkspaceBoardHeight(boardBounds.minHeight, -1, boardBounds) === boardBounds.minHeight && stepWorkspaceBoardHeight(boardBounds.maxHeight, 1, boardBounds) === boardBounds.maxHeight, "80b. 접근성 증분도 최소·최대 높이 clamp");
 const compactBoardBounds = getWorkspaceBoardHeightBounds(360, 30, 30);
-assert(compactBoardBounds.minHeight === WORKSPACE_BOARD_COLLAPSED_HEIGHT_PX && compactBoardBounds.halfHeight === 162 && clampWorkspaceBoardHeight(boardBounds.maxHeight, compactBoardBounds) === compactBoardBounds.maxHeight, "81. 창 축소 시 Peek를 유지하며 후보 보드 높이 재조정");
+assert(compactBoardBounds.minHeight === WORKSPACE_BOARD_COLLAPSED_HEIGHT_PX && compactBoardBounds.maxHeight === 196 && clampWorkspaceBoardHeight(boardBounds.maxHeight, compactBoardBounds) === compactBoardBounds.maxHeight, "81. 창 축소 시 손잡이를 유지하며 후보 보드 높이 재조정");
 const tinyBoardBounds = getWorkspaceBoardHeightBounds(120, 40, 40);
 assert(tinyBoardBounds.minHeight === 40 && tinyBoardBounds.maxHeight === 40, "81b. 손잡이보다 작은 safe viewport에서는 후보 보드도 실제 화면 높이로 제한");
 const zeroBoardBounds = getWorkspaceBoardHeightBounds(0, 40, 40);
@@ -406,5 +407,7 @@ const modalBounds = getWorkspaceModalHeightBounds(900, 20, 30);
 const modalInitialHeight = getInitialWorkspaceModalHeight(900, modalBounds);
 assert(modalBounds.minHeight === 320 && modalBounds.maxHeight === 802 && modalInitialHeight === 612, "90. 후보 선택 창의 safe area 기반 연속 높이 경계");
 assert(resizeWorkspaceModalHeight(modalInitialHeight, -37, modalBounds) === modalInitialHeight + 37 && resizeWorkspaceModalHeight(modalInitialHeight, 10_000, modalBounds) === modalBounds.minHeight && stepWorkspaceModalHeight(modalInitialHeight, 1, modalBounds) === modalInitialHeight + 20, "91. 후보 선택 창 위 손잡이 연속 확대·최소 clamp·접근성 증분");
+const tinyModalBounds = getWorkspaceModalHeightBounds(180, 20, 30);
+assert(tinyModalBounds.minHeight === 130 && tinyModalBounds.maxHeight === 130, "92. 키보드·가로 화면으로 safe viewport가 작아져도 모달 높이가 실제 화면을 넘지 않음");
 
 console.log("Workspace editor verification passed: 100 scenarios + conflict validation");

@@ -2,8 +2,11 @@ import { useMemo, useState } from "react";
 import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { router } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useQuery } from "@tanstack/react-query";
 import { Avatar, PrimaryButton } from "../../../components/common";
 import { environment } from "../../../config/environment";
+import { queryKeys } from "../../../query/keys";
+import { toUserFacingApiErrorMessage } from "../../../services/userFacingApiError";
 import { useDuriStore } from "../../../store/useDuriStore";
 import { colors, radius, shadows, spacing, typography } from "../../../theme/tokens";
 import { AuthErrorBanner, AuthTextField, PasswordField } from "../../auth/components/AuthControls";
@@ -14,6 +17,8 @@ import { validateNickname } from "../../auth/validation";
 import { useTravelPreferenceSurveyResult } from "../../preferences/hooks/useTravelPreferenceSurveyResult";
 import { useApiPreferenceProfile } from "../../preferences/hooks/useApiPreferenceProfile";
 import { resolvePreferenceResultPair } from "../../preferences/logic/resolve-preference-result-pair";
+import { fetchBackendSavedPlaces } from "../../places/services/placeApi";
+import { useApiTripListQuery } from "../../trips/useApiTripListQuery";
 
 const DURI_GUIDE_IMAGE = require("../../../../assets/images/duri/home/hero-travel.png");
 const FOUNDATION = {
@@ -52,6 +57,13 @@ export function MyPageScreen() {
     state.currentUserId,
   ) : null, [detailedResult, result, state.currentUserId]);
   const apiPreferenceProfile = useApiPreferenceProfile(state.currentUserId, sessionKind === "member");
+  const apiTripsQuery = useApiTripListQuery(currentSessionUserId, environment.dataSource === "api" && sessionKind === "member");
+  const apiSavedPlacesQuery = useQuery({
+    queryKey: queryKeys.users.saves(currentSessionUserId ?? ""),
+    queryFn: ({ signal }) => fetchBackendSavedPlaces(signal),
+    enabled: environment.dataSource === "api" && sessionKind === "member" && Boolean(currentSessionUserId),
+    staleTime: 2 * 60 * 1000,
+  });
   const apiPreferenceState = environment.dataSource === "mock"
     ? "local"
     : apiPreferenceProfile.data
@@ -71,7 +83,12 @@ export function MyPageScreen() {
     () => Object.values(state.tripsById).filter((trip) => trip.members.some((member) => member.userId === state.currentUserId)),
     [state.currentUserId, state.tripsById],
   );
-  const savedCount = sessionKind === "member" ? (state.savedPlaceIdsByUserId[state.currentUserId] ?? []).length : 0;
+  const tripCount = environment.dataSource === "api" ? (apiTripsQuery.data?.length ?? 0) : trips.length;
+  const savedCount = sessionKind !== "member"
+    ? 0
+    : environment.dataSource === "api"
+      ? (apiSavedPlacesQuery.data?.length ?? 0)
+      : (state.savedPlaceIdsByUserId[state.currentUserId] ?? []).length;
   const userName = user?.name ?? "여행자";
   const avatarName = user?.initial ?? userName;
   const [editing, setEditing] = useState(false);
@@ -97,7 +114,7 @@ export function MyPageScreen() {
       const updated = await authService.updateProfile({ nickname: nickname.trim(), ...(profileImageUrl.trim() ? { profileImageUrl: profileImageUrl.trim() } : {}) });
       state.upsertUser(updated);
       setEditing(false);
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "프로필을 수정하지 못했어요."); } finally { setBusy(false); }
+    } catch (reason) { setError(toUserFacingApiErrorMessage(reason, "프로필을 수정하지 못했어요. 잠시 후 다시 시도해 주세요.")); } finally { setBusy(false); }
   };
 
   const deleteAccount = async () => {
@@ -108,13 +125,15 @@ export function MyPageScreen() {
       setDeleting(false);
       router.replace("/(auth)/login");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "계정을 탈퇴하지 못했어요.");
+      setError(toUserFacingApiErrorMessage(reason, "계정을 탈퇴하지 못했어요. 잠시 후 다시 시도해 주세요."));
     } finally { setBusy(false); }
   };
 
   const serviceRows: MenuRow[] = sessionKind === "member" ? [
-    { icon: "♥", label: "친구와 궁합 보기", tone: "blue", onPress: () => router.push("/tests/compatibility") },
-    { icon: "♙", label: "친구 관리", tone: "mint", onPress: () => router.push("/friends") },
+    ...(environment.dataSource === "mock" ? [
+      { icon: "♥", label: "친구와 궁합 보기", tone: "blue" as const, onPress: () => router.push("/tests/compatibility") },
+      { icon: "♙", label: "친구 관리", tone: "mint" as const, onPress: () => router.push("/friends") },
+    ] : []),
     { icon: "+", label: "초대 코드로 참여", tone: "peach", onPress: () => router.push("/(auth)/invite") },
     { icon: "✦", label: "온보딩 안내 다시 보기", tone: "lavender", onPress: () => router.push("/(onboarding)/intro") },
     { icon: "▤", label: "서비스 이용약관", tone: "blue", onPress: () => router.push({ pathname: "/(auth)/terms", params: { type: "service" } }) },
@@ -146,11 +165,16 @@ export function MyPageScreen() {
         {sessionKind === "guest" ? <>
           <GuestProfileCard
             avatarName={avatarName}
+            canTransferData={authCapabilities.guestUpgrade}
             imageUrl={user?.profileImageUrl}
             name={userName}
             onEdit={openProfileEditor}
           />
-          <GuestUpgradeCard compact={compact} onPress={() => router.push("/(auth)/guest-upgrade" as never)} />
+          <GuestUpgradeCard
+            canTransferData={authCapabilities.guestUpgrade}
+            compact={compact}
+            onPress={() => router.push(authCapabilities.guestUpgrade ? "/(auth)/guest-upgrade" as never : "/(auth)/signup-email")}
+          />
         </> : <>
           <MemberProfileCard
             avatarName={avatarName}
@@ -162,7 +186,7 @@ export function MyPageScreen() {
             preferredTags={preferencePresentation?.preferredTags ?? []}
             onEdit={openProfileEditor}
           />
-          <ActivityGrid tripCount={trips.length} savedCount={savedCount} />
+          <ActivityGrid tripCount={tripCount} savedCount={savedCount} />
           <SectionTitle title="나의 여행 성향" />
           {preferencePresentation
             ? <PreferenceResultCard
@@ -171,30 +195,30 @@ export function MyPageScreen() {
               title={preferencePresentation.title}
             />
             : apiPreferenceState === "loading"
-              ? <PreferenceStatusCard message="서버에 저장된 최신 성향을 확인하고 있어요." />
+              ? <PreferenceStatusCard message="저장된 최신 여행 성향을 확인하고 있어요." />
               : apiPreferenceState === "error"
-                ? <PreferenceStatusCard message="성향 정보를 불러오지 못했어요. 완료 여부를 미완료로 바꾸지 않았습니다." onRetry={() => { void apiPreferenceProfile.refetch(); }} />
+                ? <PreferenceStatusCard message="성향 정보를 불러오지 못했어요. 이전 결과는 그대로 유지했어요." onRetry={() => { void apiPreferenceProfile.refetch(); }} />
                 : <PreferenceEmptyCard compact={compact} />}
         </>}
 
         <MenuSection rows={serviceRows} title="서비스" />
         <MenuSection rows={logoutRow} title="계정" />
-        <MenuSection danger rows={dangerRows} title="위험 영역" />
+        {authCapabilities.accountDeletion ? <MenuSection danger rows={dangerRows} title="계정 삭제" /> : null}
       </ScrollView>
     </SafeAreaView>
 
     <Modal visible={editing} transparent animationType="fade" onRequestClose={() => setEditing(false)}>
       <Dialog title="프로필 수정" onClose={() => setEditing(false)}>
         <AuthTextField label="닉네임" value={nickname} onChangeText={(value) => { setNickname(value); setError(null); }} maxLength={12} />
-        <AuthTextField label="프로필 이미지 URL" value={profileImageUrl} onChangeText={(value) => { setProfileImageUrl(value); setError(null); }} autoCapitalize="none" keyboardType="url" placeholder="https://..." />
+        <AuthTextField label="프로필 사진 링크 (선택)" value={profileImageUrl} onChangeText={(value) => { setProfileImageUrl(value); setError(null); }} autoCapitalize="none" keyboardType="url" placeholder="https://..." helperText="인터넷에서 열 수 있는 사진 주소를 입력해 주세요." />
         <AuthErrorBanner message={error} />
         <PrimaryButton label="수정 완료" loading={busy} onPress={saveProfile} />
       </Dialog>
     </Modal>
 
-    <Modal visible={deleting} transparent animationType="fade" onRequestClose={() => setDeleting(false)}>
+    <Modal visible={authCapabilities.accountDeletion && deleting} transparent animationType="fade" onRequestClose={() => setDeleting(false)}>
       <Dialog title={sessionKind === "guest" ? "게스트 계정 삭제" : "정말 탈퇴할까요?"} onClose={() => setDeleting(false)}>
-        <Text style={styles.dialogDescription}>계정 정보와 모든 로그인 세션이 폐기되며 이 작업은 되돌릴 수 없어요.</Text>
+        <Text style={styles.dialogDescription}>계정 정보가 삭제되고 모든 기기에서 로그아웃돼요. 이 작업은 되돌릴 수 없어요.</Text>
         {provider === "email" ? <PasswordField label="현재 비밀번호" value={password} onChangeText={(value) => { setPassword(value); setError(null); }} autoComplete="current-password" /> : null}
         <AuthErrorBanner message={error} />
         <Pressable accessibilityRole="button" accessibilityState={{ disabled: busy }} disabled={busy} onPress={deleteAccount} style={[styles.confirmDanger, busy && styles.disabled]}><Text style={styles.confirmDangerText}>{busy ? "처리 중..." : "계정 영구 삭제"}</Text></Pressable>
@@ -230,8 +254,9 @@ function MemberProfileCard({ avatarName, compact, imageUrl, name, preferenceTitl
   </View>;
 }
 
-function GuestProfileCard({ avatarName, imageUrl, name, onEdit }: {
+function GuestProfileCard({ avatarName, canTransferData, imageUrl, name, onEdit }: {
   avatarName: string;
+  canTransferData: boolean;
   imageUrl?: string;
   name: string;
   onEdit: () => void;
@@ -243,7 +268,9 @@ function GuestProfileCard({ avatarName, imageUrl, name, onEdit }: {
         <Text numberOfLines={1} style={[styles.profileName, styles.guestName]}>{name}</Text>
         <View style={styles.guestBadge}><Text style={styles.guestBadgeText}>게스트</Text></View>
       </View>
-      <Text style={styles.guestProfileDescription}>여행 기록을 유지한 채{`\n`}회원으로 전환할 수 있어요.</Text>
+      <Text style={styles.guestProfileDescription}>{canTransferData
+        ? <>여행 기록을 유지한 채{`\n`}회원으로 전환할 수 있어요.</>
+        : <>회원가입하면 새 여행 만들기와{`\n`}개인 저장을 이용할 수 있어요.</>}</Text>
       <ProfileEditButton onPress={onEdit} />
     </View>
   </View>;
@@ -331,19 +358,23 @@ function PreferenceStatusCard({ message, onRetry }: { message: string; onRetry?:
   </View>;
 }
 
-function GuestUpgradeCard({ compact, onPress }: { compact: boolean; onPress: () => void }) {
+function GuestUpgradeCard({ canTransferData, compact, onPress }: { canTransferData: boolean; compact: boolean; onPress: () => void }) {
   return <View style={styles.guestUpgradeCard} testID="mypage-guest-upgrade">
     <View style={styles.guestUpgradeTop}>
       <View style={styles.guestUpgradeCopy}>
-        <Text style={[styles.guestUpgradeTitle, compact && styles.guestUpgradeTitleCompact]}>회원으로{`\n`}전환해보세요</Text>
-        <Text style={styles.guestUpgradeDescription}>{compact
-          ? <>지금 만든 여행 기록을{`\n`}그대로 유지하고{`\n`}더 많은 기능을 이어서{`\n`}사용할 수 있어요.</>
-          : "지금 만든 여행 기록을 그대로 유지하고 더 많은 기능을 이어서 사용할 수 있어요."}</Text>
+        <Text style={[styles.guestUpgradeTitle, compact && styles.guestUpgradeTitleCompact]}>{canTransferData ? <>회원으로{`\n`}전환해보세요</> : <>두리 회원으로{`\n`}시작해보세요</>}</Text>
+        <Text style={styles.guestUpgradeDescription}>{canTransferData
+          ? compact
+            ? <>지금 만든 여행 기록을{`\n`}그대로 유지하고{`\n`}더 많은 기능을 이어서{`\n`}사용할 수 있어요.</>
+            : "지금 만든 여행 기록을 그대로 유지하고 더 많은 기능을 이어서 사용할 수 있어요."
+          : compact
+            ? <>회원가입하면 여행방 만들기와{`\n`}개인 저장을 이용할 수 있어요.{`\n`}참여 중인 게스트 여행은{`\n`}먼저 필요한 내용을 확인해 주세요.</>
+            : "회원가입하면 여행방 만들기와 개인 저장을 이용할 수 있어요. 참여 중인 게스트 여행에서 필요한 내용은 먼저 확인해 주세요."}</Text>
       </View>
       <Image accessible={false} resizeMode="contain" source={DURI_GUIDE_IMAGE} style={[styles.guestUpgradeImage, compact && styles.guestUpgradeImageCompact]} />
     </View>
-    <Pressable accessibilityRole="button" accessibilityLabel="회원 계정으로 전환하기" onPress={onPress} style={({ pressed }) => [styles.primaryAction, pressed && styles.pressed]}>
-      <Text style={styles.primaryActionText}>회원 계정으로 전환하기</Text><Text style={styles.primaryActionArrow}>›</Text>
+    <Pressable accessibilityRole="button" accessibilityLabel={canTransferData ? "회원 계정으로 전환하기" : "회원가입하기"} onPress={onPress} style={({ pressed }) => [styles.primaryAction, pressed && styles.pressed]}>
+      <Text style={styles.primaryActionText}>{canTransferData ? "회원 계정으로 전환하기" : "회원가입하기"}</Text><Text style={styles.primaryActionArrow}>›</Text>
     </Pressable>
   </View>;
 }

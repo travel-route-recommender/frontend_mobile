@@ -17,7 +17,13 @@ import { buildPlaceLocationOptions, getPlaceLocationDisplayLabel, getPlaceLocati
 import { enrichPlaceClassificationTags } from "../src/features/places/logic/placeClassification";
 import { dedupePlacesForDisplay, filterPlaces, findSimilarPlaces, getPlaceDistanceProximityLabel, normalizeSearchKeyword, parsePlaceCoordinate, searchPlaces } from "../src/features/places/logic/placeSearch";
 import { buildPlaceCardViewModel, selectCandidateStateForPlace, selectPlaceTripRelation, selectResolvedSavedPlaces } from "../src/features/places/selectors/placeSelectors";
-import { buildTourSearchPath, mapTourPlaceToPlace } from "../src/features/places/services/placeApi";
+import {
+  buildTourSearchPath,
+  fetchBackendSavedPlaces,
+  mapTourPlaceToPlace,
+  removeBackendSavedPlace,
+  saveBackendPlace,
+} from "../src/features/places/services/placeApi";
 import { toggleUniqueId } from "../src/utils/entityRelations";
 
 function assert(condition: unknown, message: string): asserts condition { if (!condition) throw new Error(message); }
@@ -168,7 +174,66 @@ const secureTourImage = mapTourPlaceToPlace({
   thumbnailUrl: "http://tong.visitkorea.or.kr/cms/resource/example.JPG",
 });
 assert(secureTourImage?.imageUrl === "https://tong.visitkorea.or.kr/cms/resource/example.JPG", "관광공사 HTTP 이미지는 iOS ATS에 차단되지 않도록 HTTPS로 변환해야 한다");
+const richCommonPlace = mapTourPlaceToPlace({
+  id: "665abc123def456789012345",
+  placeId: "665abc123def456789012345",
+  externalId: "126508",
+  source: "tour",
+  name: "경복궁",
+  category: "역사 명소",
+  description: "조선의 법궁",
+  tags: ["역사", "궁궐"],
+  images: ["https://example.com/palace.jpg"],
+});
+assert(richCommonPlace?.backendPlaceId === "665abc123def456789012345" && richCommonPlace.externalId === "126508", "CommonPlace의 화면 ID와 Mongo 저장 ID를 구분해야 한다");
+assert(richCommonPlace?.category === "역사 명소" && richCommonPlace.summary === "조선의 법궁" && richCommonPlace.tags.join() === "역사,궁궐" && richCommonPlace.imageUrl === "https://example.com/palace.jpg", "CommonPlace의 category/description/tags/string images를 보존해야 한다");
 assert(buildTourSearchPath({ areaCode: "1", page: 1, limit: 50 }) === "/tour/places?areaCode=1&page=1&size=50", "35. 지역 목록은 존재하는 Tour places 계약을 호출해야 한다");
 assert(buildTourSearchPath({ keyword: "서울", areaCode: "1", page: 1, limit: 50 }) === "/tour/places/search?keyword=%EC%84%9C%EC%9A%B8&areaCode=1&page=1&size=50", "36. 검색어가 있으면 Tour places/search 계약을 호출해야 한다");
 
-console.log("Place flow verification passed: search, region, classification, sorting, scheduled, and alias assertions");
+async function verifySavedPlaceContract() {
+  const calls: { url: string; method: string; body?: string }[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    calls.push({ url, method, ...(typeof init?.body === "string" ? { body: init.body } : {}) });
+    if (method === "GET") {
+      return new Response(JSON.stringify([{
+        id: "save-1",
+        savedAt: "2026-09-03T10:00:00.000Z",
+        place: {
+          id: "665abc123def456789012345",
+          placeId: "665abc123def456789012345",
+          externalId: "126508",
+          source: "tour",
+          name: "경복궁",
+          address: "서울특별시 종로구",
+          lat: 37.5796,
+          lng: 126.977,
+          category: "관광지",
+          tags: ["역사"],
+          images: ["https://example.com/palace.jpg"],
+        },
+      }]), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return new Response(JSON.stringify({ success: true }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const saved = await fetchBackendSavedPlaces();
+    assert(saved[0]?.place.id === "tour:126508", "저장 목록의 Tour 장소는 탐색 목록과 같은 client id를 사용해야 한다");
+    assert(saved[0]?.place.backendPlaceId === "665abc123def456789012345", "저장 해제에 사용할 Mongo placeId를 보존해야 한다");
+    await saveBackendPlace("665abc123def456789012345");
+    await removeBackendSavedPlace("665abc123def456789012345");
+    assert(calls[1]?.url.endsWith("/users/me/saves") && calls[1]?.method === "POST" && calls[1]?.body === '{"placeId":"665abc123def456789012345"}', "장소 저장 요청은 Mongo placeId만 전송해야 한다");
+    assert(calls[2]?.url.endsWith("/users/me/saves/665abc123def456789012345") && calls[2]?.method === "DELETE", "장소 저장 해제 경로가 API 계약과 일치해야 한다");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+void verifySavedPlaceContract().then(() => {
+  console.log("Place flow verification passed: search, region, classification, saving, sorting, scheduled, and alias assertions");
+}).catch((error: unknown) => {
+  console.error(error);
+  process.exitCode = 1;
+});

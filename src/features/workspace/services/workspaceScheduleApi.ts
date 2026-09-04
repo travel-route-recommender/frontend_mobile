@@ -93,7 +93,7 @@ export class WorkspaceScheduleProtectedItemError extends Error {
   readonly itemIds: string[];
 
   constructor(itemIds: readonly string[]) {
-    super("서버에서 필수로 지정한 일정은 삭제하거나 장소·날짜를 바꿀 수 없어요. 최신 일정을 다시 확인해 주세요.");
+    super("필수로 보호된 일정은 삭제하거나 장소·날짜를 바꿀 수 없어요. 최신 일정을 다시 확인해 주세요.");
     this.name = "WorkspaceScheduleProtectedItemError";
     this.itemIds = [...new Set(itemIds)].sort();
   }
@@ -104,8 +104,8 @@ export class WorkspaceScheduleIdentityError extends Error {
 
   constructor(reason: WorkspaceScheduleIdentityError["reason"]) {
     super(reason === "invalid-room-id"
-      ? "서버 여행방 ID 형식이 올바르지 않아 일정을 요청하지 않았어요."
-      : "서버 여행방 ID와 프론트 여행 ID가 일치하지 않아 일정 혼합을 막았어요.");
+      ? "여행방 정보가 올바르지 않아 일정을 요청하지 않았어요."
+      : "다른 여행방의 일정이 섞이지 않도록 변경을 중단했어요.");
     this.name = "WorkspaceScheduleIdentityError";
     this.reason = reason;
   }
@@ -197,6 +197,18 @@ function factsConflictFromApiError(error: ApiError) {
   return Number.isInteger(payload.currentFactsVersion) && (payload.currentFactsVersion as number) >= 0
     ? payload.currentFactsVersion as number
     : undefined;
+}
+
+function protectedItemIdsFromApiError(error: ApiError): string[] | undefined {
+  if (!error.payload || typeof error.payload !== "object") return undefined;
+  const payload = error.payload as { code?: unknown; items?: unknown };
+  if (payload.code !== "PROTECTED_SCHEDULE_CONFLICT" || !Array.isArray(payload.items)) return undefined;
+  const ids = payload.items.flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const id = (item as { itemId?: unknown }).itemId;
+    return typeof id === "string" && id.trim() ? [id.trim()] : [];
+  });
+  return ids.length ? [...new Set(ids)] : undefined;
 }
 
 function localOverlays(
@@ -393,6 +405,8 @@ export class HttpWorkspaceScheduleApiGateway implements WorkspaceScheduleApiGate
             factsConflictFromApiError(error),
           );
         }
+        const protectedItemIds = protectedItemIdsFromApiError(error);
+        if (protectedItemIds) throw new WorkspaceScheduleProtectedItemError(protectedItemIds);
         throw new WorkspaceScheduleVersionConflictError(
           input.snapshot.scheduleVersion,
           currentVersionFromApiError(error),

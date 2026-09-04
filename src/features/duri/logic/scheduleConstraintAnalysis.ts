@@ -480,7 +480,7 @@ export function analyzeDocumentReferences(snapshot: DuriAnalysisSnapshot): DuriR
   const confirmedButUnusableCount = unresolved.filter((reference) => reference.extractionStatus === "confirmed" && !structuredIds.has(reference.id)).length;
   const statusSummary = [
     needsReviewCount ? `추출 결과 확인 필요 ${needsReviewCount}개` : "",
-    unavailableCount ? `OCR 미지원·실패 ${unavailableCount}개` : "",
+    unavailableCount ? `내용을 읽지 못한 문서 ${unavailableCount}개` : "",
     confirmedButUnusableCount ? `확정했지만 날짜·대상 연결 부족 ${confirmedButUnusableCount}개` : "",
   ].filter(Boolean).join(" · ");
   return [{
@@ -488,7 +488,7 @@ export function analyzeDocumentReferences(snapshot: DuriAnalysisSnapshot): DuriR
     category: "document-check",
     severity: "low",
     title: "첨부 문서에서 확인할 예약 정보가 남아 있어요",
-    summary: `${unresolved.length}개 문서에는 아직 확인이 필요한 예약 정보가 있어요.${statusSummary ? ` ${statusSummary}.` : ""} OCR 추정값만으로 예약 누락이나 지각 여부를 하드 제약으로 단정하지 않았어요.`,
+    summary: `${unresolved.length}개 문서에는 아직 확인이 필요한 예약 정보가 있어요.${statusSummary ? ` ${statusSummary}.` : ""} 자동으로 읽은 내용만으로 예약 누락이나 지각 여부를 확정하지 않았어요.`,
     affectedItemIds: linkedItemIds,
     affectedPlaceIds: linkedPlaceIds,
     affectedMemberIds: [],

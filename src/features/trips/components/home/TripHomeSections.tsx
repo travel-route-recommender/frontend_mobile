@@ -137,7 +137,7 @@ export function TripPlanningSection({ trip, candidates, placesById, usersById, i
       <View style={styles.planSecondary}><Pressable accessibilityRole="button" onPress={onExplore} style={styles.inlineAction}><Text style={styles.link}>{candidates.length ? "장소 더 찾기" : "장소 추가하기"}</Text></Pressable><Pressable accessibilityRole="button" accessibilityState={{ expanded }} onPress={() => setExpanded((value) => !value)} style={styles.inlineAction}><Text style={styles.link}>{expanded ? "계획 미리보기 접기" : "계획 미리보기"}</Text></Pressable></View>
       {expanded ? <View style={styles.planDetails}>
         <Text style={styles.detailHeading}>후보 장소</Text>
-        {recent.length ? recent.map((candidate) => { const place = placesById[candidate.placeId]; if (!place) return null; const addedBy = candidate.addedByUserIds.flatMap((id) => usersById[id]?.name ? [usersById[id].name] : []).join(", "); return <View key={candidate.placeId} style={styles.placeRow}><View style={styles.placeImage}><RemoteImage uri={place.imageUrl} accessibilityLabel={place.name} aspectRatio={1} /></View><View style={styles.flex}><Text style={styles.bodyStrong}>{place.name}</Text><Text style={styles.caption}>{addedBy ? `${addedBy} 추가` : "추가한 멤버 정보 없음"}</Text><Text style={[styles.caption, scheduledIds.has(place.id) && styles.successText]}>{scheduledIds.has(place.id) ? "일정에 배치됨" : "아직 일정에 미배치"}</Text></View></View>; }) : <Text style={styles.caption}>아직 후보 장소가 없어요.</Text>}
+        {recent.length ? recent.map((candidate) => { const place = placesById[candidate.placeId]; if (!place) return null; const addedBy = candidate.addedByUserIds.flatMap((id) => usersById[id]?.name ? [usersById[id].name] : []).join(", "); return <View key={candidate.placeId} style={styles.placeRow}><View style={styles.placeImage}><RemoteImage uri={place.imageUrl} accessibilityLabel={place.name} aspectRatio={1} /></View><View style={styles.flex}><Text style={styles.bodyStrong}>{place.name}</Text><Text style={styles.caption}>{addedBy ? `${addedBy} 추가` : "여행방에 추가된 후보"}</Text><Text style={[styles.caption, scheduledIds.has(place.id) && styles.successText]}>{scheduledIds.has(place.id) ? "일정에 배치됨" : "아직 일정에 미배치"}</Text></View></View>; }) : <Text style={styles.caption}>아직 후보 장소가 없어요.</Text>}
         <Text style={styles.detailHeading}>일정 미리보기</Text>
         {sorted.length ? sorted.slice(0, 3).map((item) => <View key={item.id} style={styles.scheduleRow}><View style={styles.timeBox}><Text style={styles.time}>{item.startTime}</Text><Text style={styles.day}>{formatDayLabel(item.date, trip.startDate)}</Text></View><View style={styles.flex}><Text style={styles.bodyStrong}>{item.placeId ? placesById[item.placeId]?.name ?? "알 수 없는 장소" : item.note ?? "일정 항목"}</Text><Text style={styles.caption}>{item.date} · {item.durationMinutes}분</Text></View></View>) : <Text style={styles.caption}>아직 일정이 비어 있어요.</Text>}
       </View> : null}
@@ -147,7 +147,7 @@ export function TripPlanningSection({ trip, candidates, placesById, usersById, i
 
 export function DuriAnalysisCard({ state, onPress }: { state: TripHomeDuriState; onPress(): void }) {
   const copy = state.kind === "no-itinerary"
-    ? { title: "일정을 만들면 두리가 점검해드려요", description: "먼저 후보 장소를 날짜와 시간에 배치해보세요.", label: "일정 만들기", disabled: false }
+    ? { title: "두리가 첫 여행 일정을 짜드릴게요", description: "후보가 적거나 비어 있어도 여행 날짜와 동행자 성향을 바탕으로 검토할 초안을 만들 수 있어요.", label: "일정 초안 만들기", disabled: false }
     : state.kind === "loading"
       ? { title: "두리가 현재 일정을 살펴보고 있어요", description: "동선과 동행자 취향의 균형을 분석하는 중이에요.", label: "분석 중", disabled: true }
       : state.kind === "existing"
@@ -155,7 +155,7 @@ export function DuriAnalysisCard({ state, onPress }: { state: TripHomeDuriState;
         : state.kind === "stale"
           ? { title: "일정이 바뀌어 다시 점검이 필요해요", description: "최신 일정으로 동선과 취향 균형을 다시 분석해보세요.", label: "다시 분석하기", disabled: false }
           : state.kind === "unavailable"
-            ? { title: "두리 분석을 준비하고 있어요", description: state.message ?? "분석 기능 연결을 확인한 뒤 다시 이용해 주세요.", label: "분석 준비 중", disabled: true }
+            ? { title: "지금은 일정 점검 상태를 확인해야 해요", description: state.message ?? "여행 날짜와 일정을 다시 불러온 뒤 이어갈 수 있어요.", label: "상태 확인하기", disabled: false }
             : { title: "두리가 현재 일정을 점검해볼까요?", description: "여행의 속도·식사·이동 경로의 균형을 분석해드릴게요.", label: "DURI 분석하기", disabled: false };
   return <View style={styles.sectionGap}>
     <Text style={styles.sectionHeading}>DURI 추천</Text>
@@ -175,8 +175,8 @@ export function InviteMemberModal({ visible, trip, usersById, onInvite, onClose 
   const memberIds = new Set(trip.members.map((member) => member.userId));
   const available = Object.values(usersById).filter((user) => !memberIds.has(user.id));
   return <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}><View style={styles.overlay}><Card style={styles.modal}>
-    <Text style={styles.sectionHeading}>데모 동행자 초대</Text><Text style={styles.body}>mock 모드에서는 기존 데모 사용자를 멤버로 바로 추가합니다. 실제 검색·링크 전송은 아직 연결하지 않았어요.</Text>
-    {available.length ? available.map((user) => <Pressable key={user.id} accessibilityRole="button" accessibilityLabel={`${user.name} 여행방에 추가`} onPress={() => onInvite(user.id)} style={({ pressed }) => [styles.inviteRow, pressed && styles.pressed]}><Avatar name={user.name} uri={user.profileImageUrl} /><View style={styles.flex}><Text style={styles.bodyStrong}>{user.name}</Text><Text style={styles.caption}>여행방 멤버로 추가</Text></View><Text style={styles.link}>추가</Text></Pressable>) : <View style={styles.emptyBox}><Text style={styles.body}>추가할 수 있는 데모 사용자가 없어요.</Text></View>}
+    <Text style={styles.sectionHeading}>동행자 추가</Text><Text style={styles.body}>함께 계획할 동행자를 선택해 주세요.</Text>
+    {available.length ? available.map((user) => <Pressable key={user.id} accessibilityRole="button" accessibilityLabel={`${user.name} 여행방에 추가`} onPress={() => onInvite(user.id)} style={({ pressed }) => [styles.inviteRow, pressed && styles.pressed]}><Avatar name={user.name} uri={user.profileImageUrl} /><View style={styles.flex}><Text style={styles.bodyStrong}>{user.name}</Text><Text style={styles.caption}>여행방 멤버로 추가</Text></View><Text style={styles.link}>추가</Text></Pressable>) : <View style={styles.emptyBox}><Text style={styles.body}>추가할 수 있는 동행자가 없어요.</Text></View>}
     <SecondaryButton label="닫기" onPress={onClose} />
   </Card></View></Modal>;
 }

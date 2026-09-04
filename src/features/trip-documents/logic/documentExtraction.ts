@@ -413,7 +413,7 @@ export async function runTravelDocumentTextExtraction(
     return failedExtraction({ providerId: recognizer.id, attemptedAt, code: "file-unavailable", message: "기기에서 원본 파일을 찾을 수 없어요." });
   }
   if (document.mimeType === "application/pdf") {
-    return failedExtraction({ providerId: recognizer.id, attemptedAt, status: "unsupported", code: "pdf-rendering-required", message: "PDF는 페이지를 이미지로 안전하게 변환하는 기능이 연결된 뒤 인식할 수 있어요." });
+    return failedExtraction({ providerId: recognizer.id, attemptedAt, status: "unsupported", code: "pdf-rendering-required", message: "PDF는 예약 정보를 직접 입력하거나 필요한 페이지를 이미지로 추가해 주세요." });
   }
   if (!imageMimeTypes.has(document.mimeType.toLowerCase())) {
     return failedExtraction({ providerId: recognizer.id, attemptedAt, status: "unsupported", code: "unsupported-file-type", message: "이 이미지 형식은 현재 문자 인식을 지원하지 않아요." });

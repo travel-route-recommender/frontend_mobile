@@ -3,7 +3,9 @@ import {
   buildTripInviteUrl,
   createMockTripInviteCode,
   createTripInviteRecord,
+  resolveShareableTripInviteUrl,
   resolveMockTripInvite,
+  rewriteTripInviteSystemPath,
 } from "../src/features/invitations/logic/tripInviteLinks";
 import { buildWebInviteShareData } from "../src/features/invitations/logic/inviteShareMessage";
 import { calculateTripPreparationProgress } from "../src/features/trips/logic/calculateTripPreparationProgress";
@@ -13,7 +15,8 @@ import { getTripDayCount } from "../src/features/trips/utils/tripDateUtils";
 import { buildInitialTripDays, mapDraftToCreateTripRoomRequest } from "../src/features/trip-creation/mappers/createTripRoomMapper";
 import { createTripDraftEditCopy, getRegionSelectionPatch, getTripEditCommitPatch } from "../src/features/trip-creation/logic/tripDraftEditing";
 import { buildCalendarMonth, moveCalendarMonth, selectTripDateRange } from "../src/features/trip-creation/logic/tripDateRange";
-import { createTripRoomService, validateCreateTripRoomRequest } from "../src/features/trip-creation/services/createTripRoomService";
+import { buildCreateTripPlanningPatch, createTripRoomService, validateCreateTripRoomRequest } from "../src/features/trip-creation/services/createTripRoomService";
+import { ApiError, type ApiClient, type ApiRequest } from "../src/services/apiClient";
 import {
   clearApiTripLocalFacts,
   loadApiTripLocalFacts,
@@ -37,8 +40,33 @@ import { CREATE_TRIP_DRAFT_VERSION } from "../src/features/trip-creation/types";
 import { selectCompletedTripsForCurrentUser, selectPlanningTripsForCurrentUser } from "../src/store/selectors";
 import { hasDuplicateMemberIds, parseTravelTypeSnapshotRecord, parseTravelTypeSnapshotTags } from "../src/features/trips/logic/travelTypeSnapshot";
 import { selectTripHomeDuriState } from "../src/features/trips/logic/selectTripHomeDuriState";
+import { normalizeLegacyRoomFactsVersion, readVersionFencedTripSnapshot } from "../src/features/trips/logic/consistentTripSnapshot";
+import { toUserFacingApiErrorMessage } from "../src/services/userFacingApiError";
 
 function assert(condition: unknown, message: string): asserts condition { if (!condition) throw new Error(message); }
+
+assert(toUserFacingApiErrorMessage(new Error("Cannot GET /api/v1/rooms/1"), "여행방을 불러오지 못했어요.") === "여행방을 불러오지 못했어요.", "API 라우트 원문은 사용자용 오류로 대체");
+assert(toUserFacingApiErrorMessage(new Error("property installationId should not exist"), "입력 정보를 다시 확인해 주세요.") === "입력 정보를 다시 확인해 주세요.", "DTO 검증 구현 원문은 사용자용 오류로 대체");
+assert(
+  toUserFacingApiErrorMessage(
+    new Error("responses.property surveyVersion should not exist, responses.property challengeStyle should not exist"),
+    "여행 성향 결과를 저장하지 못했어요.",
+  ) === "여행 성향 결과를 저장하지 못했어요.",
+  "설문 DTO 검증 원문도 사용자에게 노출하지 않아야 한다",
+);
+assert(toUserFacingApiErrorMessage(new Error("다른 참여자가 먼저 일정을 수정했어요."), "일정을 저장하지 못했어요.") === "다른 참여자가 먼저 일정을 수정했어요.", "행동 가능한 한국어 API 안내는 유지");
+assert(toUserFacingApiErrorMessage(new ApiError("startTime은 HH:mm 형식이어야 합니다 startTime must be a string", {
+  status: 400,
+  payload: { message: ["startTime은 HH:mm 형식이어야 합니다", "startTime must be a string"] },
+}), "입력 정보를 다시 확인해 주세요.") === "startTime은 HH:mm 형식이어야 합니다", "혼합 검증 배열에서는 행동 가능한 한국어 안내만 유지");
+assert(toUserFacingApiErrorMessage(new ApiError("제목을 입력해 주세요. property platform should not exist", {
+  status: 400,
+  payload: { message: ["제목을 입력해 주세요.", "property platform should not exist"] },
+}), "입력 정보를 다시 확인해 주세요.") === "제목을 입력해 주세요.", "기술 검증 항목 하나 때문에 유용한 한국어 안내 전체를 숨기지 않음");
+assert(toUserFacingApiErrorMessage(new ApiError("Bad Request", {
+  status: 400,
+  payload: { message: "종료 시각을 다시 확인해 주세요." },
+}), "입력 정보를 다시 확인해 주세요.") === "종료 시각을 다시 확인해 주세요.", "payload에만 있는 단일 한국어 안내도 유지");
 
 const users: Record<string, User> = {
   owner: { id: "owner", name: "방장", initial: "방" },
@@ -78,7 +106,8 @@ function createDraft(overrides: Partial<CreateTripDraft> = {}): CreateTripDraft 
 }
 
 async function main() {
-  assert(selectTripHomeDuriState({ itineraryCount: 0, analysisAvailable: true, analysisStatus: "idle", currentFingerprint: "current" }).kind === "no-itinerary", "빈 일정은 분석 대신 일정 만들기로 안내해야 한다");
+  assert(selectTripHomeDuriState({ itineraryCount: 0, analysisAvailable: true, analysisStatus: "idle", currentFingerprint: "current" }).kind === "no-itinerary", "빈 일정도 두리 자동 초안으로 안내해야 한다");
+  assert(selectTripHomeDuriState({ itineraryCount: 0, analysisAvailable: false, unavailableMessage: "날짜 확인 필요", analysisStatus: "idle", currentFingerprint: "" }).kind === "unavailable", "빈 일정이어도 분석 입력이 없으면 복구 가능한 상태 안내가 우선이어야 한다");
   assert(selectTripHomeDuriState({ itineraryCount: 2, analysisAvailable: true, analysisStatus: "idle", currentFingerprint: "current" }).kind === "ready", "API 일정과 분석 입력이 준비되면 여행방 홈에서 분석을 열어야 한다");
   const existingDuriState = selectTripHomeDuriState({
     itineraryCount: 2,
@@ -175,9 +204,32 @@ async function main() {
 
   const regionOption = mapRegionToOption(regions.busan);
   const request = mapDraftToCreateTripRoomRequest(createDraft({ selectedMemberUserIds: ["friend"], accommodationLocation: "부산역 호텔", endCondition }), regionOption, ["friend"]);
-  assert(request.name === "부산 여행" && request.regionId === "busan" && request.regionName === "부산광역시" && request.expectedMemberCount === 2, "Draft mapper는 이름·지역·실제 선택 인원을 request로 옮겨야 한다");
+  assert(request.name === "부산 여행" && request.regionId === "busan" && request.regionName === "부산" && request.expectedMemberCount === 2, "Draft mapper는 선택한 목적지 이름·지역·실제 선택 인원을 request로 옮겨야 한다");
   assert(request.transport === "public" && request.accommodationLocation?.name === "부산역 호텔", "Draft mapper는 실제 이동 방식과 선택 숙소를 request로 옮겨야 한다");
   assert(request.endCondition?.location.name === "부산역" && request.endCondition.travelMinutes === 45 && request.endCondition.serviceBufferMinutes === 30, "Draft mapper는 종료 조건의 숫자형 사실 정보를 손실 없이 변환해야 한다");
+  const selectedAnchorRequest = mapDraftToCreateTripRoomRequest(createDraft({
+    accommodationLocation: "부산역 호텔",
+    accommodationLocationDetails: { name: "부산역 호텔", lat: 35.116, lng: 129.041, externalId: "tour-stay-1", source: "tour" },
+    endCondition: {
+      ...endCondition,
+      locationDetails: { name: "부산역", lat: 35.115, lng: 129.042, placeId: "64b000000000000000000201", externalId: "126508", source: "tour" },
+    },
+  }), regionOption, []);
+  assert(selectedAnchorRequest.accommodationLocation?.externalId === "tour-stay-1"
+    && selectedAnchorRequest.endCondition?.location.placeId === "64b000000000000000000201"
+    && selectedAnchorRequest.endCondition.location.lat === 35.115,
+  "검색에서 선택한 숙소·복귀 지점의 좌표와 서버/외부 식별자를 생성 요청에 보존해야 한다");
+  const manuallyEditedAnchorRequest = mapDraftToCreateTripRoomRequest(createDraft({
+    endCondition: {
+      ...endCondition,
+      location: "직접 입력한 반납 지점",
+      locationDetails: { name: "부산역", externalId: "126508", source: "tour" },
+    },
+  }), regionOption, []);
+  assert(manuallyEditedAnchorRequest.endCondition?.location.name === "직접 입력한 반납 지점"
+    && manuallyEditedAnchorRequest.endCondition.location.source === "manual"
+    && !manuallyEditedAnchorRequest.endCondition.location.externalId,
+  "검색 장소를 선택한 뒤 이름을 직접 바꾸면 오래된 장소 식별자를 전송하면 안 된다");
   assert(!("budgetLevel" in request) && !("intensity" in request), "여행방 생성 request에는 개인 성향 필드를 포함하면 안 된다");
   assert(validateCreateTripRoomRequest(request) === undefined, "완성된 mock request는 service validation을 통과해야 한다");
   assert(validateCreateTripRoomRequest({ ...request, endCondition: request.endCondition ? { ...request.endCondition, deadline: "18:07" } : null }) === undefined, "service validation도 1분 단위 종료 시각을 보존해야 한다");
@@ -340,12 +392,72 @@ async function main() {
   try { await failingService.createTripRoom(request); } catch { failed = true; }
   assert(failed, "mock persistence 실패는 성공 응답으로 위장하면 안 된다");
 
+  const apiOwnerId = "64b000000000000000000001";
+  const apiRoomId = "64b000000000000000000101";
+  const apiRequests: ApiRequest[] = [];
+  let planningShouldFail = true;
+  let planningCalls = 0;
+  let localFactCalls = 0;
+  const fakeClient: ApiClient = {
+    async request<Response>(apiRequest: ApiRequest) {
+      apiRequests.push(apiRequest);
+      if (apiRequest.method === "POST") return {
+        id: apiRoomId,
+        title: request.name,
+        inviteCode: "ABC123",
+        inviteLink: "https://example.com/invite/ABC123",
+        members: [{ userId: apiOwnerId }],
+      } as Response;
+      return {} as Response;
+    },
+  };
+  const apiService = createTripRoomService("api", () => "", apiOwnerId, {
+    client: fakeClient,
+    planningGateway: {
+      async update() {
+        planningCalls += 1;
+        if (planningShouldFail) throw new Error("temporary");
+        return { timezone: "Asia/Seoul" };
+      },
+    },
+    saveLocalFacts: async () => { localFactCalls += 1; },
+  });
+  const apiRequest = { ...request, invitedUserIds: [], regionName: "부산광역시", areaCode: "6" };
+  const planningPatch = buildCreateTripPlanningPatch(apiRequest);
+  assert(planningPatch.transportMode === "transit"
+    && planningPatch.lodging?.name === "부산역 호텔"
+    && planningPatch.returnPoint?.name === "부산역"
+    && planningPatch.returnDeadline === "18:30"
+    && planningPatch.travelBufferMinutes === 45
+    && planningPatch.prepBufferMinutes === 30
+    && planningPatch.confirm === true,
+  "생성 planning은 이동수단·숙소·귀환 조건을 Backend UpdatePlanningDto에 손실 없이 매핑해야 한다");
+  const partialResponse = await apiService.createTripRoom(apiRequest);
+  assert(partialResponse.roomId === apiRoomId
+    && partialResponse.setupIssues?.map((issue) => issue.step).join(",") === "planning",
+  "방 생성 뒤 일부 설정 실패는 생성 성공을 숨기지 않고 재시도 단계로 반환해야 한다");
+  const destinationRequest = apiRequests.find((item) => item.path.endsWith("/destination"));
+  assert(JSON.stringify(destinationRequest?.body) === JSON.stringify({ name: "부산광역시", regionCode: "6" }), "목적지는 선택한 Tour areaCode와 이름으로 저장해야 한다");
+  planningShouldFail = false;
+  const requestCountBeforeRetry = apiRequests.length;
+  const retryIssues = await apiService.retryTripRoomSetup(apiRoomId, apiRequest, partialResponse.setupIssues?.map((issue) => issue.step) ?? []);
+  assert(!retryIssues.length && apiRequests.length === requestCountBeforeRetry && planningCalls === 2 && localFactCalls === 1,
+    "설정 재시도는 새 방을 만들거나 성공한 단계를 반복하지 않고 실패한 단계만 복구해야 한다");
+
   const regionService = createRegionService("mock", Object.values(regions));
   const popular = await regionService.getPopularRegions();
   const search = await regionService.searchRegions("부산");
   assert(popular.length === 1 && search[0]?.id === "busan" && !search[0]?.areaCode, "지역 service는 mock 목록을 검색하되 허위 공식 코드를 만들면 안 된다");
-  const apiRegion = (await createRegionService("api", Object.values(regions)).searchRegions("부산"))[0];
-  assert(apiRegion?.source === "reference" && apiRegion.areaCode === "6", "API 생성 화면은 검증된 TourAPI 지역 코드 reference를 사용해야 한다");
+  const apiRegionService = createRegionService("api", Object.values(regions), {
+    loadProvinces: async () => [{ code: "26", name: "부산광역시" }, { code: "47", name: "경상북도" }],
+    loadDistricts: async (regionCode) => regionCode === "26"
+      ? [{ code: "260", name: "해운대구" }]
+      : [{ code: "470", name: "경주시" }],
+  });
+  const apiRegion = (await apiRegionService.searchRegions("부산"))[0];
+  const gyeongju = (await apiRegionService.searchRegions("경주"))[0];
+  assert(apiRegion?.source === "reference" && apiRegion.areaCode === "6", "API 생성 화면은 서버 지역 메타를 검증된 TourAPI 지역 코드로 변환해야 한다");
+  assert(gyeongju?.name === "경주시" && gyeongju.areaCode === "35" && gyeongju.sigunguCode === "2", "지역 검색은 서버 시군구 이름을 부분 검색하고 TourAPI 필터 코드를 보존해야 한다");
 
   const progress = calculateTripPreparationProgress({ trip: tripsById.sooner, completedPreferenceCount: 1, preferenceTargetCount: 2, candidateCount: 2, itineraryCount: 0 });
   assert(progress.totalSteps === 5 && progress.completedSteps === 1 && progress.activeSteps === 2 && progress.rate === 0.4, "준비율은 완료 1점·진행 0.5점 기준이어야 한다");
@@ -386,6 +498,19 @@ async function main() {
   assert(buildTripInviteUrl(firstInvite) === `tripmatch://invite/${firstInvite.code}?tripId=sooner&revision=1`, "초대 링크는 코드·여행방·revision을 모두 전달해야 한다");
   const webShareData = buildWebInviteShareData({ inviteUrl: buildTripInviteUrl(firstInvite), tripTitle: "부산 여행", code: firstInvite.code });
   assert(!("url" in webShareData) && webShareData.text.includes(buildTripInviteUrl(firstInvite)), "Web Share는 custom scheme을 url 필드가 아닌 text로 전달해야 한다");
+  const publicInviteUrl = resolveShareableTripInviteUrl(
+    buildTripInviteUrl(firstInvite),
+    firstInvite.code,
+    "https://backend.example.com/api/v1",
+  );
+  assert(publicInviteUrl === `https://backend.example.com/api/v1/invites/${firstInvite.code}`, "원격 API에서는 메시지 앱이 누를 수 있는 HTTPS 초대 링크를 공유해야 한다");
+  const httpsShareData = buildWebInviteShareData({ inviteUrl: publicInviteUrl, tripTitle: "부산 여행", code: firstInvite.code });
+  assert(httpsShareData.url === publicInviteUrl && !httpsShareData.text.includes(publicInviteUrl), "Web Share의 표준 URL 필드에는 HTTPS 링크를 중복 없이 전달해야 한다");
+  assert(rewriteTripInviteSystemPath(publicInviteUrl) === `/invite/${firstInvite.code}`, "HTTPS 초대 주소는 앱의 초대 화면으로 변환되어야 한다");
+  assert(
+    rewriteTripInviteSystemPath(buildTripInviteUrl(firstInvite)) === `/invite/${firstInvite.code}?tripId=sooner&revision=1`,
+    "기존 custom scheme 초대도 여행방과 revision을 보존해 앱 초대 화면으로 변환되어야 한다",
+  );
 
   const activeLinks = { sooner: firstInvite };
   const explicitInvite = resolveMockTripInvite({ code: firstInvite.code, tripId: "sooner", revision: "1" }, tripsById, activeLinks);
@@ -397,6 +522,36 @@ async function main() {
   const completedInvite = createTripInviteRecord("latestDone", 1);
   assert(resolveMockTripInvite({ code: completedInvite.code, tripId: "latestDone", revision: 1 }, tripsById, { latestDone: completedInvite }).status === "closed", "완료 여행방 초대는 활성 코드여도 거부해야 한다");
   assert(resolveMockTripInvite({ code: "AAAAAAAA", tripId: "sooner", revision: 1 }, tripsById, {}).status === "invalid", "위조된 code와 여행방 조합은 거부해야 한다");
+
+  assert(normalizeLegacyRoomFactsVersion(undefined) === 0, "factsVersion 도입 전 방 응답은 최초 버전 0으로 호환해야 한다");
+  assert(normalizeLegacyRoomFactsVersion(3) === 3, "정상 factsVersion은 그대로 유지해야 한다");
+  assert(
+    normalizeLegacyRoomFactsVersion(null) === undefined
+      && normalizeLegacyRoomFactsVersion(-1) === undefined
+      && normalizeLegacyRoomFactsVersion("0") === undefined,
+    "누락이 아닌 잘못된 factsVersion까지 구형 응답으로 오인하면 안 된다",
+  );
+
+  let snapshotAttempts = 0;
+  const stableSnapshot = await readVersionFencedTripSnapshot({
+    readAttempt: async () => {
+      snapshotAttempts += 1;
+      return snapshotAttempts === 1
+        ? { value: "mixed", versions: [{ scheduleVersion: 2, factsVersion: 4 }, { scheduleVersion: 3, factsVersion: 4 }] }
+        : { value: "stable", versions: [{ scheduleVersion: 3, factsVersion: 4 }, { scheduleVersion: 3, factsVersion: 4 }] };
+    },
+  });
+  assert(stableSnapshot === "stable" && snapshotAttempts === 2, "여행방 상세 조합 중 revision이 바뀌면 혼합 snapshot을 게시하지 않고 다시 읽어야 한다");
+
+  let exhaustedAttempts = 0;
+  const unstableSnapshot = await readVersionFencedTripSnapshot({
+    maxAttempts: 3,
+    readAttempt: async () => {
+      exhaustedAttempts += 1;
+      return { value: "mixed", versions: [{ scheduleVersion: exhaustedAttempts, factsVersion: 1 }, { scheduleVersion: exhaustedAttempts + 1, factsVersion: 1 }] };
+    },
+  });
+  assert(unstableSnapshot === undefined && exhaustedAttempts === 3, "계속 바뀌는 여행방은 무한 재시도하거나 혼합 데이터를 표시하지 않아야 한다");
 
   console.log("Trip flow verification passed: creation, date, edit, mapper, service, region, sorting, ViewModel, and invite lifecycle checks");
 }

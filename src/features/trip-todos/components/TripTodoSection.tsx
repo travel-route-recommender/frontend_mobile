@@ -5,6 +5,7 @@ import { Card, SecondaryButton } from "../../../components/common";
 import type { ItineraryItem, Place } from "../../../domain";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import { useTripDocumentHydrationState, useTripDocumentStore } from "../../trip-documents";
+import { plainDuriUserText } from "../../duri/presentation/plainDuriUserText";
 import { getTravelDocumentKindLabel, type TravelDocument } from "../../trip-documents/types";
 import { useTripTodoHydration } from "../hooks/useTripTodoHydration";
 import { createEmptyTripTodoDraft, getTripTodoDueState, localDateString, tripTodoToDraft } from "../logic/tripTodoState";
@@ -109,7 +110,14 @@ export function TripTodoSection({
     setEditorDraft(createEmptyTripTodoDraft({ assigneeUserIds: currentUserId ? [currentUserId] : [] }));
     setEditorOpen(true);
   };
-  const openEdit = (todo: TripTodo) => { setEditingTodo(todo); setEditorDraft(tripTodoToDraft(todo)); setEditorOpen(true); };
+  const openEdit = (todo: TripTodo) => {
+    const draft = tripTodoToDraft(todo);
+    setEditingTodo(todo);
+    setEditorDraft(todo.source.kind === "duri" && !todo.userEditedAt
+      ? { ...draft, title: plainDuriUserText(draft.title), description: plainDuriUserText(draft.description) }
+      : draft);
+    setEditorOpen(true);
+  };
   const closeEditor = () => { setEditorOpen(false); setEditingTodo(undefined); setEditorDraft(undefined); };
   const save = (draft: TripTodoDraft) => {
     const result = editingTodo
@@ -169,12 +177,15 @@ function TodoCard({ todo, memberNames, readOnly, onEdit, onToggleComplete, onArc
   const dueState = getTripTodoDueState(todo);
   const checklistDone = todo.checklist.filter((entry) => entry.completed).length;
   const linkedCount = todo.links.itineraryItemIds.length + todo.links.documentIds.length + todo.links.duriIssueIds.length;
+  const systemGenerated = todo.source.kind === "duri" && !todo.userEditedAt;
+  const title = systemGenerated ? plainDuriUserText(todo.title) : todo.title;
+  const description = systemGenerated ? plainDuriUserText(todo.description) : todo.description;
   return <View style={[styles.todo, dueState === "overdue" && styles.todoOverdue, todo.status === "completed" && styles.todoCompleted]}>
     <View style={styles.todoHeading}>
       <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: todo.status === "completed" }} disabled={readOnly || todo.status === "archived"} onPress={onToggleComplete} style={({ pressed }) => [styles.complete, todo.status === "completed" && styles.completeSelected, pressed && styles.pressed]}><Text style={[styles.completeText, todo.status === "completed" && styles.completeTextSelected]}>{todo.status === "completed" ? "✓" : "○"}</Text></Pressable>
-      <View style={styles.todoCopy}><Text numberOfLines={2} style={[styles.todoTitle, todo.status === "completed" && styles.completedText]}>{todo.title}</Text><View style={styles.metaRow}><Text style={[styles.priority, (todo.priority === "urgent" || todo.priority === "high") && styles.priorityHigh]}>{priorityLabel[todo.priority]}</Text><Text style={styles.meta}>{statusLabel[todo.status]}</Text><Text style={styles.meta}>{sourceLabel[todo.source.kind]}</Text></View></View>
+      <View style={styles.todoCopy}><Text numberOfLines={2} style={[styles.todoTitle, todo.status === "completed" && styles.completedText]}>{title}</Text><View style={styles.metaRow}><Text style={[styles.priority, (todo.priority === "urgent" || todo.priority === "high") && styles.priorityHigh]}>{priorityLabel[todo.priority]}</Text><Text style={styles.meta}>{statusLabel[todo.status]}</Text><Text style={styles.meta}>{sourceLabel[todo.source.kind]}</Text></View></View>
     </View>
-    {todo.description ? <Text numberOfLines={4} style={styles.todoDescription}>{todo.description}</Text> : null}
+    {description ? <Text numberOfLines={4} style={styles.todoDescription}>{description}</Text> : null}
     {todo.due ? <View style={[styles.due, dueState === "overdue" && styles.dueOverdue]}><Text style={[styles.dueText, dueState === "overdue" && styles.dueTextOverdue]}>{dueStateLabel[dueState]} · {todo.due.date}{todo.due.time ? ` ${todo.due.time}` : ""}{todo.due.snoozedUntil ? " · 알림 미룸" : ""}</Text>{(dueState === "overdue" || dueState === "due-today" || dueState === "reminder") && !readOnly ? <Pressable accessibilityRole="button" onPress={onSnooze}><Text style={styles.snooze}>1시간 미루기</Text></Pressable> : null}</View> : null}
     {todo.assigneeUserIds.length ? <Text style={styles.detail}>담당 · {todo.assigneeUserIds.map((id) => memberNames[id] ?? "알 수 없는 멤버").join(", ")}</Text> : null}
     {todo.checklist.length ? <View style={styles.checklist}><Text style={styles.detail}>체크리스트 {checklistDone}/{todo.checklist.length}</Text>{todo.checklist.slice(0, 5).map((entry) => <Pressable key={entry.id} accessibilityRole="checkbox" accessibilityState={{ checked: entry.completed }} disabled={readOnly || todo.status === "archived"} onPress={() => onToggleChecklist(entry.id)} style={({ pressed }) => [styles.cardCheck, pressed && styles.pressed]}><Text style={styles.cardCheckIcon}>{entry.completed ? "✓" : "○"}</Text><Text numberOfLines={2} style={[styles.cardCheckText, entry.completed && styles.completedText]}>{entry.title}</Text></Pressable>)}{todo.checklist.length > 5 ? <Text style={styles.meta}>그 외 {todo.checklist.length - 5}개</Text> : null}</View> : null}

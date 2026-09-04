@@ -31,7 +31,7 @@ export function DuriAnalysisIntro({
     </View>
     {error ? <View accessibilityRole="alert" style={styles.error}><Text style={styles.errorTitle}>일정을 점검하지 못했어요</Text><Text style={styles.errorText}>{error}</Text></View> : null}
     <PrimaryButton label={loading ? "점검 중" : "DURI 일정 점검하기"} loading={loading} disabled={disabled} onPress={onAnalyze} />
-    <SecondaryButton label="워크스페이스로 돌아가기" onPress={onWorkspace} />
+    <SecondaryButton label="여행 일정으로 돌아가기" onPress={onWorkspace} />
   </View>;
 }
 

@@ -45,7 +45,7 @@ export function ApiScheduleTicketManager({
   return <View style={styles.container}>
     <View style={styles.heading}>
       <View style={styles.headingCopy}>
-        <Text style={styles.title}>서버 입장권 이미지</Text>
+        <Text style={styles.title}>공유 입장권 이미지</Text>
         <Text style={styles.description}>동행자와 공유되는 JPG·PNG·WEBP·HEIC·HEIF 이미지이며 항목당 최대 10장, 장당 5MB예요.</Text>
       </View>
       <Text style={styles.count}>{tickets.length}/10</Text>
@@ -62,7 +62,7 @@ export function ApiScheduleTicketManager({
           <Pressable accessibilityRole="button" disabled={Boolean(deletingId)} onPress={() => setPendingDeleteId(undefined)} style={({ pressed }) => [styles.action, pressed && styles.pressed, Boolean(deletingId) && styles.disabled]}><Text style={styles.actionText}>취소</Text></Pressable>
         </> : <Pressable accessibilityRole="button" disabled={disabled} onPress={() => setPendingDeleteId(ticket.id)} style={({ pressed }) => [styles.action, styles.deleteAction, pressed && styles.pressed, disabled && styles.disabled]}><Text style={styles.deleteText}>삭제</Text></Pressable>}
       </View>
-    </View>)}</View> : <Text style={styles.empty}>이 일정에 서버 입장권 이미지가 아직 없어요.</Text>}
+    </View>)}</View> : <Text style={styles.empty}>이 일정에 공유한 입장권 이미지가 아직 없어요.</Text>}
     <TextField label="티켓 메모 (선택)" value={note} onChangeText={setNote} maxLength={200} placeholder="예: 15:00 입장 QR" />
     <Pressable accessibilityRole="button" disabled={disabled || uploading || tickets.length >= 10} onPress={() => void upload()} style={({ pressed }) => [styles.upload, pressed && styles.pressed, (disabled || uploading || tickets.length >= 10) && styles.disabled]}><Text style={styles.uploadText}>{uploading ? "업로드 중…" : tickets.length >= 10 ? "최대 10장 등록됨" : "티켓 이미지 선택"}</Text></Pressable>
   </View>;

@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
-import { router } from "expo-router";
+import { Redirect, router } from "expo-router";
 import { AppHeader, Card, PrimaryButton, Screen, SecondaryButton } from "../../../components/common";
 import { EmptyState } from "../../../components/feedback";
+import { environment } from "../../../config/environment";
 import { useDuriStore } from "../../../store/useDuriStore";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import { useFriendCompatibilityStore } from "../store/use-friend-compatibility-store";
@@ -19,8 +20,14 @@ export function CompatibilityResultScreen() {
   const result = useFriendCompatibilityStore((state) => state.latestResult);
   const usersById = useDuriStore((state) => state.usersById);
   const [detailsVisible, setDetailsVisible] = useState(false);
+  const leave = () => {
+    if (router.canGoBack()) router.back();
+    else router.replace("/tests/compatibility");
+  };
 
-  if (!result) return <Screen><AppHeader title="궁합도 결과" onBack={() => router.back()} /><EmptyState title="아직 계산한 궁합 결과가 없어요" description="함께 여행할 친구를 선택하면 궁합 점수를 확인할 수 있어요." ctaLabel="친구 선택하기" onPress={() => router.replace("/tests/compatibility")} /></Screen>;
+  if (environment.dataSource !== "mock") return <Redirect href="/(tabs)/mypage" />;
+
+  if (!result) return <Screen><AppHeader title="궁합도 결과" onBack={leave} /><EmptyState title="아직 계산한 궁합 결과가 없어요" description="함께 여행할 친구를 선택하면 궁합 점수를 확인할 수 있어요." ctaLabel="친구 선택하기" onPress={() => router.replace("/tests/compatibility")} /></Screen>;
   const friendNames = result.friendUserIds.map((friendId) => usersById[friendId]?.name).filter(Boolean).join(", ");
 
   return <Screen testID="compatibility-result">

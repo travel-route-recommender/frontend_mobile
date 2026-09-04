@@ -220,7 +220,7 @@ export function analyzeEndCondition(snapshot: DuriAnalysisSnapshot): DuriReportI
     category: "end-condition",
     severity: "high",
     title: "마지막 일정 뒤 종료 지점에 제시간에 도착하기 어려워요",
-    summary: assessment.message + " 실제 경로 ETA가 아니라 사용자가 복귀를 위해 확보한 이동시간을 기준으로 계산했어요.",
+    summary: assessment.message + " 실제 길찾기의 예상 이동시간이 아니라 사용자가 복귀를 위해 확보한 이동시간을 기준으로 계산했어요.",
     date: snapshot.trip.endDate ?? undefined,
     affectedItemIds: assessment.affectedItemIds,
     affectedPlaceIds,
@@ -443,17 +443,17 @@ export function calculateAnalysisCoverage(snapshot: DuriAnalysisSnapshot): DuriA
       ? "여행방 이동수단 정보를 불러오지 못해 실제 경로 근거를 사용하지 않았어요."
       : "여행방에 이동수단이 설정되지 않아 실제 경로 근거를 사용하지 않았어요."
     : routeCollection?.mode === "car" && routeData !== "unavailable"
-    ? `Kakao Mobility 실제 도로 경로로 ${routeCollection.analyzedLegCount}/${routeCollection.requiredLegCount}개 구간을 초 단위 비교했어요. 현재 교통 기준이며 여행 날짜의 미래 교통은 아니에요.${routeCollection.unavailableReason ? ` ${routeCollection.unavailableReason}` : ""}`
+    ? `카카오모빌리티의 실제 도로 길찾기로 ${routeCollection.analyzedLegCount}/${routeCollection.requiredLegCount}개 구간을 초 단위로 비교했어요. 현재 교통 기준이며 여행 날짜의 미래 교통은 아니에요.${routeCollection.unavailableReason ? ` ${routeCollection.unavailableReason}` : ""}`
     : routeCollection?.mode === "public"
       ? "현재 사용할 수 있는 실제 경로 근거가 없어 이동시간 판단을 생략했어요."
       : routeCollection?.requiredLegCount === 0
         ? "같은 날짜에 연속된 장소 일정이 없어 실제 이동시간 비교 대상이 없어요."
         : routeCollection?.unavailableReason ?? "실제 경로 근거가 없어 직선거리를 이동시간처럼 사용하지 않았어요.";
   const operatingMessage = operatingData === "available"
-    ? `일정의 ${scheduledPlaceCount}개 장소 모두에서 TourAPI 운영시간·휴무일·행사기간 중 하나 이상을 확인했어요. 권장 소요시간 근거는 ${durationFactPlaceCount}개 장소에 있어요.${placeCollection?.unavailableReason ? ` ${placeCollection.unavailableReason}` : ""}`
+    ? `일정의 ${scheduledPlaceCount}개 장소 모두에서 한국관광공사 운영시간·휴무일·행사기간 중 하나 이상을 확인했어요. 권장 소요시간 근거는 ${durationFactPlaceCount}개 장소에 있어요.${placeCollection?.unavailableReason ? ` ${placeCollection.unavailableReason}` : ""}`
     : operatingData === "partial"
-      ? `일정의 ${scheduledPlaceCount}개 중 ${operatingFactPlaceCount}개 장소에서 TourAPI 운영시간·휴무일·행사기간 중 하나 이상을 확인했어요. 권장 소요시간 근거는 ${durationFactPlaceCount}개 장소에 있어요. ${placeCollection?.unavailableReason ?? "원문을 해석할 수 없는 장소는 판단하지 않았어요."}`
-      : `${placeCollection?.unavailableReason ?? "파싱 가능한 TourAPI 운영정보가 없어 운영시간을 판단하지 않았어요."}${durationFactPlaceCount ? ` 권장 소요시간 근거는 ${durationFactPlaceCount}개 장소에만 있어요.` : ""}`;
+      ? `일정의 ${scheduledPlaceCount}개 중 ${operatingFactPlaceCount}개 장소에서 한국관광공사 운영시간·휴무일·행사기간 중 하나 이상을 확인했어요. 권장 소요시간 근거는 ${durationFactPlaceCount}개 장소에 있어요. ${placeCollection?.unavailableReason ?? "원문을 해석할 수 없는 장소는 판단하지 않았어요."}`
+      : `${placeCollection?.unavailableReason ?? "형식을 확인할 수 있는 한국관광공사 운영정보가 없어 운영시간을 판단하지 않았어요."}${durationFactPlaceCount ? ` 권장 소요시간 근거는 ${durationFactPlaceCount}개 장소에만 있어요.` : ""}`;
   const congestionMessage = congestionData === "available"
     ? `일정의 장소·방문일 ${scheduledCongestionPlaceDateCount}건 모두에서 한국관광공사 향후 집중률 예측과 날짜가 정확히 일치했어요. 절대 방문자 수나 대기시간으로 해석하지 않아요.${congestionCollection?.unavailableReason ? ` ${congestionCollection.unavailableReason}` : ""}`
     : congestionData === "partial"
@@ -462,10 +462,10 @@ export function calculateAnalysisCoverage(snapshot: DuriAnalysisSnapshot): DuriA
   const documentMessage = documentCollectionUnavailable
     ? "기기 문서함을 불러오지 못해 예약·교통편 문서가 없는지 확인할 수 없어요. 문서 기반 누락 검사는 수행하지 않았어요."
     : documentData === "available"
-    ? `${confirmedCount}개의 사용자 확인 예약·필수 일정만 하드 제약으로 검사했어요.`
+    ? `${confirmedCount}개의 사용자 확인 예약·필수 일정만 꼭 지켜야 하는 조건으로 검사했어요.`
     : documentData === "partial"
-      ? `첨부 문서 ${documentCount}개 중 확인 완료 ${resolvedDocumentCount}개, 미확정·처리 불가 ${unresolvedDocumentCount}개이며 현재 검증 가능한 사용자 확인 사실은 ${confirmedCount}개예요.${documentReviewCount ? ` 추출 결과 확인 필요 ${documentReviewCount}개.` : ""}${documentUnavailableCount ? ` OCR 미지원·실패 ${documentUnavailableCount}개.` : ""} 직접 확인한 날짜·시각·대상만 하드 제약으로 승격해요.`
-      : "사용자가 확인한 예약·교통편 구조화 정보가 없어 누락·지각 여부를 판단하지 않았어요.";
+      ? `첨부 문서 ${documentCount}개 중 확인 완료 ${resolvedDocumentCount}개, 확인 필요 ${unresolvedDocumentCount}개이며 현재 일정 점검에 사용할 수 있는 예약 정보는 ${confirmedCount}개예요.${documentReviewCount ? ` 읽어낸 내용 확인 필요 ${documentReviewCount}개.` : ""}${documentUnavailableCount ? ` 자동으로 읽지 못한 문서 ${documentUnavailableCount}개.` : ""} 직접 확인한 날짜·시각·대상만 꼭 지켜야 하는 조건으로 사용해요.`
+      : "사용자가 날짜·시간·장소를 확인한 예약·교통편 정보가 없어 누락·지각 여부를 판단하지 않았어요.";
   return {
     itinerary: snapshot.itinerary.length === 0 ? "insufficient" : snapshot.itinerary.length === 1 ? "partial" : "complete",
     preferences: snapshot.groupPreferenceDiagnosis.coverage,
@@ -478,16 +478,16 @@ export function calculateAnalysisCoverage(snapshot: DuriAnalysisSnapshot): DuriA
     congestionMessage,
     documentMessage,
     limitations: [
-      "외부 경로·운영 근거에 제공자 유효기한이 없어 자동으로 최신이라고 판정하지 않고 분석 시점 스냅샷으로 표시해요.",
-      "현재 Backend는 미래 출발시각 자동차 경로를 제공하지 않아 분석 시점 교통만 사용해요.",
-      "TourAPI에는 마지막 입장·라스트 오더 필드가 없어 운영 종료시각으로 대신 추정하지 않아요.",
+      "외부 경로·운영 정보에는 명시된 유효기한이 없어 자동으로 최신이라고 단정하지 않고, 마지막으로 확인한 시점을 함께 표시해요.",
+      ...(routeCollection?.mode === "car" ? ["자동차 이동시간은 여행 당일의 미래 교통이 아니라 마지막으로 확인한 교통 상황을 기준으로 해요."] : []),
+      "한국관광공사 정보에는 마지막 입장·라스트 오더 시간이 따로 없어 운영 종료시각으로 대신 추정하지 않아요.",
       "관광지 집중률은 각 관광지의 역대 최고 수준을 100으로 둔 날짜 단위 예측이라 장소 간 비교가 불가능하고 실제 방문자 수·시간대별 대기시간·수용 한계를 판단하지 않아요.",
       "숙소·공항·역의 날짜별 출발·종료 좌표와 출발 마감이 없어 하루 첫·마지막 연결은 검증하지 않아요.",
       ...(localPlanningFactsUnavailable ? ["여행방 이동수단·숙소·복귀 조건을 불러오지 못해 해당 사실을 사용하는 판단을 생략했어요."] : []),
       ...(localPlanningFactsMissing ? ["여행방에 이동수단·숙소·복귀 조건이 설정되지 않아 해당 사실을 사용하는 판단을 생략했어요."] : []),
       ...(scheduleOverlayUnavailable ? ["기기 일정 잠금 정보를 불러오지 못해 잠금이 없다고 가정하지 않고 순서 최적화 판단을 생략했어요."] : []),
       ...(sharedPreferenceUnavailable ? ["여행방 공유 성향·후보 필수/제외 신호를 불러오지 못해 해당 근거를 사용하는 판단과 자동 생성을 생략했어요."] : []),
-      ...(sharedPreferenceStale ? ["공유 성향 facts revision이 현재 일정과 달라 오래된 성향·후보 신호를 분석에 사용하지 않았어요."] : []),
+      ...(sharedPreferenceStale ? ["일행의 성향·후보 의견이 현재 일정 이후에 바뀌어, 오래된 내용은 이번 분석에 사용하지 않았어요."] : []),
       ...(documentCollectionUnavailable ? ["기기 문서함 조회에 실패해 문서 없음과 확인 불가를 구분하고 문서 기반 판단을 생략했어요."] : []),
     ],
   };
