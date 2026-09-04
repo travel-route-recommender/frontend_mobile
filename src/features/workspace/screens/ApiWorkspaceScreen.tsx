@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import { Redirect, useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
 import { useShallow } from "zustand/react/shallow";
 import { BackHandler, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
@@ -9,6 +9,7 @@ import type { ItineraryItem, TripRoom } from "../../../domain";
 import { queryClient } from "../../../query/queryClient";
 import { queryKeys } from "../../../query/keys";
 import { ApiError, apiClient } from "../../../services/apiClient";
+import { toUserFacingApiErrorMessage } from "../../../services/userFacingApiError";
 import type {
   ItineraryMutationResult,
   TripPlanningFactsMutationResult,
@@ -125,19 +126,25 @@ type PendingReservationImpact = {
   confirmedTicketRemovalItemIds: string[];
 };
 
+function reservationStatusLabel(status: "confirmed" | "unconfirmed" | "cancelled") {
+  if (status === "confirmed") return "확정";
+  if (status === "cancelled") return "취소됨";
+  return "미확정";
+}
+
 function serverScheduleTodoReferences(snapshot: WorkspaceScheduleSnapshot) {
   return Object.fromEntries(Object.entries(snapshot.metadataByItemId).flatMap(([itemId, metadata]) => {
     const references = [
       ...metadata.tickets.map((ticket, index) => ({
       id: ticket.id,
       label: (ticket.originalName?.trim() || ticket.note?.trim() || `티켓 ${index + 1}`).slice(0, 120),
-      sourceLabel: "서버 티켓",
+      sourceLabel: "공유 티켓",
         linkType: "ticket" as const,
       })),
       ...(metadata.reservation ? [{
         id: metadata.reservation.id,
         label: (metadata.reservation.note?.trim() || metadata.reservation.confirmationCode?.trim() || `${metadata.placeName} 예약`).slice(0, 120),
-        sourceLabel: "서버 예약",
+        sourceLabel: "확정 예약",
         linkType: "reservation" as const,
       }] : []),
     ];
@@ -154,9 +161,9 @@ function mutationMessage(result: string) {
   if (result === "not-member") return "이 여행방의 일정을 수정할 권한이 없어요.";
   if (result === "overlap") return "다른 일정과 시간이 겹쳐 저장하지 않았어요.";
   if (result === "invalid-date") return "여행 기간 안의 날짜를 선택해 주세요.";
-  if (result === "invalid-time") return "서버 일정은 00:00부터 23:59 사이의 1분 단위 시간만 저장할 수 있어요.";
+  if (result === "invalid-time") return "일정은 00:00부터 23:59 사이의 1분 단위 시간으로 저장해 주세요.";
   if (result === "end-condition") return "복귀 조건을 지킬 수 없는 시간이어서 저장하지 않았어요.";
-  if (result === "protected-item") return "서버에서 필수로 지정한 일정은 삭제하거나 다른 날짜로 옮길 수 없어요.";
+  if (result === "protected-item") return "필수로 보호된 일정은 삭제하거나 다른 날짜로 옮길 수 없어요.";
   if (result === "scheduled") return "일정에 배치된 후보예요. 먼저 모든 일정에서 제거해 주세요.";
   if (result === "boundary") return "이 방향으로는 더 이동할 수 없어요.";
   return "요청을 처리하지 못했어요. 최신 일정을 다시 확인해 주세요.";
@@ -194,7 +201,7 @@ function buildDomainTrip(
       // 이 값을 외부 경로 측정치로 표시하지 않는다.
       travelMinutes: planning!.travelBufferMinutes!.value,
       serviceBufferMinutes: planning!.prepBufferMinutes!.value,
-      note: "서버 planning에 저장된 이동 확보시간과 준비시간",
+      note: "여행방에 저장된 이동시간과 준비시간",
     } : null,
     companionType: localFacts?.companionType ?? null,
     expectedMemberCount: localFacts?.expectedMemberCount ?? null,
@@ -301,19 +308,21 @@ export function ApiWorkspaceScreen() {
   const factsSavingRef = useRef(false);
   const factsSaveSequenceRef = useRef(0);
   const [feedback, setFeedback] = useState<WorkspaceFeedback>({ message: "" });
-  const accessRevoked = query.error instanceof ApiError && (query.error.status === 401 || query.error.status === 403);
+  const authenticationRejected = query.error instanceof ApiError && query.error.status === 401;
+  const roomForbidden = query.error instanceof ApiError && query.error.status === 403;
 
   if (!currentUserId) return <Screen><AppHeader title="여행 일정" onBack={returnFromWorkspace} /><ErrorState message="로그인 사용자 정보를 확인하지 못했어요." /></Screen>;
-  if (query.isLoading) return <Screen><AppHeader title="여행 일정" onBack={returnFromWorkspace} /><LoadingState label="서버 후보와 일정을 불러오고 있어요." /></Screen>;
-  if (accessRevoked) return <Screen><AppHeader title="여행 일정" onBack={returnFromWorkspace} /><ErrorState message="이 여행방의 최신 접근 권한을 확인할 수 없어요. 다시 로그인하거나 여행방 참여 상태를 확인해 주세요." onRetry={() => void query.refetch()} /></Screen>;
-  if (!query.data) return <Screen><AppHeader title="여행 일정" onBack={returnFromWorkspace} /><ErrorState message={query.error instanceof Error ? query.error.message : "서버 워크스페이스를 불러오지 못했어요."} onRetry={() => { void query.refetch().then((result) => {
+  if (query.isLoading) return <Screen><AppHeader title="여행 일정" onBack={returnFromWorkspace} /><LoadingState label="후보와 일정을 불러오고 있어요." /></Screen>;
+  if (authenticationRejected) return <Screen><LoadingState label="로그인 상태를 다시 확인하고 있어요." /></Screen>;
+  if (roomForbidden) return <Redirect href="/(tabs)/trips" />;
+  if (!query.data) return <Screen><AppHeader title="여행 일정" onBack={returnFromWorkspace} /><ErrorState message={toUserFacingApiErrorMessage(query.error, "여행 일정을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.")} onRetry={() => { void query.refetch().then((result) => {
     if (!result.isError && result.data?.scheduleSnapshot) {
       setSnapshot(undefined);
       setScheduleRefreshRequired(false);
     }
   }); }} /></Screen>;
   if (scheduleRefreshRequired) return <Screen><AppHeader title="여행 일정" onBack={returnFromWorkspace} /><ErrorState
-    message="서버가 변경을 받았는지 확인할 수 없어 편집과 분석을 잠시 중지했어요. 최신 일정을 다시 불러온 뒤 반영 여부를 확인해 주세요."
+    message="변경 내용이 저장됐는지 확인할 수 없어 편집과 분석을 잠시 멈췄어요. 최신 일정을 다시 불러온 뒤 반영 여부를 확인해 주세요."
     onRetry={() => { void query.refetch().then((result) => {
       if (!result.isError && result.data?.scheduleSnapshot) {
         setSnapshot(undefined);
@@ -331,7 +340,7 @@ export function ApiWorkspaceScreen() {
     ? snapshot
     : data.scheduleSnapshot;
   if (!data.room.startDate || !data.room.endDate || !activeSnapshot) {
-    return <Screen><AppHeader title={data.room.title} onBack={returnFromWorkspace} /><ErrorState message="여행 날짜를 먼저 확정해야 서버 일정표를 편집할 수 있어요." onRetry={() => void query.refetch()} /></Screen>;
+    return <Screen><AppHeader title={data.room.title} onBack={returnFromWorkspace} /><ErrorState message="여행 날짜를 먼저 확정해야 일정표를 편집할 수 있어요." onRetry={() => void query.refetch()} /></Screen>;
   }
 
   const localFacts = localFactsOverride?.tripId === tripId && localFactsOverride.userId === currentUserId
@@ -380,15 +389,16 @@ export function ApiWorkspaceScreen() {
     itineraryCount: workspace.itineraryCount,
     hasAnalysis: Boolean(analysisState.session),
     stale: analysisStale,
-    canCreateSchedule: workspace.permissions.canAddSchedule && !saving && !factsSaving && !backgroundRefreshFailed,
     canUseAnalysis: duriAnalysisService.available && Boolean(analysisInput) && !saving && !factsSaving && !backgroundRefreshFailed,
   });
   const tripFactsDraft: WorkspaceTripFactsDraft = {
     transport: planning?.transportMode?.value === "car" ? "car" : "public",
     accommodationLocation: planning?.lodging?.name ?? "",
+    accommodationLocationDetails: planning?.lodging ? { ...planning.lodging } : null,
     endCondition: planning?.returnPoint ? {
       type: "other",
       location: planning.returnPoint.name,
+      locationDetails: { ...planning.returnPoint },
       deadline: planning.returnDeadline?.value ?? "",
       travelMinutes: planning.travelBufferMinutes ? String(planning.travelBufferMinutes.value) : "",
       serviceBufferMinutes: planning.prepBufferMinutes ? String(planning.prepBufferMinutes.value) : "",
@@ -398,14 +408,14 @@ export function ApiWorkspaceScreen() {
   const returnConditionSummary = trip.endCondition
     ? `${trip.endCondition.location.name} ${trip.endCondition.deadline}까지`
     : planning?.returnPoint
-      ? `${planning.returnPoint.name} · 마감/확보시간 미확정`
+      ? `${planning.returnPoint.name} · 마감·이동시간 확인 필요`
       : "종료 조건 없음";
   const transportSummary = planning?.transportMode?.confirmedAt
     ? trip.transport === "car" ? "자차" : "도보·대중교통"
     : planning?.transportMode ? "이동수단 확인 필요" : "이동수단 미설정";
   const localFactsSummary = `${transportSummary} · 숙소 ${trip.accommodationLocation?.name ?? "미입력"} · ${returnConditionSummary}`;
   const unavailableLocalDataLabels = [
-    data.localFactsStatus === "unavailable" ? "여행 사실" : "",
+    data.localFactsStatus === "unavailable" ? "여행 설정" : "",
     data.workspaceOverlayStatus === "unavailable" ? "일정 잠금·메모" : "",
   ].filter(Boolean).join(" 및 ");
 
@@ -436,13 +446,13 @@ export function ApiWorkspaceScreen() {
           : current);
       }
       const failedLabels = [
-        factsCleared === false ? "여행 사실" : "",
+        factsCleared === false ? "여행 설정" : "",
         overlaysCleared === false ? "일정 잠금·메모" : "",
       ].filter(Boolean);
       const refreshed = await query.refetch();
       if (useAuthSessionStore.getState().currentSessionUserId !== currentUserId) return;
       if (refreshed.isError) {
-        showFeedback(`${failedLabels.length ? `${failedLabels.join(" 및 ")} 초기화에 실패했고, ` : ""}기기 정보 초기화 뒤 서버 일정을 다시 불러오지 못했어요.`);
+        showFeedback(`${failedLabels.length ? `${failedLabels.join(" 및 ")} 초기화에 실패했고, ` : ""}기기 정보 초기화 뒤 여행방 일정을 다시 불러오지 못했어요.`);
         return;
       }
       const stillUnavailable = refreshed.data?.localFactsStatus === "unavailable"
@@ -451,7 +461,7 @@ export function ApiWorkspaceScreen() {
         showFeedback(`${failedLabels.length ? `${failedLabels.join(" 및 ")} 초기화에 실패했어요. ` : ""}기기 저장소 접근이 계속 실패하면 앱·브라우저 저장 권한을 확인한 뒤 다시 시도해 주세요.`);
         return;
       }
-      showFeedback("손상된 기기 보조 정보만 초기화했어요. 서버 일정과 티켓은 변경하지 않았습니다.");
+      showFeedback("읽을 수 없는 기기 정보만 초기화했어요. 여행방 일정과 티켓은 변경하지 않았어요.");
     } finally {
       setLocalDataResetting(false);
     }
@@ -462,7 +472,12 @@ export function ApiWorkspaceScreen() {
     return true;
   };
   const openScheduleAddFlow = () => {
-    if (savingRef.current) { showFeedback("이전 변경을 저장하고 있어요."); return; }
+    if (!editable || savingRef.current || factsSavingRef.current) {
+      showFeedback(backgroundRefreshFailed
+        ? "최신 일정을 다시 불러온 뒤 추가해 주세요."
+        : "이전 변경을 저장한 뒤 일정을 추가해 주세요.");
+      return;
+    }
     if (blockMutation(workspace.permissions.canAddSchedule, "새 일정을 추가할 수 없어요.")) return;
     setSelectCandidateOpen(true);
   };
@@ -487,18 +502,18 @@ export function ApiWorkspaceScreen() {
     reservationImpactConfirmed = false,
   ) => {
     if (localDataUnavailable) {
-      showFeedback("기기에 저장된 여행 사실과 일정 보조 정보를 다시 읽기 전에는 서버 일정을 편집할 수 없어요.");
+      showFeedback("기기에 저장된 여행 설정과 잠금 정보를 다시 읽기 전에는 일정을 편집할 수 없어요.");
       return false;
     }
     if (backgroundRefreshFailed || scheduleRefreshRequired) {
-      showFeedback("최신 서버 일정을 확인할 때까지 편집할 수 없어요. 다시 불러온 뒤 시도해 주세요.");
+      showFeedback("최신 일정을 확인할 때까지 편집할 수 없어요. 다시 불러온 뒤 시도해 주세요.");
       return false;
     }
     if (factsSavingRef.current) {
-      showFeedback("여행 사실 저장이 끝난 뒤 일정을 편집해 주세요.");
+      showFeedback("여행 설정 저장이 끝난 뒤 일정을 편집해 주세요.");
       return false;
     }
-    if (blockMutation(workspace.permissions.canEditSchedule, "서버 일정을 수정할 수 없어요.")) return false;
+    if (blockMutation(workspace.permissions.canEditSchedule, "일정을 수정할 수 없어요.")) return false;
     const base = activeSnapshot;
     if (savingRef.current) {
       showFeedback("이전 변경을 저장하고 있어요. 잠시 후 다시 시도해 주세요.");
@@ -558,7 +573,7 @@ export function ApiWorkspaceScreen() {
           ? { ...current, workspaceOverlayStatus: "unavailable" }
           : current);
       }
-      showFeedback(`${successMessage} · 서버 일정 v${saved.scheduleVersion}${localWarnings.length ? ` · ${localWarnings.join(" · ")}; 기기 저장 상태를 다시 확인해 주세요.` : ""}`);
+      showFeedback(`${successMessage}${localWarnings.length ? ` · ${localWarnings.join(" · ")}; 기기 저장 상태를 다시 확인해 주세요.` : ""}`);
       void syncApiWorkspaceScheduleImpactTodos({
           roomId: tripId,
           beforeItinerary: base.itinerary,
@@ -569,9 +584,9 @@ export function ApiWorkspaceScreen() {
         }).then((todoResult) => {
         void queryClient.invalidateQueries({ queryKey: queryKeys.trips.todos(tripId, currentUserId) });
         if (todoResult.failed > 0) {
-          showFeedback(`서버 일정 v${saved.scheduleVersion} 저장은 완료됐지만 공유 예약 확인 TODO ${todoResult.failed}건은 기록하지 못했어요. TODO에서 직접 확인 작업을 추가해 주세요.`);
+          showFeedback(`일정 저장은 완료됐지만 공유 예약 확인 TODO ${todoResult.failed}건은 기록하지 못했어요. TODO에서 직접 확인 작업을 추가해 주세요.`);
         }
-      }).catch(() => showFeedback(`서버 일정 v${saved.scheduleVersion} 저장은 완료됐지만 공유 예약 확인 TODO를 동기화하지 못했어요.`));
+      }).catch(() => showFeedback("일정 저장은 완료됐지만 공유 예약 확인 TODO를 동기화하지 못했어요."));
       return true;
     } catch (error) {
       setSnapshot(base);
@@ -592,7 +607,7 @@ export function ApiWorkspaceScreen() {
         const refreshed = await query.refetch();
         if (!refreshed.isError && refreshed.data?.scheduleSnapshot) setScheduleRefreshRequired(false);
         showFeedback(!refreshed.isError && refreshed.data?.scheduleSnapshot
-          ? "다른 동행자가 먼저 일정을 수정했어요. 최신 서버 일정으로 다시 불러왔습니다."
+          ? "다른 동행자가 먼저 일정을 수정했어요. 최신 일정으로 다시 불러왔습니다."
           : "다른 동행자가 먼저 일정을 수정했지만 최신 일정을 불러오지 못했어요. 네트워크를 확인한 뒤 다시 시도해 주세요.");
         return false;
       }
@@ -610,9 +625,9 @@ export function ApiWorkspaceScreen() {
       const refreshed = await query.refetch();
       if (!refreshed.isError && refreshed.data?.scheduleSnapshot) {
         setScheduleRefreshRequired(false);
-        showFeedback("저장 응답을 확인하지 못해 최신 서버 일정을 다시 불러왔어요. 변경 반영 여부를 확인해 주세요.");
+        showFeedback("저장 결과를 확인하지 못해 최신 일정을 다시 불러왔어요. 변경 반영 여부를 확인해 주세요.");
       } else {
-        showFeedback(error instanceof ApiError || error instanceof Error ? error.message : "서버 일정 저장 결과를 확인하지 못했어요.");
+        showFeedback(toUserFacingApiErrorMessage(error, "일정 저장 결과를 확인하지 못했어요. 최신 일정을 확인한 뒤 다시 시도해 주세요."));
       }
       return false;
     } finally {
@@ -630,8 +645,8 @@ export function ApiWorkspaceScreen() {
       showFeedback(mutationMessage(result.status));
       return false;
     }
-    if (!dateManagementEditable || savingRef.current) {
-      showFeedback(isOwner ? "다른 서버 변경이 끝난 뒤 날짜를 수정해 주세요." : "여행 날짜는 방장만 수정할 수 있어요.");
+    if (!dateManagementEditable || savingRef.current || factsSavingRef.current) {
+      showFeedback(isOwner ? "다른 변경이 끝난 뒤 날짜를 수정해 주세요." : "여행 날짜는 방장만 수정할 수 있어요.");
       return false;
     }
     const base = activeSnapshot;
@@ -669,7 +684,7 @@ export function ApiWorkspaceScreen() {
       }
       void queryClient.invalidateQueries({ queryKey: queryKeys.trips.all });
       void queryClient.invalidateQueries({ queryKey: queryKeys.trips.todos(tripId, currentUserId) });
-      showFeedback(`${successMessage} · 서버 일정 v${saved.schedule.scheduleVersion}${saved.todoLinkImpacts.length ? ` · 삭제 일정의 TODO 연결 ${saved.todoLinkImpacts.length}건을 정리했어요.` : ""}`, result.selectedDate);
+      showFeedback(`${successMessage}${saved.todoLinkImpacts.length ? ` · 삭제 일정의 TODO 연결 ${saved.todoLinkImpacts.length}건을 정리했어요.` : ""}`, result.selectedDate);
       return true;
     } catch (error) {
       setSnapshot(base);
@@ -694,7 +709,7 @@ export function ApiWorkspaceScreen() {
       const refreshed = await query.refetch();
       showFeedback(refreshed.isError
         ? "날짜 변경 결과를 확인하지 못했어요. 네트워크를 확인한 뒤 최신 여행방을 다시 불러오세요."
-        : "날짜 변경 응답을 확인하지 못해 최신 서버 여행방을 다시 불러왔어요. 반영 여부를 확인해 주세요.");
+        : "날짜 변경 결과를 확인하지 못해 최신 여행방을 다시 불러왔어요. 반영 여부를 확인해 주세요.");
       return false;
     } finally {
       savingRef.current = false;
@@ -781,7 +796,7 @@ export function ApiWorkspaceScreen() {
   };
 
   const openAddEditor = (candidate: CandidatePlaceViewModel) => {
-    if (!editable) { showFeedback(localDataUnavailable ? "기기 보조 정보를 다시 읽기 전에는 새 일정을 추가할 수 없어요." : workspace.readOnlyReason ?? "저장 중에는 새 일정을 추가할 수 없어요."); return; }
+    if (!editable) { showFeedback(localDataUnavailable ? "기기에 저장한 정보를 다시 불러오기 전에는 새 일정을 추가할 수 없어요." : workspace.readOnlyReason ?? "저장 중에는 새 일정을 추가할 수 없어요."); return; }
     if (blockMutation(workspace.permissions.canAddSchedule, "새 일정을 추가할 수 없어요.")) return;
     if (candidate.placeMissing) { showFeedback("장소 정보가 누락되어 일정에 추가할 수 없어요."); return; }
     const range = getDefaultScheduleRange(activeSnapshot.itinerary, selectedDate);
@@ -799,7 +814,7 @@ export function ApiWorkspaceScreen() {
   };
 
   const openEditEditor = (itemId: string) => {
-    if (!editable) { showFeedback(localDataUnavailable ? "기기 보조 정보를 다시 읽기 전에는 일정을 편집할 수 없어요." : workspace.readOnlyReason ?? "저장 중에는 일정을 편집할 수 없어요."); return; }
+    if (!editable) { showFeedback(localDataUnavailable ? "기기에 저장한 정보를 다시 불러오기 전에는 일정을 편집할 수 없어요." : workspace.readOnlyReason ?? "저장 중에는 일정을 편집할 수 없어요."); return; }
     if (blockMutation(workspace.permissions.canEditSchedule, "일정 상세를 편집할 수 없어요.")) return;
     const item = activeSnapshot.itinerary.find((entry) => entry.id === itemId);
     if (!item) { showFeedback("일정 항목을 찾을 수 없어요."); return; }
@@ -820,7 +835,7 @@ export function ApiWorkspaceScreen() {
 
   const submitEditor = (value: ScheduleEditorValue, durationMinutes: number): ItineraryMutationResult => {
     if (!workspace.permissions.canEditSchedule) return "trip-not-editable";
-    if (!editor || savingRef.current) return "boundary";
+    if (!editor || savingRef.current || factsSavingRef.current || backgroundRefreshFailed) return "boundary";
     const result = editor.mode === "add"
       ? prepareApiWorkspaceScheduleAddition({
           trip,
@@ -848,7 +863,7 @@ export function ApiWorkspaceScreen() {
 
   const updateGridItem = (itemId: string, patch: Partial<Pick<ItineraryItem, "startTime" | "durationMinutes">>) => {
     if (blockMutation(workspace.permissions.canEditSchedule, "일정 시간을 수정할 수 없어요.")) return;
-    if (savingRef.current) { showFeedback("이전 변경을 저장하고 있어요."); return; }
+    if (!editable || savingRef.current || factsSavingRef.current) { showFeedback("이전 변경을 저장한 뒤 일정 시간을 조절해 주세요."); return; }
     const item = activeSnapshot.itinerary.find((entry) => entry.id === itemId);
     if (!item) { showFeedback("일정 항목을 찾을 수 없어요."); return; }
     const userLockedItemIds = new Set(getApiWorkspaceUserLockedItemIds(activeSnapshot));
@@ -871,6 +886,7 @@ export function ApiWorkspaceScreen() {
 
   const confirmItemRemoval = () => {
     if (!removeItemId) return;
+    if (!editable || savingRef.current || factsSavingRef.current) { setRemoveItemId(undefined); showFeedback("이전 변경을 저장한 뒤 일정을 삭제해 주세요."); return; }
     if (blockMutation(workspace.permissions.canDeleteSchedule, "일정을 삭제할 수 없어요.")) { setRemoveItemId(undefined); return; }
     const itemId = removeItemId;
     setRemoveItemId(undefined);
@@ -888,7 +904,12 @@ export function ApiWorkspaceScreen() {
   };
 
   const confirmCandidateRemoval = async () => {
-    if (!removeCandidateId || savingRef.current) return;
+    if (!removeCandidateId) return;
+    if (savingRef.current || factsSavingRef.current) {
+      setRemoveCandidateId(undefined);
+      showFeedback("다른 변경을 저장한 뒤 후보를 삭제해 주세요.");
+      return;
+    }
     const placeId = removeCandidateId;
     const name = data.placesById[placeId]?.name ?? "후보 장소";
     setRemoveCandidateId(undefined);
@@ -908,11 +929,11 @@ export function ApiWorkspaceScreen() {
       const refreshed = await query.refetch();
       if (!refreshed.isError && refreshed.data?.scheduleSnapshot) {
         setSnapshot(undefined);
-        showFeedback("후보 삭제 응답을 확인하지 못해 최신 서버 상태를 다시 불러왔어요. 반영 여부를 확인해 주세요.");
+        showFeedback("후보 삭제 결과를 확인하지 못해 최신 상태를 다시 불러왔어요. 반영 여부를 확인해 주세요.");
       } else {
         setSnapshot(undefined);
         setScheduleRefreshRequired(true);
-        showFeedback(error instanceof Error ? error.message : "후보 장소 삭제 결과를 확인하지 못했어요.");
+        showFeedback(toUserFacingApiErrorMessage(error, "후보 장소 삭제 결과를 확인하지 못했어요. 다시 시도해 주세요."));
       }
     } finally {
       savingRef.current = false;
@@ -921,24 +942,24 @@ export function ApiWorkspaceScreen() {
   };
 
   const updateCandidateSignal = async (placeId: string, patch: UpdateRoomCandidateSignalInput) => {
-    if (signalSavingPlaceId || savingRef.current || backgroundRefreshFailed) {
+    if (signalSavingPlaceId || savingRef.current || factsSavingRef.current || backgroundRefreshFailed) {
       showFeedback("최신 여행방 변경을 확인한 뒤 후보 의견을 저장해 주세요.");
       return;
     }
     setSignalSavingPlaceId(placeId);
     try {
-      const result = await roomPreferenceApiGateway.updateCandidateSignal(tripId, placeId, patch, {
+      await roomPreferenceApiGateway.updateCandidateSignal(tripId, placeId, patch, {
         userId: currentUserId,
       });
       const refreshed = await query.refetch();
       showFeedback(refreshed.isError
-        ? `후보 의견은 서버 facts v${result.factsVersion}에 저장됐지만 최신 성향을 다시 불러오지 못했어요.`
+        ? "후보 의견은 저장됐지만 최신 성향을 다시 불러오지 못했어요. 잠시 후 다시 확인해 주세요."
         : "내 후보 의견을 여행방에 공유했어요. 두리 분석과 자동 초안에 반영됩니다.");
     } catch (error) {
       // PUT 응답 유실 시 실제 반영 여부를 추정하지 않고 서버 facts를 다시 읽는다.
       const refreshed = await query.refetch();
       showFeedback(refreshed.isError
-        ? (error instanceof Error ? error.message : "후보 의견 저장 결과를 확인하지 못했어요.")
+        ? toUserFacingApiErrorMessage(error, "후보 의견 저장 결과를 확인하지 못했어요. 다시 시도해 주세요.")
         : "저장 응답을 확인하지 못해 최신 후보 의견을 다시 불러왔어요. 반영 여부를 확인해 주세요.");
     } finally {
       setSignalSavingPlaceId(undefined);
@@ -966,10 +987,24 @@ export function ApiWorkspaceScreen() {
     void workspacePlanningApiGateway.update(tripId, {
       timezone: activeSnapshot.planning?.timezone ?? "Asia/Seoul",
       lodging: value.accommodationLocation
-        ? { name: value.accommodationLocation.name, source: "manual" }
+        ? {
+            name: value.accommodationLocation.name,
+            ...(value.accommodationLocation.lat !== undefined ? { lat: value.accommodationLocation.lat } : {}),
+            ...(value.accommodationLocation.lng !== undefined ? { lng: value.accommodationLocation.lng } : {}),
+            ...(value.accommodationLocation.placeId ? { placeId: value.accommodationLocation.placeId } : {}),
+            ...(value.accommodationLocation.externalId ? { externalId: value.accommodationLocation.externalId } : {}),
+            source: value.accommodationLocation.source ?? "manual",
+          }
         : null,
       returnPoint: value.endCondition
-        ? { name: value.endCondition.location.name, source: "manual" }
+        ? {
+            name: value.endCondition.location.name,
+            ...(value.endCondition.location.lat !== undefined ? { lat: value.endCondition.location.lat } : {}),
+            ...(value.endCondition.location.lng !== undefined ? { lng: value.endCondition.location.lng } : {}),
+            ...(value.endCondition.location.placeId ? { placeId: value.endCondition.location.placeId } : {}),
+            ...(value.endCondition.location.externalId ? { externalId: value.endCondition.location.externalId } : {}),
+            source: value.endCondition.location.source ?? "manual",
+          }
         : null,
       // 현재 화면은 '자차 / 대중교통·도보' 두 범주만 표현한다. 서버에 더
       // 정밀하게 저장된 walk/mixed를 사용자가 바꾸지 않은 저장으로 덮지 않는다.
@@ -978,22 +1013,37 @@ export function ApiWorkspaceScreen() {
         returnDeadline: value.endCondition.deadline,
         travelBufferMinutes: value.endCondition.travelMinutes,
         prepBufferMinutes: value.endCondition.serviceBufferMinutes,
-      } : {}),
+      } : {
+        returnDeadline: null,
+        travelBufferMinutes: null,
+        prepBufferMinutes: null,
+      }),
       confirm: true,
-    }).then((savedPlanning) => {
+    }).then(async () => {
       if (factsSaveSequenceRef.current !== requestSequence
         || useAuthSessionStore.getState().currentSessionUserId !== currentUserId) return;
-      const savedSnapshot = { ...activeSnapshot, planning: savedPlanning };
-      setSnapshot(savedSnapshot);
-      queryClient.setQueryData<ApiTripDetailData>(queryKeys.trips.detail(tripId, currentUserId), (current) => {
-        if (!current) return current;
-        return { ...current, scheduleSnapshot: { ...(current.scheduleSnapshot ?? savedSnapshot), planning: savedPlanning } };
-      });
-      showFeedback("이동 방식·숙소·복귀 조건을 여행방에 공유 저장했어요.");
-    }).catch((error) => {
+      // planning 변경은 factsVersion도 전진시킨다. 응답의 planning만 기존
+      // room/schedule cache에 덧씌우면 새 facts를 과거 version으로 분석하게
+      // 되므로, version-fenced 여행방 snapshot 전체를 다시 읽는다.
+      setSnapshot(undefined);
+      const refreshed = await query.refetch();
       if (factsSaveSequenceRef.current !== requestSequence
         || useAuthSessionStore.getState().currentSessionUserId !== currentUserId) return;
-      showFeedback(error instanceof Error ? error.message : "여행방 planning 저장 결과를 확인하지 못했어요.");
+      showFeedback(!refreshed.isError && refreshed.data?.scheduleSnapshot
+        ? "이동 방식·숙소·복귀 조건을 여행방에 공유 저장했어요."
+        : "여행 설정은 저장됐지만 최신 일정과 분석 기준을 다시 불러오지 못했어요. 새로고침해 반영 상태를 확인해 주세요.");
+    }).catch(async (error) => {
+      if (factsSaveSequenceRef.current !== requestSequence
+        || useAuthSessionStore.getState().currentSessionUserId !== currentUserId) return;
+      // 요청이 commit된 뒤 응답만 유실됐을 수 있다. 실패 응답만으로 이전
+      // planning을 복원하지 않고 최신 version-fenced snapshot으로 확인한다.
+      setSnapshot(undefined);
+      const refreshed = await query.refetch();
+      if (factsSaveSequenceRef.current !== requestSequence
+        || useAuthSessionStore.getState().currentSessionUserId !== currentUserId) return;
+      showFeedback(!refreshed.isError && refreshed.data?.scheduleSnapshot
+        ? "저장 응답을 확인하지 못해 최신 여행 설정을 다시 불러왔어요. 반영 여부를 확인해 주세요."
+        : toUserFacingApiErrorMessage(error, "여행 설정 저장 결과를 확인하지 못했어요. 새로고침한 뒤 다시 시도해 주세요."));
     }).finally(() => {
       if (factsSaveSequenceRef.current !== requestSequence) return;
       factsSavingRef.current = false;
@@ -1004,7 +1054,7 @@ export function ApiWorkspaceScreen() {
 
   const uploadServerTicket = async (itemId: string, note: string) => {
     if (blockMutation(workspace.permissions.canEditSchedule, "읽기 전용 일정에는 티켓을 추가할 수 없어요.")) return false;
-    if (savingRef.current) { showFeedback("다른 서버 변경을 저장하고 있어요."); return false; }
+    if (savingRef.current || factsSavingRef.current) { showFeedback("다른 변경을 저장하고 있어요."); return false; }
     savingRef.current = true;
     setSaving(true);
     try {
@@ -1020,8 +1070,8 @@ export function ApiWorkspaceScreen() {
       const refreshed = await query.refetch();
       setScheduleRefreshRequired(refreshed.isError || !refreshed.data?.scheduleSnapshot);
       showFeedback(!refreshed.isError
-        ? "티켓 이미지를 서버 일정에 추가했어요."
-        : "티켓 이미지는 서버에 추가됐지만 최신 목록을 다시 불러오지 못했어요.");
+        ? "티켓 이미지를 일정에 추가했어요."
+        : "티켓 이미지는 추가됐지만 최신 목록을 다시 불러오지 못했어요.");
       return true;
     } catch (error) {
       // 업로드 요청이 서버에 도달한 뒤 응답만 유실됐을 수 있으므로 최신 snapshot으로 확인한다.
@@ -1030,9 +1080,9 @@ export function ApiWorkspaceScreen() {
       const refreshed = await query.refetch();
       if (!refreshed.isError && refreshed.data?.scheduleSnapshot) {
         setScheduleRefreshRequired(false);
-        showFeedback("업로드 응답을 확인하지 못해 최신 서버 티켓 목록을 다시 불러왔어요. 반영 여부를 확인해 주세요.");
+        showFeedback("업로드 결과를 확인하지 못해 최신 티켓 목록을 다시 불러왔어요. 반영 여부를 확인해 주세요.");
       } else {
-        showFeedback(error instanceof Error ? error.message : "티켓 이미지 업로드 결과를 확인하지 못했어요.");
+        showFeedback(toUserFacingApiErrorMessage(error, "티켓 이미지를 올리지 못했어요. 파일과 연결 상태를 확인해 주세요."));
       }
       return false;
     } finally {
@@ -1043,7 +1093,7 @@ export function ApiWorkspaceScreen() {
 
   const deleteServerTicket = async (itemId: string, ticket: BackendScheduleTicket) => {
     if (blockMutation(workspace.permissions.canEditSchedule, "읽기 전용 일정의 티켓을 삭제할 수 없어요.")) return false;
-    if (savingRef.current) { showFeedback("다른 서버 변경을 저장하고 있어요."); return false; }
+    if (savingRef.current || factsSavingRef.current) { showFeedback("다른 변경을 저장하고 있어요."); return false; }
     savingRef.current = true;
     setSaving(true);
     try {
@@ -1052,7 +1102,7 @@ export function ApiWorkspaceScreen() {
       const refreshed = await query.refetch();
       setScheduleRefreshRequired(refreshed.isError || !refreshed.data?.scheduleSnapshot);
       showFeedback(!refreshed.isError
-        ? "티켓 이미지를 서버 일정에서 삭제했어요."
+        ? "티켓 이미지를 일정에서 삭제했어요."
         : "티켓 이미지는 삭제됐지만 최신 목록을 다시 불러오지 못했어요.");
       return true;
     } catch (error) {
@@ -1062,9 +1112,9 @@ export function ApiWorkspaceScreen() {
       const refreshed = await query.refetch();
       if (!refreshed.isError && refreshed.data?.scheduleSnapshot) {
         setScheduleRefreshRequired(false);
-        showFeedback("삭제 응답을 확인하지 못해 최신 서버 티켓 목록을 다시 불러왔어요. 반영 여부를 확인해 주세요.");
+        showFeedback("삭제 결과를 확인하지 못해 최신 티켓 목록을 다시 불러왔어요. 반영 여부를 확인해 주세요.");
       } else {
-        showFeedback(error instanceof Error ? error.message : "티켓 이미지 삭제 결과를 확인하지 못했어요.");
+        showFeedback(toUserFacingApiErrorMessage(error, "티켓 이미지 삭제 결과를 확인하지 못했어요. 다시 시도해 주세요."));
       }
       return false;
     } finally {
@@ -1092,7 +1142,7 @@ export function ApiWorkspaceScreen() {
     void queryClient.invalidateQueries({ queryKey: queryKeys.trips.todos(tripId, currentUserId) });
     showFeedback(available
       ? message
-      : "예약 정보는 서버에서 변경됐지만 최신 일정과 자동 TODO를 다시 불러오지 못했어요. 새로고침해 반영 상태를 확인해 주세요.");
+      : "예약 정보는 변경됐지만 최신 일정과 자동 TODO를 다시 불러오지 못했어요. 새로고침해 반영 상태를 확인해 주세요.");
   };
 
   const refreshAfterReservationConflict = async () => {
@@ -1102,7 +1152,7 @@ export function ApiWorkspaceScreen() {
     setScheduleRefreshRequired(!available);
     showFeedback(available
       ? "다른 동행자의 최신 일정을 불러왔어요. 예약 정보를 다시 확인해 주세요."
-      : "일정 버전 충돌 뒤 최신 서버 일정을 불러오지 못했어요. 새로고침이 필요합니다.");
+      : "다른 동행자의 변경과 겹친 뒤 최신 일정을 불러오지 못했어요. 새로고침해 주세요.");
   };
 
   const explore = () => {
@@ -1207,9 +1257,9 @@ export function ApiWorkspaceScreen() {
         showsVerticalScrollIndicator={false}
       >
         <AppHeader title="여행 일정" subtitle={`${workspace.regionName} ${Math.max(workspace.dates.length - 1, 0)}박 ${workspace.dates.length}일 · ${formatTripDateRange(workspace.startDate, workspace.endDate)}`} onBack={returnFromWorkspace} />
-        {backgroundRefreshFailed ? <View accessibilityRole="alert" style={styles.readOnly}><Text style={styles.readOnlyTitle}>최신 서버 일정을 확인하지 못했어요</Text><Text style={styles.readOnlyText}>보이는 일정은 마지막으로 확인한 사본입니다. 새 분석과 편집은 다시 불러오기 전까지 중지했어요.</Text><Pressable accessibilityRole="button" onPress={() => { void query.refetch(); }} style={({ pressed }) => [styles.factEditButton, pressed && styles.pressed]}><Text style={styles.factEditText}>다시 불러오기</Text></Pressable></View> : null}
-        {localDataUnavailable ? <View accessibilityRole="alert" style={styles.readOnly}><Text style={styles.readOnlyTitle}>기기 보조 정보를 불러오지 못했어요</Text><Text style={styles.readOnlyText}>서버 일정은 그대로 표시하지만 {unavailableLocalDataLabels} 정보를 미설정으로 추측하지 않습니다. 다시 읽기 전까지 일정 편집을 중지하고, 해당 정보가 필요한 분석만 제외합니다. 후보 관계와 서버 티켓은 계속 관리할 수 있어요.</Text><Pressable accessibilityRole="button" onPress={() => { void query.refetch(); }} style={({ pressed }) => [styles.factEditButton, pressed && styles.pressed]}><Text style={styles.factEditText}>기기 정보 다시 읽기</Text></Pressable><Pressable accessibilityRole="button" accessibilityLabel="손상된 기기 보조 정보 초기화" disabled={localDataResetting || saving || factsSaving} onPress={() => setLocalDataResetPending(true)} style={({ pressed }) => [styles.factEditButton, pressed && styles.pressed]}><Text style={styles.factEditText}>{localDataResetting ? "초기화 중…" : "손상된 기기 정보 초기화"}</Text></Pressable></View> : null}
-        {!workspace.canEdit ? <View style={styles.readOnly}><Text style={styles.readOnlyTitle}>읽기 전용 워크스페이스</Text><Text style={styles.readOnlyText}>{workspace.readOnlyReason}</Text></View> : null}
+        {backgroundRefreshFailed ? <View accessibilityRole="alert" style={styles.readOnly}><Text style={styles.readOnlyTitle}>최신 일정을 확인하지 못했어요</Text><Text style={styles.readOnlyText}>보이는 일정은 마지막으로 확인한 내용이에요. 다시 불러오기 전까지 새 분석과 편집을 잠시 멈췄어요.</Text><Pressable accessibilityRole="button" onPress={() => { void query.refetch(); }} style={({ pressed }) => [styles.factEditButton, pressed && styles.pressed]}><Text style={styles.factEditText}>다시 불러오기</Text></Pressable></View> : null}
+        {localDataUnavailable ? <View accessibilityRole="alert" style={styles.readOnly}><Text style={styles.readOnlyTitle}>이 기기에 저장한 정보를 불러오지 못했어요</Text><Text style={styles.readOnlyText}>여행방 일정은 그대로 보여드려요. {unavailableLocalDataLabels} 정보를 다시 읽기 전까지 일정 편집을 멈추고, 확인 가능한 정보만 분석해요. 후보와 공유 티켓은 계속 관리할 수 있어요.</Text><Pressable accessibilityRole="button" onPress={() => { void query.refetch(); }} style={({ pressed }) => [styles.factEditButton, pressed && styles.pressed]}><Text style={styles.factEditText}>기기 정보 다시 불러오기</Text></Pressable><Pressable accessibilityRole="button" accessibilityLabel="읽을 수 없는 기기 정보 초기화" disabled={localDataResetting || saving || factsSaving} onPress={() => setLocalDataResetPending(true)} style={({ pressed }) => [styles.factEditButton, pressed && styles.pressed]}><Text style={styles.factEditText}>{localDataResetting ? "초기화 중…" : "읽을 수 없는 기기 정보 초기화"}</Text></Pressable></View> : null}
+        {!workspace.canEdit ? <View style={styles.readOnly}><Text style={styles.readOnlyTitle}>읽기 전용 일정</Text><Text style={styles.readOnlyText}>{workspace.readOnlyReason}</Text></View> : null}
         <WorkspaceFeedbackBanner message={feedback.message} onClose={() => setFeedback({ message: "" })} />
         <View style={styles.section}>
           <Text style={styles.eyebrow}>여행 날짜</Text>
@@ -1237,7 +1287,7 @@ export function ApiWorkspaceScreen() {
           date={selectedDateView}
           items={itineraryViews}
           endCondition={endConditionTimeline?.date === selectedDateView.date ? endConditionTimeline : undefined}
-          canEdit={workspace.permissions.canEditSchedule && !saving}
+          canEdit={editable}
           interactionItemId={draggingItemId}
           onAdd={openScheduleAddFlow}
           onEdit={openEditEditor}
@@ -1246,7 +1296,7 @@ export function ApiWorkspaceScreen() {
           onInteractionStateChange={setDraggingItemId}
         /></WorkspaceDayPager> : null}
         <View style={styles.factRow}><View style={styles.factRowCopy}><Text style={styles.factRowTitle}>여행 설정</Text><Text numberOfLines={2} style={styles.factSummary}>{localFactsSummary}</Text></View>{factsEditable ? <Pressable accessibilityRole="button" accessibilityLabel="이동 방식 숙소 종료 조건 수정" onPress={() => setTripFactsEditorOpen(true)} style={({ pressed }) => [styles.factEditButton, pressed && styles.pressed]}><Text style={styles.factEditText}>설정</Text></Pressable> : null}</View>
-        <View style={styles.serverNotice}><Text style={styles.serverNoticeTitle}>{saving ? "서버에 일정을 저장하고 있어요" : `서버 일정 v${activeSnapshot.scheduleVersion}`}</Text><Text style={styles.serverNoticeText}>변경은 성공 응답 후 확정되며, 다른 동행자의 변경과 충돌하면 최신 일정을 다시 불러옵니다.</Text></View>
+        <View style={styles.serverNotice}><Text style={styles.serverNoticeTitle}>{saving || factsSaving ? "변경 내용을 저장하고 있어요" : "일정은 동행자와 함께 공유돼요"}</Text><Text style={styles.serverNoticeText}>{saving || factsSaving ? "저장이 끝나면 모든 동행자에게 같은 일정이 보여요." : "모든 동행자에게 같은 일정이 보여요. 동시에 수정하면 최신 내용으로 다시 맞춰드려요."}</Text></View>
       </ScrollView>
       <View style={styles.duriDock}><DuriAnalysisEntryCard
         itineraryCount={workspace.itineraryCount}
@@ -1255,14 +1305,14 @@ export function ApiWorkspaceScreen() {
         loading={analysisState.status === "loading" || saving || factsSaving}
         engineAvailable={duriAnalysisService.available && Boolean(analysisInput) && !saving && !factsSaving && !backgroundRefreshFailed}
         engineMessage={localDataUnavailable
-          ? "기기 보조 정보는 미설정으로 추측하지 않고 제외하며, 현재 서버 일정에서 확인 가능한 항목만 제한적으로 분석해요."
+          ? "일부 기기 정보를 불러오지 못해, 확인 가능한 일정만 점검해요."
           : backgroundRefreshFailed
-            ? "최신 서버 일정을 다시 불러온 뒤 분석할 수 있어요."
+            ? "최신 일정을 다시 불러온 뒤 점검해 주세요."
             : saving || factsSaving
-              ? "일정과 여행 설정 저장이 끝난 뒤 확정된 현재 버전으로 분석할 수 있어요."
+              ? "저장이 끝나면 최신 일정으로 점검할 수 있어요."
               : analysisInput
                 ? duriAnalysisService.unavailableMessage
-                : "현재 서버 일정을 분석 입력으로 구성하지 못했어요."}
+                : "최신 일정 정보를 다시 불러온 뒤 점검해 주세요."}
         action={duriAction}
         onAction={() => {
           if (duriAction.destination === "schedule-add-flow") openScheduleAddFlow();
@@ -1289,7 +1339,7 @@ export function ApiWorkspaceScreen() {
       editingItemId={editor?.mode === "edit" ? editor.itemId : undefined}
       initialValue={editor?.initialValue ?? { date: selectedDate, startTime: "08:00", endTime: "09:00", note: "", lockedForDuri: false, attachmentDocumentIds: [] }}
       attachmentsAvailable={false}
-      attachmentsUnavailableMessage="공유 문서는 여행방 문서함에서 관리해요. 현재 일반 문서를 일정 항목에 직접 연결하는 API는 없으며, 이 일정의 입장권 이미지는 아래 서버 티켓에서 연결할 수 있어요."
+      attachmentsUnavailableMessage="일반 여행 자료는 문서함에서 함께 확인하고, 이 일정에 사용할 입장권 이미지는 아래에서 바로 연결할 수 있어요."
       serverAttachmentContent={serverAttachmentContent}
       onClose={() => setEditor(undefined)}
       onSubmit={submitEditor}
@@ -1302,7 +1352,7 @@ export function ApiWorkspaceScreen() {
     <ConfirmationModal
       visible={Boolean(removeDayDate)}
       title={`${workspace.dates.find((date) => date.date === removeDayDate)?.dayLabel ?? "DAY"}를 삭제할까요?`}
-      message={`선택한 날짜의 일정 ${workspace.dates.find((date) => date.date === removeDayDate)?.itineraryCount ?? 0}개가 서버에서 함께 삭제되고, 뒤 DAY는 빈 날짜 없이 이동합니다. 티켓·예약이 있거나 잠긴 일정은 보호 검사를 다시 수행하며, 연결된 공유 TODO는 삭제하지 않고 일정 링크만 해제합니다.`}
+      message={`선택한 날짜의 일정 ${workspace.dates.find((date) => date.date === removeDayDate)?.itineraryCount ?? 0}개가 여행방에서 함께 삭제되고, 뒤 DAY는 빈 날짜 없이 이동합니다. 티켓·예약이 있거나 잠긴 일정은 보호 검사를 다시 수행하며, 연결된 공유 TODO는 삭제하지 않고 일정 링크만 해제합니다.`}
       confirmLabel="영향 확인 후 DAY 삭제"
       onClose={() => setRemoveDayDate(undefined)}
       onConfirm={confirmDayRemoval}
@@ -1310,7 +1360,7 @@ export function ApiWorkspaceScreen() {
     <ConfirmationModal
       visible={Boolean(pendingTripDateChange)}
       title="날짜 변경으로 삭제되는 일정을 확인할까요?"
-      message={(pendingTripDateChange?.impacts ?? []).map((impact) => `${impact.date} · ${impact.placeName}${impact.tickets.length ? ` · 티켓 ${impact.tickets.length}개` : ""}${impact.reservation ? ` · 예약 ${impact.reservation.status}` : ""}`).join("\n") || "삭제되는 일정을 확인해 주세요."}
+      message={(pendingTripDateChange?.impacts ?? []).map((impact) => `${impact.date} · ${impact.placeName}${impact.tickets.length ? ` · 티켓 ${impact.tickets.length}개` : ""}${impact.reservation ? ` · 예약 ${reservationStatusLabel(impact.reservation.status)}` : ""}`).join("\n") || "삭제되는 일정을 확인해 주세요."}
       confirmLabel="삭제 영향 확인 후 날짜 변경"
       onClose={() => setPendingTripDateChange(undefined)}
       onConfirm={() => {
@@ -1320,8 +1370,8 @@ export function ApiWorkspaceScreen() {
         void commitTripDateChange(pending.result, pending.successMessage, pending.impacts.map((impact) => impact.itemId));
       }}
     />
-    <ConfirmationModal visible={Boolean(removeItemId)} title="일정에서 제거할까요?" message="서버 일정 항목만 제거합니다. 후보 장소는 그대로 유지됩니다." confirmLabel="일정에서 제거" onClose={() => setRemoveItemId(undefined)} onConfirm={confirmItemRemoval} />
-    <ConfirmationModal visible={Boolean(removeCandidateId)} title="후보에서 제거할까요?" message="내가 담은 관계만 서버에서 제거합니다. 다른 동행자가 담은 후보는 유지됩니다." confirmLabel="내 후보 선택 취소" onClose={() => setRemoveCandidateId(undefined)} onConfirm={() => void confirmCandidateRemoval()} />
+    <ConfirmationModal visible={Boolean(removeItemId)} title="일정에서 제거할까요?" message="공유 일정에서만 제거하며 후보 장소는 그대로 유지돼요." confirmLabel="일정에서 제거" onClose={() => setRemoveItemId(undefined)} onConfirm={confirmItemRemoval} />
+    <ConfirmationModal visible={Boolean(removeCandidateId)} title="후보에서 제거할까요?" message="내가 담은 표시만 제거하며 다른 동행자가 담은 후보는 유지돼요." confirmLabel="내 후보 선택 취소" onClose={() => setRemoveCandidateId(undefined)} onConfirm={() => void confirmCandidateRemoval()} />
     <ConfirmationModal
       visible={Boolean(pendingReservationImpact)}
       title="연결된 예약·티켓을 다시 확인할까요?"
@@ -1333,7 +1383,7 @@ export function ApiWorkspaceScreen() {
         setPendingReservationImpact(undefined);
         if (!pending) return;
         if (pending.baseScheduleVersion !== activeSnapshot.scheduleVersion) {
-          showFeedback("확인하는 동안 서버 일정이 바뀌었어요. 최신 일정에서 변경을 다시 시도해 주세요.");
+          showFeedback("확인하는 동안 일정이 바뀌었어요. 최신 일정에서 변경을 다시 시도해 주세요.");
           return;
         }
         void commitSchedule(
@@ -1347,7 +1397,7 @@ export function ApiWorkspaceScreen() {
     <ConfirmationModal
       visible={Boolean(pendingTicketRemoval)}
       title="첨부 티켓이 있는 일정을 제거할까요?"
-      message={`${pendingTicketRemoval?.placeName ?? "일정"}에 서버 티켓 ${pendingTicketRemoval?.ticketCount ?? 0}개가 연결되어 있어요. 일정 삭제 시 티켓 접근도 함께 사라질 수 있습니다.`}
+      message={`${pendingTicketRemoval?.placeName ?? "일정"}에 공유 티켓 ${pendingTicketRemoval?.ticketCount ?? 0}개가 연결되어 있어요. 일정 삭제 시 티켓 접근도 함께 사라질 수 있습니다.`}
       confirmLabel="티켓 영향 확인 후 제거"
       onClose={() => setPendingTicketRemoval(undefined)}
       onConfirm={() => {
@@ -1355,7 +1405,7 @@ export function ApiWorkspaceScreen() {
         setPendingTicketRemoval(undefined);
         if (!pending) return;
         if (pending.baseScheduleVersion !== activeSnapshot.scheduleVersion) {
-          showFeedback("확인하는 동안 서버 일정이 바뀌었어요. 최신 일정에서 삭제를 다시 시도해 주세요.");
+          showFeedback("확인하는 동안 일정이 바뀌었어요. 최신 일정에서 삭제를 다시 시도해 주세요.");
           return;
         }
         void commitSchedule(pending.draft, `${pending.placeName}을 일정에서 제거했어요.`, [pending.itemId], true);
@@ -1363,8 +1413,8 @@ export function ApiWorkspaceScreen() {
     />
     <ConfirmationModal
       visible={localDataResetPending}
-      title="손상된 기기 정보를 초기화할까요?"
-      message={`서버 일정과 서버 티켓은 지우지 않습니다. 하지만 이 기기에만 저장된 ${data.localFactsStatus === "unavailable" ? "이동 방식·숙소·종료 조건" : ""}${data.localFactsStatus === "unavailable" && data.workspaceOverlayStatus === "unavailable" ? " 및 " : ""}${data.workspaceOverlayStatus === "unavailable" ? "일정 잠금·메모·종류·선호 표시" : ""}는 복구할 수 없게 지워질 수 있어요. 저장소 읽기 자체의 일시적 실패일 수도 있으니, 다시 읽기를 먼저 시도한 뒤 초기화하세요.`}
+      title="읽을 수 없는 기기 정보를 초기화할까요?"
+      message={`여행방 일정과 티켓은 지우지 않아요. 하지만 이 기기에만 저장된 ${data.localFactsStatus === "unavailable" ? "이동 방식·숙소·종료 조건" : ""}${data.localFactsStatus === "unavailable" && data.workspaceOverlayStatus === "unavailable" ? " 및 " : ""}${data.workspaceOverlayStatus === "unavailable" ? "일정 잠금·메모·종류·선호 표시" : ""}는 초기화하면 복구할 수 없어요. 일시적인 읽기 문제일 수도 있으니 먼저 다시 불러와 보세요.`}
       confirmLabel="기기 정보 초기화"
       onClose={() => setLocalDataResetPending(false)}
       onConfirm={() => { void resetUnavailableLocalData(); }}

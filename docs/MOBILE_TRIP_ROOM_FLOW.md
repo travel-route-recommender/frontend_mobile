@@ -67,7 +67,7 @@ root layout은 domain/auth/personal-test-draft/create-trip-draft/invite/trip-doc
 
 `CreateTripRoomService`와 `useCreateTripRoomMutation`은 idle/pending/success/error와 중복 요청 잠금을 담당한다. mock adapter의 `createTrip`은 한 번의 Zustand `set`에서 고유 ID 생성, owner 자동 포함, 멤버 중복 제거, `tripsById`, 중복 없는 `tripOrder`, 빈 candidate/itinerary 관계, `activeTripId`를 함께 반영한다. 생성 실패 시 Draft를 유지하고, 성공 응답을 받은 뒤에만 Draft를 초기화한다.
 
-성공 화면은 `tripmatch://invite/{code}?tripId={id}&revision={n}` 형식의 native mock 링크, 앱을 특정하지 않는 OS 공유 창, `expo-clipboard` 직접 복사와 여행방 이동을 제공한다. Web Share에는 custom scheme을 `url` 필드로 전달하지 않고 초대 코드·링크를 `text`에만 넣어 브라우저의 `Invalid URL` 오류를 막는다. 별도 카카오톡 버튼은 OS 공유와 중복되므로 제공하지 않는다. 여행방 홈의 초대 Modal에서는 같은 링크를 새로 발급하거나 사용 중지할 수 있다. 다른 기기 간 방 조회는 `MOBILE_INVITE_LINK_FLOW.md`의 경계를 따른다.
+성공 화면과 여행방 초대 Modal은 API 서버의 HTTPS 초대 링크, OS 공유 창, `expo-clipboard` 복사와 여행방 이동을 제공한다. 설치된 앱에서는 Android App Link/iOS Universal Link가 초대 화면을 열며, 기존 `tripmatch://invite/{code}`도 호환한다. Web Share에는 HTTPS 주소만 `url` 필드로 전달해 `Invalid URL` 오류를 막는다. 별도 카카오톡 버튼은 OS 공유와 중복되므로 제공하지 않는다. 상세 배포 조건은 `MOBILE_INVITE_LINK_FLOW.md`를 따른다.
 
 ## 여행방 홈
 
@@ -94,7 +94,7 @@ root layout은 domain/auth/personal-test-draft/create-trip-draft/invite/trip-doc
 - `api`: Rooms endpoint와 DTO 계약을 추측하지 않고 목록/상세/생성 계약 대기 오류 표시
 - `hybrid`: 서버 roomId와 local roomId 연결 전까지 목록/생성을 api와 동일하게 보류; 로컬 분석과 서버 room을 임의 혼합하지 않음
 
-mock 생성 완료 화면과 초대 Modal은 여행방별 로컬 code/revision을 발급하고, 교체·중지 상태를 `duri-trip-invites`에 저장한다. 링크 진입은 최신 로컬 상태를 재검증한 뒤 기존 사용자 또는 mock guest를 중복 없이 멤버로 추가한다. 실제 만료·서버 권한·다른 기기 동기화·알림은 구현하지 않았다.
+mock 생성 완료 화면과 초대 Modal은 여행방별 로컬 code/revision을 발급하고, 교체·중지 상태를 `duri-trip-invites`에 저장한다. API 모드는 서버가 링크 발급·교체·미리보기·수락·게스트 참여와 중복 가입 방지를 담당하므로 다른 기기에서도 같은 여행방에 참여할 수 있다.
 
 ## 예약·티켓 문서함
 
@@ -102,8 +102,8 @@ mock 생성 완료 화면과 초대 Modal은 여행방별 로컬 code/revision�
 
 현재 파일과 metadata는 Backend로 전송하지 않으며 다른 동행자·다른 기기와 동기화되지 않는다. 서버 연동 요구사항은 `FRONTEND_ONLY_BACKEND_REQUIREMENTS.md`를 따른다.
 
-## API 계약 대기와 다음 단계
+## API 연결 원칙
 
-Rooms API에는 내 방 목록/상세/생성/수정 DTO, status 전이, member role·권한, pagination·정렬, 날짜 정책, 서버 roomId, 오류 규격이 필요하다. Invite API에는 사용자 검색 범위, 링크/code 생성, 만료, 수락, 중복 가입, guest→member 병합 정책이 필요하다.
+Rooms·Invite API의 방 목록/상세/생성/수정, 멤버 권한, 초대 링크 발급·교체·미리보기·수락과 게스트 입장은 연결되어 있다. 서버 roomId와 version을 기준으로 읽고 쓰며, API 데이터가 실패했을 때 mock 방으로 자동 전환하지 않는다.
 
-현재 Workspace는 두리 분석 리포트, suggestion before/after preview, fingerprint stale 검증과 원자적 apply, DAY 및 일정의 native gesture 이동을 로컬 Store 경계에 연결한다. 다음 단계는 확정된 서버 order·Schedule batch·Directions 계약에 같은 검증을 연결하는 것이다. 모든 mutation은 현재 tripId와 서버 계약 출처를 명시하고 mock/api 데이터를 섞지 않아야 한다.
+Workspace는 서버 schedule/facts version, 잠금·예약·티켓, 날짜 변경과 제안 적용의 충돌 검증을 사용한다. 모든 mutation은 현재 tripId와 서버 계약 출처를 명시하고 mock/api 데이터를 섞지 않는다.

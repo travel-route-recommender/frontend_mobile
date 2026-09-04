@@ -92,10 +92,9 @@ owner 누락, 누락된 user/place/date/result는 의미를 추정할 수 없어
 | 설정 | 동작 |
 |---|---|
 | `EXPO_PUBLIC_DATA_SOURCE=mock` | local mock auth/domain/place/workspace/preference 사용 |
-| `api` | 미확정 계약 기능은 명시적 unavailable/error. mock fallback 없음 |
+| `api` | 인증·여행방·장소·저장은 API를 사용하고 mock fallback 없음 |
 | `hybrid` | server/local ID 호환 계약 전에는 place/workspace/preference/auth를 명시 차단. 조용한 혼합 없음 |
-| `EXPO_PUBLIC_DURI_ENGINE=local` | 순수 local 분석/제안/atomic apply 사용 |
-| `server` | 서버 계약 미확정 메시지로 unavailable. local engine fallback 없음 |
+| 일정 분석 | 데이터 모드와 관계없이 동일한 프론트엔드 분석·제안 엔진을 사용하고, API 일정 적용은 서버의 원자 적용 계약을 사용 |
 
 ## 8. Route·UI 회귀 결론
 

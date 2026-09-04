@@ -116,14 +116,20 @@ const changeLabels: Record<ApiWorkspaceScheduleImpactChange, string> = {
   place: "장소",
 };
 
+const reservationStatusLabels: Record<BackendScheduleReservation["status"], string> = {
+  confirmed: "확정",
+  unconfirmed: "미확정",
+  cancelled: "취소됨",
+};
+
 export function describeApiWorkspaceScheduleReservationImpacts(
   impacts: readonly ApiWorkspaceScheduleReservationImpact[],
 ) {
   if (!impacts.length) return "";
   const preview = impacts.slice(0, 3).map((impact) => {
     const sources = [
-      impact.serverTickets.length ? `서버 티켓 ${impact.serverTickets.length}개` : "",
-      impact.serverReservation ? `서버 예약 ${impact.serverReservation.status}` : "",
+      impact.serverTickets.length ? `공유 티켓 ${impact.serverTickets.length}개` : "",
+      impact.serverReservation ? `예약 ${reservationStatusLabels[impact.serverReservation.status]}` : "",
       impact.localDocuments.length ? `이 기기 문서 ${impact.localDocuments.length}개` : "",
     ].filter(Boolean).join(" · ");
     return `• ${impact.placeName}: ${impact.changes.map((change) => changeLabels[change]).join("·")} 변경 (${sources})`;

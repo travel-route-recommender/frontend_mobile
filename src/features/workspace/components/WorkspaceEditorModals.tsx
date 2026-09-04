@@ -14,7 +14,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WORKSPACE_START_MINUTES } from "../../../data/workspaceSchedule";
-import type { ItineraryItem, TripEndConditionType, TripTransport } from "../../../domain";
+import type { ItineraryItem, Place, TripEndConditionType, TripLocation, TripTransport } from "../../../domain";
 import { PrimaryButton, RemoteImage, SecondaryButton, TextField } from "../../../components/common";
 import { colors, radius, sizes, spacing, typography } from "../../../theme/tokens";
 import { findNextAvailableSlot } from "../../../utils/schedule";
@@ -25,6 +25,7 @@ import type {
   UpdateTripPlanningFactsInput,
 } from "../../../store/useDuriStore";
 import { normalizeSearchKeyword } from "../../places/logic/placeSearch";
+import { searchBackendPlaces } from "../../places/services/placeApi";
 import { TripDateRangeCalendar } from "../../trip-creation/components/TripDateRangeCalendar";
 import {
   addMinutesToTime,
@@ -61,6 +62,7 @@ export type ScheduleEditorValue = {
 export type WorkspaceTripFactsDraft = {
   transport: TripTransport;
   accommodationLocation: string;
+  accommodationLocationDetails: TripLocation | null;
   endCondition: CreateTripEndConditionDraft | null;
 };
 
@@ -75,7 +77,7 @@ const resultMessages: Partial<Record<ItineraryMutationResult, string>> = {
   "invalid-date": "여행 기간 안의 날짜를 선택해 주세요.",
   "invalid-time": "시간 범위를 다시 확인해 주세요.",
   "invalid-attachment": "선택한 문서가 문서함에서 변경됐어요. 첨부를 다시 확인해 주세요.",
-  "protected-item": "서버에서 필수로 지정한 일정은 삭제하거나 다른 날짜로 옮길 수 없어요.",
+  "protected-item": "필수로 보호된 일정은 삭제하거나 다른 날짜로 옮길 수 없어요.",
   overlap: "다른 일정과 시간이 겹쳐 저장하지 않았어요.",
   boundary: "더 이상 이동할 수 없어요.",
   "end-condition": "종료 지점 이동과 준비시간을 고려한 마지막 일정 종료 시각을 넘겨 저장할 수 없어요. 더 이른 시간을 선택해 주세요.",
@@ -338,7 +340,7 @@ function ScheduleEditorModalContent({
   if (readOnly) {
     const selectedDate = dates.find((date) => date.date === value.date);
     return <ModalFrame visible title="일정 상세" subtitle={title} onClose={onClose}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.editorContent}>
+      <ScrollView style={styles.editorScroll} showsVerticalScrollIndicator={false} contentContainerStyle={styles.editorContent}>
         <View style={styles.readOnlyNotice}><Text style={styles.readOnlyNoticeTitle}>읽기 전용 일정</Text><Text style={styles.readOnlyNoticeText}>일정 정보는 확인할 수 있지만 변경하거나 삭제할 수 없어요.</Text></View>
         <View style={styles.readOnlyDetails}>
           <Text style={styles.fieldTitle}>날짜</Text>
@@ -398,7 +400,7 @@ function ScheduleEditorModalContent({
         currentUserId={currentUserId}
         selectedDocumentIds={value.attachmentDocumentIds ?? []}
         onChange={(attachmentDocumentIds) => setValue((current) => ({ ...current, attachmentDocumentIds }))}
-      /> : <View style={styles.factNotice}><Text style={styles.factNoticeTitle}>문서 첨부는 이 모드에서 아직 공유되지 않아요.</Text><Text style={styles.factNoticeText}>{attachmentsUnavailableMessage ?? "서버 여행방 문서 계약이 연결되기 전에는 기기 로컬 문서를 공동 일정에 첨부하지 않습니다."}</Text></View>}
+      /> : <View style={styles.factNotice}><Text style={styles.factNoticeTitle}>공유 문서는 여행방 문서함에서 관리해요</Text><Text style={styles.factNoticeText}>{attachmentsUnavailableMessage ?? "여행 자료는 문서함에서 올리고 확인할 수 있어요."}</Text></View>}
       <View style={styles.existing}><Text style={styles.fieldTitle}>이 날짜의 기존 일정</Text>{itinerary.filter((item) => item.date === value.date && item.id !== editingItemId).length ? itinerary.filter((item) => item.date === value.date && item.id !== editingItemId).map((item) => <Text key={item.id} style={styles.existingText}>• {item.startTime}–{addMinutesToTime(item.startTime, item.durationMinutes) ?? "--:--"} · {item.note ?? "장소 일정"}</Text>) : <Text style={styles.existingText}>아직 일정이 없어요.</Text>}</View>
       {conflicts.length ? <View accessibilityRole="alert" style={styles.conflictBox}><Text style={styles.conflictTitle}>시간이 겹치는 일정이 있어요</Text><Text style={styles.conflictText}>겹침을 무시하고 저장하지 않습니다. 시간을 조정해 주세요.</Text>{suggestedTime ? <Pressable accessibilityRole="button" onPress={() => setValue((current) => ({ ...current, startTime: suggestedTime, endTime: addMinutesToTime(suggestedTime, timeValidation.valid ? timeValidation.durationMinutes : 60) ?? current.endTime }))} style={styles.suggestion}><Text style={styles.suggestionText}>{suggestedTime} 빈 시간 적용</Text></Pressable> : null}</View> : null}
       {submitError ? <Text accessibilityRole="alert" style={styles.submitError}>{submitError}</Text> : null}
@@ -546,7 +548,7 @@ function WorkspaceDateRangeModalContent({
   };
 
   return <ModalFrame visible title="여행 날짜 변경" subtitle={`${currentStartDate} ~ ${currentEndDate}`} onClose={onClose}>
-    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.editorContent}>
+    <ScrollView style={styles.editorScroll} showsVerticalScrollIndicator={false} contentContainerStyle={styles.editorContent}>
       <TripDateRangeCalendar startDate={startDate} endDate={endDate} onChange={changeRange} />
       {valid ? <View style={[styles.dateChangeNotice, (removedDayCount > 0 || endConditionDateChanged) && styles.dateChangeWarning]}>
         <Text style={styles.dateChangeTitle}>{nextDayCount}일 여행으로 변경</Text>
@@ -577,13 +579,123 @@ const factEndConditionOptions: readonly { value: TripEndConditionType | "none"; 
 
 type WorkspaceTripFactsSubmitResult = TripPlanningFactsMutationResult | "saving";
 
+function placeToTripLocation(place: Place): TripLocation {
+  return {
+    name: place.name,
+    ...(place.address ? { address: place.address } : {}),
+    ...(place.latitude !== undefined ? { lat: place.latitude } : {}),
+    ...(place.longitude !== undefined ? { lng: place.longitude } : {}),
+    ...(place.backendPlaceId ? { placeId: place.backendPlaceId } : {}),
+    ...(place.externalId ? { externalId: place.externalId } : {}),
+    ...(place.source ? { source: place.source } : {}),
+  };
+}
+
+function WorkspacePlaceSearchField({
+  label,
+  value,
+  selectedLocation,
+  placeholder,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  selectedLocation: TripLocation | null;
+  placeholder: string;
+  onChange(value: string, location: TripLocation | null): void;
+}) {
+  const requestRef = useRef(0);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const abortRef = useRef<AbortController | undefined>(undefined);
+  const [results, setResults] = useState<Place[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searchMessage, setSearchMessage] = useState("");
+  const hasResolvedIdentity = Boolean(selectedLocation && (
+    selectedLocation.placeId
+    || selectedLocation.externalId
+    || (selectedLocation.lat !== undefined && selectedLocation.lng !== undefined)
+    || (selectedLocation.source && selectedLocation.source !== "manual")
+  ));
+
+  useEffect(() => () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    abortRef.current?.abort();
+  }, []);
+
+  const search = (keyword: string) => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    abortRef.current?.abort();
+    const normalized = keyword.trim();
+    const requestId = requestRef.current + 1;
+    requestRef.current = requestId;
+    if (normalized.length < 2) {
+      setResults([]);
+      setSearching(false);
+      setSearchMessage(normalized ? "두 글자 이상 입력하면 장소를 찾아드려요." : "");
+      return;
+    }
+    setSearching(true);
+    setSearchMessage("");
+    timerRef.current = setTimeout(() => {
+      const controller = new AbortController();
+      abortRef.current = controller;
+      void searchBackendPlaces({ keyword: normalized, limit: 8, signal: controller.signal })
+        .then((places) => {
+          if (requestRef.current !== requestId) return;
+          setResults(places);
+          setSearchMessage(places.length ? "" : "검색 결과가 없어요. 입력한 이름을 그대로 저장할 수 있어요.");
+        })
+        .catch(() => {
+          if (controller.signal.aborted || requestRef.current !== requestId) return;
+          setResults([]);
+          setSearchMessage("장소를 찾지 못했어요. 입력한 이름을 그대로 저장할 수 있어요.");
+        })
+        .finally(() => {
+          if (requestRef.current === requestId) setSearching(false);
+        });
+    }, 350);
+  };
+
+  const changeText = (text: string) => {
+    onChange(text, null);
+    search(text);
+  };
+  const choose = (place: Place) => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    abortRef.current?.abort();
+    requestRef.current += 1;
+    setResults([]);
+    setSearching(false);
+    setSearchMessage("");
+    onChange(place.name, placeToTripLocation(place));
+  };
+
+  return <View style={styles.placeSearchField}>
+    <TextField label={label} value={value} onChangeText={changeText} placeholder={placeholder} maxLength={100} />
+    {selectedLocation && hasResolvedIdentity && selectedLocation.name === value.trim() ? <View style={styles.selectedPlaceNotice}>
+      <Text style={styles.selectedPlaceTitle}>선택한 장소 · {selectedLocation.name}</Text>
+      {selectedLocation.address ? <Text style={styles.selectedPlaceAddress}>{selectedLocation.address}</Text> : null}
+      <Pressable accessibilityRole="button" onPress={() => changeText(value)} style={({ pressed }) => [styles.placeManualButton, pressed && styles.pressed]}><Text style={styles.placeManualButtonText}>직접 입력으로 바꾸기</Text></Pressable>
+    </View> : null}
+    {searching ? <Text accessibilityRole="text" style={styles.placeSearchMessage}>장소를 찾고 있어요…</Text> : null}
+    {!searching && searchMessage ? <Text style={styles.placeSearchMessage}>{searchMessage}</Text> : null}
+    {results.length ? <View accessibilityLabel={`${label} 검색 결과`} style={styles.placeSearchResults}>{results.map((place) => <Pressable
+      key={place.id}
+      accessibilityRole="button"
+      accessibilityLabel={`${place.name} 선택`}
+      onPress={() => choose(place)}
+      style={({ pressed }) => [styles.placeSearchResult, pressed && styles.pressed]}
+    ><View style={styles.candidateRowCopy}><Text numberOfLines={1} style={styles.candidateName}>{place.name}</Text><Text numberOfLines={2} style={styles.candidateMeta}>{place.address || place.category}</Text></View><Text style={styles.placeSelectText}>선택</Text></Pressable>)}</View> : null}
+  </View>;
+}
+
 const tripFactResultMessages: Record<Exclude<WorkspaceTripFactsSubmitResult, "success" | "success-adjusted">, string> = {
   "invalid-trip": "여행방 정보를 찾을 수 없어요.",
-  "trip-not-editable": "완료된 여행방의 사실 정보는 수정할 수 없어요.",
-  "not-member": "이 여행방의 사실 정보를 수정할 권한이 없어요.",
+  "trip-not-editable": "완료된 여행방의 여행 설정은 수정할 수 없어요.",
+  "not-member": "이 여행방의 여행 설정을 수정할 권한이 없어요.",
   "invalid-facts": "이동 방식·숙소·종료 조건 입력값을 다시 확인해 주세요.",
   "end-condition": "현재 일정의 순서·체류시간·이동 및 대기 간격을 유지하면 새 종료 조건을 맞출 수 없어요. 마지막 일정을 줄이거나 제외한 뒤 다시 저장해 주세요.",
-  saving: "이전 여행 사실을 저장하고 있어요. 완료된 뒤 다시 시도해 주세요.",
+  saving: "이전 여행 설정을 저장하고 있어요. 완료된 뒤 다시 시도해 주세요.",
 };
 
 export function WorkspaceTripFactsModal({
@@ -635,6 +747,7 @@ function WorkspaceTripFactsModalContent({
           : {
               type,
               location: "",
+              locationDetails: null,
               deadline: "18:00",
               travelMinutes: "30",
               serviceBufferMinutes: "30",
@@ -659,12 +772,16 @@ function WorkspaceTripFactsModalContent({
     const result = onSubmit({
       transport: value.transport,
       accommodationLocation: value.accommodationLocation.trim()
-        ? { name: value.accommodationLocation.trim() }
+        ? value.accommodationLocationDetails?.name === value.accommodationLocation.trim()
+          ? value.accommodationLocationDetails
+          : { name: value.accommodationLocation.trim(), source: "manual" }
         : null,
       endCondition: endCondition
         ? {
             type: endCondition.type,
-            location: { name: endCondition.location.trim() },
+            location: endCondition.locationDetails?.name === endCondition.location.trim()
+              ? endCondition.locationDetails
+              : { name: endCondition.location.trim(), source: "manual" },
             deadline: endCondition.deadline,
             travelMinutes: Number(endCondition.travelMinutes),
             serviceBufferMinutes: Number(endCondition.serviceBufferMinutes),
@@ -681,12 +798,12 @@ function WorkspaceTripFactsModalContent({
 
   return <ModalFrame
     visible
-    title="여행 사실 수정"
-    subtitle="개인 성향이 아닌 이동·숙소·예약 종료 조건만 기록해요."
+    title="여행 설정 수정"
+    subtitle="개인 성향이 아닌 이동 방식·숙소·마지막 날 계획을 기록해요."
     onClose={onClose}
   >
-    <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={styles.editorContent}>
-      <View style={styles.factNotice}><Text style={styles.factNoticeTitle}>실제 예약 정보를 기준으로 입력해 주세요.</Text><Text style={styles.factNoticeText}>아래 이동시간은 경로 API가 측정한 ETA가 아니라 사용자가 복귀를 위해 확보할 시간입니다. 두리는 별도로 조회에 성공한 실제 경로 근거만 정밀 이동시간으로 사용해요.</Text></View>
+    <ScrollView style={styles.editorScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={styles.editorContent}>
+      <View style={styles.factNotice}><Text style={styles.factNoticeTitle}>실제 예약 정보를 기준으로 입력해 주세요.</Text><Text style={styles.factNoticeText}>아래 이동시간은 복귀를 위해 직접 확보할 시간이에요. 두리는 실제 길찾기 결과가 확인된 구간만 정밀 이동시간으로 판단해요.</Text></View>
       <View style={styles.dateOptions}><Text style={styles.fieldTitle}>이동 방식</Text>{factTransportOptions.map((option) => <Pressable
         key={option.value}
         accessibilityRole="radio"
@@ -694,20 +811,35 @@ function WorkspaceTripFactsModalContent({
         onPress={() => { setSubmitError(""); setValue((current) => ({ ...current, transport: option.value })); }}
         style={({ pressed }) => [styles.factOption, value.transport === option.value && styles.factOptionSelected, pressed && styles.pressed]}
       ><View style={styles.candidateRowCopy}><Text style={styles.candidateName}>{option.label}</Text><Text style={styles.candidateMeta}>{option.description}</Text></View><Text style={styles.factCheck}>{value.transport === option.value ? "✓" : "○"}</Text></Pressable>)}</View>
-      <TextField label="숙소 위치 (선택)" value={value.accommodationLocation} onChangeText={(accommodationLocation) => { setSubmitError(""); setValue((current) => ({ ...current, accommodationLocation })); }} placeholder="예: 부산역 근처 호텔" maxLength={100} />
+      <WorkspacePlaceSearchField
+        label="숙소 위치 (선택)"
+        value={value.accommodationLocation}
+        selectedLocation={value.accommodationLocationDetails}
+        placeholder="예: 부산역 근처 호텔"
+        onChange={(accommodationLocation, accommodationLocationDetails) => {
+          setSubmitError("");
+          setValue((current) => ({ ...current, accommodationLocation, accommodationLocationDetails }));
+        }}
+      />
       <View style={styles.dateOptions}><Text style={styles.fieldTitle}>마지막 날 종료 조건</Text><View style={styles.factChoiceWrap}>{factEndConditionOptions.map((option) => {
         const selected = (value.endCondition?.type ?? "none") === option.value;
         return <Pressable key={option.value} accessibilityRole="radio" accessibilityState={{ checked: selected }} onPress={() => selectEndCondition(option.value)} style={({ pressed }) => [styles.factChoice, selected && styles.factChoiceSelected, pressed && styles.pressed]}><Text style={[styles.factChoiceText, selected && styles.factChoiceTextSelected]}>{option.label}</Text></Pressable>;
       })}</View></View>
       {value.endCondition ? <View style={styles.endConditionFields}>
-        <TextField label="종료 지점" value={value.endCondition.location} onChangeText={(location) => updateEndCondition({ location })} placeholder="예: 부산역, 렌터카 반납 지점" maxLength={100} />
+        <WorkspacePlaceSearchField
+          label="종료 지점"
+          value={value.endCondition.location}
+          selectedLocation={value.endCondition.locationDetails ?? null}
+          placeholder="예: 부산역, 렌터카 반납 지점"
+          onChange={(location, locationDetails) => updateEndCondition({ location, locationDetails })}
+        />
         <WorkspaceTimeField label="도착 또는 반납 마감 시각" value={value.endCondition.deadline} onChange={(deadline) => updateEndCondition({ deadline })} error={endConditionError?.includes("종료 시각") ? endConditionError : undefined} />
         <TextField label="마지막 일정에서 종료 지점까지 확보할 이동시간 (분)" value={value.endCondition.travelMinutes} onChangeText={(travelMinutes) => updateEndCondition({ travelMinutes: travelMinutes.replace(/\D/g, "") })} keyboardType="number-pad" maxLength={4} />
         <TextField label="승차 준비 또는 반납에 필요한 시간 (분)" value={value.endCondition.serviceBufferMinutes} onChangeText={(serviceBufferMinutes) => updateEndCondition({ serviceBufferMinutes: serviceBufferMinutes.replace(/\D/g, "") })} keyboardType="number-pad" maxLength={3} />
         <TextField label="종료 조건 메모 (선택)" value={value.endCondition.note} onChangeText={(note) => updateEndCondition({ note })} maxLength={300} multiline />
       </View> : null}
       {submitError || validationError ? <Text accessibilityRole={submitError ? "alert" : undefined} style={styles.submitError}>{submitError || validationError}</Text> : null}
-      <PrimaryButton label="여행 사실 저장" disabled={Boolean(validationError)} onPress={submit} />
+      <PrimaryButton label="여행 설정 저장" disabled={Boolean(validationError)} onPress={submit} />
       <SecondaryButton label="취소" onPress={onClose} />
     </ScrollView>
   </ModalFrame>;
@@ -768,6 +900,16 @@ const styles = StyleSheet.create({
   readOnlyDetails: { gap: spacing.xs, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: spacing.md },
   readOnlyValue: { ...typography.body, color: colors.textSecondary, marginBottom: spacing.sm },
   fieldTitle: { ...typography.bodyStrong, color: colors.text, marginBottom: spacing.xs },
+  placeSearchField: { gap: spacing.xs },
+  selectedPlaceNotice: { gap: spacing.xxs, borderWidth: 1, borderColor: colors.primary, borderRadius: radius.md, backgroundColor: colors.primarySoft, padding: spacing.sm },
+  selectedPlaceTitle: { ...typography.bodyStrong, color: colors.primary },
+  selectedPlaceAddress: { ...typography.caption, color: colors.textSecondary },
+  placeManualButton: { minHeight: 36, alignSelf: "flex-start", justifyContent: "center", paddingHorizontal: spacing.xs },
+  placeManualButtonText: { ...typography.caption, color: colors.primary },
+  placeSearchMessage: { ...typography.caption, color: colors.textSecondary },
+  placeSearchResults: { overflow: "hidden", borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.surface },
+  placeSearchResult: { minHeight: 54, flexDirection: "row", alignItems: "center", gap: spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
+  placeSelectText: { ...typography.caption, color: colors.primary },
   dateOptions: { gap: spacing.xs },
   dateOption: { minWidth: 96, minHeight: 68, justifyContent: "center", borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceMuted, paddingHorizontal: spacing.sm },
   dateOptionSelected: { backgroundColor: colors.primary, borderColor: colors.primary },

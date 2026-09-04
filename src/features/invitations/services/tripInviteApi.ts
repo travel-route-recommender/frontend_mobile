@@ -1,4 +1,6 @@
 import { apiClient } from "../../../services/apiClient";
+import { environment } from "../../../config/environment";
+import { resolveShareableTripInviteUrl } from "../logic/tripInviteLinks";
 
 export type ApiTripInviteLink = {
   inviteCode: string;
@@ -16,7 +18,11 @@ function parseInviteLink(value: unknown): ApiTripInviteLink {
   if (typeof record.inviteLink !== "string" || !record.inviteLink.trim()) {
     throw new Error("초대 링크가 응답에 없어요.");
   }
-  return { inviteCode: record.inviteCode.trim(), inviteLink: record.inviteLink.trim() };
+  const inviteCode = record.inviteCode.trim();
+  return {
+    inviteCode,
+    inviteLink: resolveShareableTripInviteUrl(record.inviteLink.trim(), inviteCode, environment.apiBaseUrl),
+  };
 }
 
 export async function fetchApiTripInviteLink(roomId: string, signal?: AbortSignal) {

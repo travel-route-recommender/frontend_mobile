@@ -27,6 +27,10 @@ export type PlaceInfoItem = {
 
 export type Place = {
   id: EntityId;
+  /** API 장소의 원본 식별자. 화면용 id와 서버 저장용 id를 섞지 않는다. */
+  externalId?: string;
+  backendPlaceId?: string;
+  source?: "tour" | "kakao" | "manual";
   regionId: EntityId;
   name: string;
   category: string;

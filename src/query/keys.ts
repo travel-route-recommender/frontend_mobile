@@ -17,6 +17,7 @@ export const queryKeys = {
   },
   users: {
     directory: () => ["users", "directory"] as const,
+    saves: (userId: EntityId) => ["users", "saves", userId] as const,
   },
   preferences: {
     profile: (userId: EntityId) => ["preferences", "profile", userId] as const,

@@ -29,7 +29,7 @@ export function AuthLayout({ children, title, subtitle, onBack, footer, overlay,
           <View style={styles.body}>{children}</View>
         </ScrollView>
         {footer ? <View style={styles.footer}>{footer}</View> : null}
-        {overlay ? <View pointerEvents="box-none" style={styles.overlay}>{overlay}</View> : null}
+        {overlay ? <View style={styles.overlay}>{overlay}</View> : null}
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -47,5 +47,5 @@ const styles = StyleSheet.create({
   subtitle: { ...typography.body, color: colors.textSecondary, marginTop: spacing.xs },
   body: { flex: 1, marginTop: spacing.xl, gap: spacing.md },
   footer: { width: "100%", maxWidth: sizes.contentMaxWidth, alignSelf: "center", paddingHorizontal: spacing.xl, paddingTop: spacing.sm, paddingBottom: spacing.sm, backgroundColor: colors.surface },
-  overlay: { position: "absolute", left: 0, right: 0, bottom: spacing.lg, zIndex: 20, alignItems: "center", paddingHorizontal: spacing.xl },
+  overlay: { position: "absolute", left: 0, right: 0, bottom: spacing.lg, zIndex: 20, alignItems: "center", paddingHorizontal: spacing.xl, pointerEvents: "box-none" },
 });

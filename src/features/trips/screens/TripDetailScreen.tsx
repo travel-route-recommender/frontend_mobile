@@ -52,6 +52,10 @@ function ApiTripDetailRoute() {
 
 function MockTripHomeScreen() {
   const router = useRouter();
+  const leave = () => {
+    if (router.canGoBack()) router.back();
+    else router.replace("/(tabs)/trips");
+  };
   const params = useLocalSearchParams<{ tripId?: string | string[]; created?: string | string[] }>();
   const tripId = Array.isArray(params.tripId) ? params.tripId[0] : params.tripId;
   const created = (Array.isArray(params.created) ? params.created[0] : params.created) === "1";
@@ -117,10 +121,10 @@ function MockTripHomeScreen() {
   useEffect(() => { if (tripId && trip) setActiveTrip(tripId); }, [setActiveTrip, trip, tripId]);
 
   if (environment.dataSource !== "mock") {
-    const message = "서버 여행방과 로컬 진단의 사용자·roomId 연결이 필요합니다. 확인 전에는 데이터를 혼합하지 않아요.";
-    return <Screen><AppHeader title="여행방" onBack={() => router.back()} /><ErrorState message={message} /></Screen>;
+    const message = "현재 실행 설정에서는 이 여행방을 열 수 없어요. 여행 목록에서 다시 선택해 주세요.";
+    return <Screen><AppHeader title="여행방" onBack={leave} /><ErrorState message={message} /></Screen>;
   }
-  if (hydrationError) return <Screen><AppHeader title="여행방" onBack={() => router.back()} /><ErrorState message={hydrationError} /></Screen>;
+  if (hydrationError) return <Screen><AppHeader title="여행방" onBack={leave} /><ErrorState message={hydrationError} /></Screen>;
   const canView = Boolean(trip?.members.some((member) => member.userId === source.currentUserId));
   const hasOwner = Boolean(trip?.members.some((member) => member.role === "owner"));
   if (!trip || !tripId || !canView || !hasOwner || !diagnosis || !viewModel) return <InvalidTripScreen onBack={() => router.replace("/(tabs)/trips")} />;
@@ -157,7 +161,7 @@ function MockTripHomeScreen() {
   });
 
   return <Screen padded={false} testID="trip-home-screen"><View style={styles.page}>
-    <TripHomeHero trip={trip} region={source.regionsById[trip.regionId]} usersById={source.usersById} currentUserId={source.currentUserId} onBack={() => router.back()} />
+    <TripHomeHero trip={trip} region={source.regionsById[trip.regionId]} usersById={source.usersById} currentUserId={source.currentUserId} onBack={leave} />
     {created ? <Pressable accessibilityRole="button" accessibilityLabel="여행방 생성 완료 안내 닫기" onPress={() => router.setParams({ created: undefined })} style={styles.successBanner}><Text style={styles.successTitle}>여행방을 만들었어요</Text><Text style={styles.successText}>동행자와 후보 장소를 모아 여행을 완성해 보세요. · 닫기</Text></Pressable> : null}
     <TripPreparationCard preparation={viewModel.preparation} nextAction={nextAction} onAction={handlePreparationAction} readOnly={completed} />
     <TripQuickActions completed={completed} onWorkspace={openWorkspace} onExplore={explore} onInvite={() => setInviteOpen(true)} onDocuments={() => documentSectionRef.current?.openAdd()} />
@@ -174,7 +178,7 @@ function MockTripHomeScreen() {
     </View>
 
     <TripPlanningSection trip={trip} candidates={candidates} placesById={source.placesById} usersById={source.usersById} itinerary={itinerary} onExplore={explore} onWorkspace={openWorkspace} />
-    <DuriAnalysisCard state={duriState} onPress={duriState.kind === "no-itinerary" ? openWorkspace : openAnalysis} />
+    <DuriAnalysisCard state={duriState} onPress={openAnalysis} />
 
     <View style={styles.recordsSection}><Text style={styles.sectionHeading}>여행 기록</Text><Card style={styles.recordsCard}><TripDocumentSection
       ref={documentSectionRef}

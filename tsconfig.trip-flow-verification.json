@@ -13,6 +13,7 @@
     "sourceMap": false
   },
   "include": [
+    "expo-env.d.ts",
     "scripts/verify-trip-flow.ts",
     "src/domain/**/*.ts",
     "src/duri/**/*.ts",
@@ -29,6 +30,7 @@
     "src/features/trip-creation/services/regionService.ts",
     "src/features/trip-creation/validation/**/*.ts",
     "src/store/selectors.ts",
+    "src/services/userFacingApiError.ts",
     "src/utils/**/*.ts"
   ]
 }

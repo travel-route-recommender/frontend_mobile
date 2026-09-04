@@ -323,7 +323,7 @@ function buildKakaoMapHtml(markers: readonly MapMarkerPlace[], apiKey: string, i
 
     function initMap() {
       if (!window.kakao || !window.kakao.maps) {
-        showState("지도를 불러오지 못했어요", "카카오 지도 스크립트 연결을 확인해 주세요.");
+        showState("지도를 불러오지 못했어요", "잠시 후 다시 시도해 주세요.");
         return;
       }
       if (!places.length) {
@@ -390,14 +390,14 @@ function buildKakaoMapHtml(markers: readonly MapMarkerPlace[], apiKey: string, i
       }, 80);
     }
 
-    window.onerror = function (message) {
-      showState("지도를 불러오지 못했어요", String(message || "알 수 없는 오류가 발생했어요."));
+    window.onerror = function () {
+      showState("지도를 불러오지 못했어요", "잠시 후 다시 시도해 주세요.");
     };
 
     if (window.kakao && window.kakao.maps) {
       kakao.maps.load(initMap);
     } else {
-      showState("지도를 불러오지 못했어요", "카카오 지도 스크립트 연결을 확인해 주세요.");
+      showState("지도를 불러오지 못했어요", "잠시 후 다시 시도해 주세요.");
     }
   </script>
 </body>
@@ -463,10 +463,10 @@ export function KakaoPlaceMap({
   }, [injectMapFocus]);
 
   if (!apiKey?.trim()) {
-    return <MapState fill={fill} height={height} title="카카오 지도 키가 필요해요" description="EXPO_PUBLIC_KAKAO_MAP_JAVASCRIPT_KEY를 설정해 주세요." />;
+    return <MapState fill={fill} height={height} title="지도를 불러오지 못했어요" description="지도를 표시하는 데 필요한 정보를 확인하지 못했어요. 잠시 후 다시 열어 주세요." />;
   }
   if (!markers.length) {
-    return <MapState fill={fill} height={height} title="지도에 표시할 장소가 없어요" description="좌표가 있는 백엔드 장소를 불러오면 이곳에 표시돼요." />;
+    return <MapState fill={fill} height={height} title="지도에 표시할 장소가 없어요" description="지역이나 검색 조건을 바꾸면 더 많은 장소를 찾을 수 있어요." />;
   }
 
   const handleMessage = (event: WebViewMessageEvent) => {
@@ -511,7 +511,7 @@ export function KakaoPlaceMap({
       onError={(event) => setLoadError(event.nativeEvent.description || "지도를 불러오지 못했어요.")}
       style={styles.webview}
     />
-    {loadError ? <View pointerEvents="none" style={styles.errorBadge}><Text numberOfLines={1} style={styles.errorText}>{loadError}</Text></View> : null}
+    {loadError ? <View style={styles.errorBadge}><Text numberOfLines={1} style={styles.errorText}>{loadError}</Text></View> : null}
   </View>;
 }
 
@@ -523,6 +523,6 @@ const styles = StyleSheet.create({
   state: { alignItems: "center", justifyContent: "center", gap: spacing.xxs, padding: spacing.lg, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.surfaceMuted },
   stateTitle: { ...typography.bodyStrong, color: colors.text, textAlign: "center" },
   stateDescription: { ...typography.caption, color: colors.textSecondary, textAlign: "center" },
-  errorBadge: { position: "absolute", left: spacing.sm, right: spacing.sm, bottom: spacing.sm, minHeight: 34, justifyContent: "center", paddingHorizontal: spacing.sm, borderRadius: radius.pill, backgroundColor: colors.overlay },
+  errorBadge: { position: "absolute", left: spacing.sm, right: spacing.sm, bottom: spacing.sm, minHeight: 34, justifyContent: "center", paddingHorizontal: spacing.sm, borderRadius: radius.pill, backgroundColor: colors.overlay, pointerEvents: "none" },
   errorText: { ...typography.caption, color: colors.white, textAlign: "center" },
 });

@@ -5,6 +5,8 @@ const expoConfig = require("eslint-config-expo/flat");
 module.exports = defineConfig([
   expoConfig,
   {
-    ignores: ["dist/*"],
+    // Verification scripts compile TypeScript fixtures into hidden folders.
+    // Lint the authored sources, not those generated CommonJS artifacts.
+    ignores: ["dist/**", ".expo/**", ".*-verification/**"],
   }
 ]);

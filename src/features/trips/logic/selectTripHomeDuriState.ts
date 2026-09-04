@@ -26,8 +26,8 @@ export function selectTripHomeDuriState(input: {
   currentFingerprint: string;
   session?: AnalysisSessionSummary;
 }): TripHomeDuriState {
-  if (input.itineraryCount === 0) return { kind: "no-itinerary" };
   if (!input.analysisAvailable) return { kind: "unavailable", ...(input.unavailableMessage ? { message: input.unavailableMessage } : {}) };
+  if (input.itineraryCount === 0) return { kind: "no-itinerary" };
   if (input.analysisStatus === "loading") return { kind: "loading" };
   if (input.session && input.session.inputFingerprint !== input.currentFingerprint) return { kind: "stale" };
   if (input.session) {

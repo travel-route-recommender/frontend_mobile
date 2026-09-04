@@ -31,7 +31,6 @@ export type ApiRoomTodo = {
   dueDate: string | null;
   dueTime: string | null;
   timezone: string;
-  remindAt: string | null;
   assigneeId: string | null;
   checklist: ApiRoomTodoChecklistItem[];
   links: ApiRoomTodoLink[];
@@ -205,7 +204,6 @@ export function parseApiRoomTodo(value: unknown, path = "todo"): ApiRoomTodo {
     dueDate,
     dueTime,
     timezone: asString(record.timezone, `${path}.timezone`),
-    remindAt: nullableTimestamp(record.remindAt, `${path}.remindAt`),
     assigneeId: nullableString(record.assigneeId, `${path}.assigneeId`),
     checklist,
     links,
@@ -315,16 +313,22 @@ export type CreateApiRoomTodoInput = ApiRoomTodoDraft & {
 };
 export type UpdateApiRoomTodoInput = ApiRoomTodoDraft & { expectedRevision: number; clientMutationId: string };
 
-function mutationBody(input: ApiRoomTodoDraft) {
+function mutationBody(input: ApiRoomTodoDraft, mode: "create" | "update") {
+  const dueDate = input.dueDate || null;
+  const dueTime = input.dueDate && input.dueTime ? input.dueTime : null;
   return {
     title: input.title.trim(),
     description: input.description.trim(),
     status: fromApiTodoUiStatus(input.status),
     priority: fromApiTodoUiPriority(input.priority),
-    dueDate: input.dueDate || null,
-    dueTime: input.dueDate && input.dueTime ? input.dueTime : null,
+    ...(mode === "create"
+      ? {
+          ...(dueDate ? { dueDate } : {}),
+          ...(dueTime ? { dueTime } : {}),
+          ...(input.assigneeId ? { assigneeId: input.assigneeId } : {}),
+        }
+      : { dueDate, dueTime, assigneeId: input.assigneeId }),
     timezone: input.timezone,
-    assigneeId: input.assigneeId,
     checklist: input.checklist.map((entry) => ({ id: entry.id, title: entry.title.trim(), done: entry.done })),
     links: input.links.map((link) => ({
       type: link.type,
@@ -339,7 +343,7 @@ export async function createApiRoomTodo(roomId: string, input: CreateApiRoomTodo
     path: endpoint(roomId),
     method: "POST",
     body: {
-      ...mutationBody(input),
+      ...mutationBody(input, "create"),
       ...(input.source ? {
         source: {
           kind: input.source.kind,
@@ -360,7 +364,7 @@ export async function updateApiRoomTodo(roomId: string, todoId: string, input: U
     path: endpoint(roomId, todoId),
     method: "PATCH",
     body: {
-      ...mutationBody(input),
+      ...mutationBody(input, "update"),
       expectedRevision: input.expectedRevision,
       clientMutationId: input.clientMutationId,
     },

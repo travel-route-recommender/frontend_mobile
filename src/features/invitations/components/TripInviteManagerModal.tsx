@@ -4,6 +4,7 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import type { TripRoom } from "../../../domain";
 import { Card, PrimaryButton, SecondaryButton } from "../../../components/common";
 import { environment } from "../../../config/environment";
+import { toUserFacingApiErrorMessage } from "../../../services/userFacingApiError";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import { buildTripInviteUrl } from "../logic/tripInviteLinks";
 import { inviteShareService, type InviteSharePayload } from "../services/inviteShareService";
@@ -56,7 +57,7 @@ function MockTripInviteManagerModal({
       const result = await action(payload);
       setFeedback(result.message);
     } catch (reason: unknown) {
-      setFeedback(reason instanceof Error ? reason.message : "공유 기능을 열지 못했어요.");
+      setFeedback(toUserFacingApiErrorMessage(reason, "공유 기능을 열지 못했어요."));
     } finally {
       setBusyAction(undefined);
     }
@@ -65,7 +66,7 @@ function MockTripInviteManagerModal({
   const confirmManagement = () => {
     if (confirmation === "rotate") {
       rotateInviteLink(trip.id);
-      setFeedback("새 초대 링크를 만들었어요. 이전 링크는 이 기기의 mock 데이터에서 사용할 수 없어요.");
+      setFeedback("새 초대 링크를 만들었어요. 이전 링크는 더 이상 사용할 수 없어요.");
     } else if (confirmation === "disable") {
       disableInviteLink(trip.id);
       setFeedback("초대 링크 사용을 중지했어요.");
@@ -106,7 +107,7 @@ function MockTripInviteManagerModal({
 
           {isHydrated && record?.status === "disabled" ? <View style={styles.disabledCard}>
             <Text style={styles.sectionTitle}>현재 초대 링크가 중지됐어요</Text>
-            <Text style={styles.body}>기존 링크는 이 기기의 프론트 mock에서 참여할 수 없습니다. 새 링크가 필요하면 다시 발급하세요.</Text>
+            <Text style={styles.body}>기존 링크로는 참여할 수 없어요. 다시 초대하려면 새 링크를 만들어 주세요.</Text>
             <PrimaryButton label="새 초대 링크 만들기" onPress={() => {
               ensureInviteLink(trip.id);
               setFeedback("새 초대 링크를 만들었어요.");
@@ -120,7 +121,7 @@ function MockTripInviteManagerModal({
             <Text style={styles.body}>새 링크를 발급하거나 현재 링크 사용을 중지할 수 있어요.</Text>
             {confirmation ? <View style={styles.warningBox}>
               <Text style={styles.warningTitle}>{confirmation === "rotate" ? "새 링크로 교체할까요?" : "초대 링크를 중지할까요?"}</Text>
-              <Text style={styles.caption}>{confirmation === "rotate" ? "현재 링크는 로컬 mock에서 즉시 무효화됩니다." : "다시 초대하려면 새 링크를 발급해야 합니다."}</Text>
+              <Text style={styles.caption}>{confirmation === "rotate" ? "현재 링크는 즉시 사용할 수 없게 돼요." : "다시 초대하려면 새 링크를 발급해야 해요."}</Text>
               <View style={styles.confirmRow}>
                 <Pressable accessibilityRole="button" onPress={() => setConfirmation(undefined)} style={styles.confirmButton}><Text style={styles.cancelText}>취소</Text></Pressable>
                 <Pressable accessibilityRole="button" onPress={confirmManagement} style={[styles.confirmButton, styles.dangerButton]}><Text style={styles.dangerButtonText}>{confirmation === "rotate" ? "교체" : "중지"}</Text></Pressable>
@@ -132,8 +133,8 @@ function MockTripInviteManagerModal({
           </View> : null}
 
           <View style={styles.mockNotice}>
-            <Text style={styles.mockTitle}>현재는 프론트 mock 방식이에요</Text>
-            <Text style={styles.caption}>링크 발급·교체·중지 상태는 이 기기에만 저장됩니다. 다른 기기에서 실제 여행방 데이터를 조회하고 폐기 상태를 공유하는 기능은 추후 Invite API 연결이 필요해요.</Text>
+            <Text style={styles.mockTitle}>이 기기에서 사용하는 초대 링크예요</Text>
+            <Text style={styles.caption}>링크 발급·교체·중지 정보는 이 기기에 저장돼요. 다른 기기에서는 이 링크로 참여할 수 없어요.</Text>
           </View>
           <SecondaryButton label="닫기" onPress={close} />
         </ScrollView>
@@ -146,6 +147,10 @@ function MockTripInviteManagerModal({
 function ApiTripInviteManagerModal({ visible, trip, onClose }: TripInviteManagerModalProps) {
   const [record, setRecord] = useState<ApiTripInviteLink>();
   const [feedback, setFeedback] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const requestKey = `${trip.id}:${loadAttempt}`;
+  const [loadedKey, setLoadedKey] = useState("");
   const [busyAction, setBusyAction] = useState<string>();
   const [confirmRotate, setConfirmRotate] = useState(false);
 
@@ -155,29 +160,38 @@ function ApiTripInviteManagerModal({ visible, trip, onClose }: TripInviteManager
     void fetchApiTripInviteLink(trip.id, controller.signal)
       .then((nextRecord) => {
         setRecord(nextRecord);
-        setFeedback("");
+        setLoadError("");
+        setLoadedKey(requestKey);
       })
       .catch((reason: unknown) => {
-        if (!controller.signal.aborted) setFeedback(reason instanceof Error ? reason.message : "초대 링크를 불러오지 못했어요.");
+        if (!controller.signal.aborted) {
+          setRecord(undefined);
+          setLoadError(toUserFacingApiErrorMessage(reason, "초대 링크를 불러오지 못했어요."));
+          setLoadedKey(requestKey);
+        }
       })
     return () => controller.abort();
-  }, [trip.id, visible]);
+  }, [requestKey, trip.id, visible]);
 
-  const payload = useMemo<InviteSharePayload | undefined>(() => record ? {
-    inviteUrl: record.inviteLink,
+  const activeRecord = loadedKey === requestKey ? record : undefined;
+  const activeLoadError = loadedKey === requestKey ? loadError : "";
+
+  const payload = useMemo<InviteSharePayload | undefined>(() => activeRecord ? {
+    inviteUrl: activeRecord.inviteLink,
     tripTitle: trip.title,
-    code: record.inviteCode,
-  } : undefined, [record, trip.title]);
+    code: activeRecord.inviteCode,
+  } : undefined, [activeRecord, trip.title]);
 
   const runShareAction = async (name: string, action: (value: InviteSharePayload) => Promise<{ message: string }>) => {
     if (!payload || busyAction) return;
     setBusyAction(name);
     setFeedback("");
+    setLoadError("");
     try {
       const result = await action(payload);
       setFeedback(result.message);
     } catch (reason: unknown) {
-      setFeedback(reason instanceof Error ? reason.message : "공유 기능을 열지 못했어요.");
+      setFeedback(toUserFacingApiErrorMessage(reason, "공유 기능을 열지 못했어요."));
     } finally {
       setBusyAction(undefined);
     }
@@ -192,7 +206,7 @@ function ApiTripInviteManagerModal({ visible, trip, onClose }: TripInviteManager
       setFeedback("새 초대 링크를 발급했어요. 이전 코드는 더 이상 사용할 수 없어요.");
       setConfirmRotate(false);
     } catch (reason: unknown) {
-      setFeedback(reason instanceof Error ? reason.message : "새 초대 링크를 발급하지 못했어요.");
+      setFeedback(toUserFacingApiErrorMessage(reason, "새 초대 링크를 발급하지 못했어요."));
     } finally {
       setBusyAction(undefined);
     }
@@ -202,6 +216,7 @@ function ApiTripInviteManagerModal({ visible, trip, onClose }: TripInviteManager
     setFeedback("");
     setBusyAction(undefined);
     setConfirmRotate(false);
+    setLoadAttempt((attempt) => attempt + 1);
     onClose();
   };
 
@@ -210,16 +225,17 @@ function ApiTripInviteManagerModal({ visible, trip, onClose }: TripInviteManager
       <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.overlay}>
         <Card style={styles.modal}>
           <View style={styles.header}>
-            <View style={styles.flex}><Text style={styles.title}>동행자 초대</Text><Text style={styles.body}>서버에서 발급한 링크로 이 여행방에 참여할 수 있어요.</Text></View>
+            <View style={styles.flex}><Text style={styles.title}>동행자 초대</Text><Text style={styles.body}>초대 링크를 받은 사람은 이 여행방에 참여할 수 있어요.</Text></View>
             <Pressable accessibilityRole="button" accessibilityLabel="동행자 초대 닫기" onPress={close} style={styles.close}><Text style={styles.closeText}>닫기</Text></Pressable>
           </View>
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
-            {!record && !feedback ? <View style={styles.infoBox}><Text style={styles.body}>서버 초대 링크를 불러오고 있어요.</Text></View> : null}
-            {record && payload ? <>
+            {!activeRecord && !activeLoadError ? <View style={styles.infoBox}><Text style={styles.body}>초대 링크를 불러오고 있어요.</Text></View> : null}
+            {activeLoadError ? <View accessibilityRole="alert" style={styles.warningBox}><Text style={styles.warningTitle}>초대 링크를 불러오지 못했어요</Text><Text style={styles.caption}>{activeLoadError}</Text><SecondaryButton label="다시 불러오기" onPress={() => setLoadAttempt((attempt) => attempt + 1)} /></View> : null}
+            {activeRecord && payload ? <>
               <View style={styles.linkCard}>
-                <View style={styles.statusRow}><Text style={styles.codeLabel}>초대 코드</Text><Text style={styles.activeBadge}>서버 사용 중</Text></View>
-                <Text selectable style={styles.code}>{record.inviteCode}</Text>
-                <Text selectable style={styles.link}>{record.inviteLink}</Text>
+                <View style={styles.statusRow}><Text style={styles.codeLabel}>초대 코드</Text><Text style={styles.activeBadge}>사용 중</Text></View>
+                <Text selectable style={styles.code}>{activeRecord.inviteCode}</Text>
+                <Text selectable style={styles.link}>{activeRecord.inviteLink}</Text>
               </View>
               <View style={styles.actions}>
                 <PrimaryButton label="초대 링크 공유" loading={busyAction === "share"} disabled={Boolean(busyAction)} onPress={() => runShareAction("share", inviteShareService.shareLink)} />
@@ -227,7 +243,7 @@ function ApiTripInviteManagerModal({ visible, trip, onClose }: TripInviteManager
               </View>
               {confirmRotate ? <View style={styles.warningBox}>
                 <Text style={styles.warningTitle}>새 링크로 교체할까요?</Text>
-                <Text style={styles.caption}>교체하면 기존 초대 코드는 서버에서 즉시 무효화됩니다.</Text>
+                <Text style={styles.caption}>교체하면 기존 초대 코드는 즉시 사용할 수 없게 돼요.</Text>
                 <View style={styles.confirmRow}>
                   <Pressable accessibilityRole="button" onPress={() => setConfirmRotate(false)} style={styles.confirmButton}><Text style={styles.cancelText}>취소</Text></Pressable>
                   <Pressable accessibilityRole="button" onPress={() => void rotate()} style={[styles.confirmButton, styles.dangerButton]}><Text style={styles.dangerButtonText}>교체</Text></Pressable>

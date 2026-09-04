@@ -13,6 +13,7 @@ import {
   PreferenceAutoFillRequestTimeoutError,
   requestPreferenceAutoFillWithDeadline,
 } from "../src/features/duri/logic/preferenceAutoFillAsync";
+import { createAbortableRequestGate, isSameDuriRequestScope } from "../src/features/duri/logic/abortableRequestGate";
 import { getTripDates } from "../src/utils/schedule";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -272,12 +273,21 @@ scenario("손상·미래 schema 시간 신호는 render 기본값으로 사용�
   assert(defaults.provisionalTemplateUsed === true, "손상된 관측을 실제 근거로 가장하면 안 된다");
 });
 
-scenario("문서 또는 계획 사실을 읽지 못해도 저장 불가 preview를 계속 만든다", () => {
-  const documents = planPreferenceAutoFill(input({ documentCollectionStatus: "unavailable" }), request);
+scenario("문서 또는 계획 사실을 읽지 못해도 경고 후 적용 가능한 preview를 만든다", () => {
+  const documentInput = input({ documentCollectionStatus: "unavailable" });
+  const documents = planPreferenceAutoFill(documentInput, request);
   const planning = planPreferenceAutoFill(input({ localPlanningFactsStatus: "unavailable" }), request);
   assert(documents.status === "preview-only" && documents.certificate.degradedEvidence.includes("documents"), "문서 unavailable은 preview 한계로 내려야 한다");
   assert(planning.status === "preview-only" && planning.certificate.degradedEvidence.includes("planning"), "planning unavailable은 preview 한계로 내려야 한다");
-  assert(!documents.certificate.localApplyEligible && !planning.certificate.localApplyEligible, "불완전 facts 초안을 적용 가능으로 만들면 안 된다");
+  assert(documents.certificate.localApplyEligible && planning.certificate.localApplyEligible, "정보 조회 실패만으로 정상 초안 적용을 막으면 안 된다");
+  assert(documents.certificate.localApplyReviewWarnings.some((warning) => warning.includes("첨부 문서")), "문서 조회 실패를 확인 경고로 남겨야 한다");
+  assert(planning.certificate.localApplyReviewWarnings.some((warning) => warning.includes("이동수단·복귀")), "planning 조회 실패를 확인 경고로 남겨야 한다");
+  const envelope = buildPreferenceAutoFillSuggestionEnvelope(
+    createDuriAnalysisSession(documentInput, "2026-08-23T00:00:00.000Z"),
+    documents,
+    "2026-08-23T00:00:01.000Z",
+  );
+  assert(envelope?.suggestion.canApply && envelope.suggestion.reviewWarnings?.some((warning) => warning.includes("첨부 문서")), "실제 suggestion에도 canApply와 확인 경고가 전달되어야 한다");
 });
 
 scenario("API 공유 성향이 stale/unavailable이면 해당 신호를 빼고 preview를 계속 만든다", () => {
@@ -286,6 +296,78 @@ scenario("API 공유 성향이 stale/unavailable이면 해당 신호를 빼고 p
   assert(unavailable.status === "preview-only" && unavailable.certificate.degradedEvidence.includes("shared-preferences"), "공유 성향 unavailable preview");
   assert(stale.status === "preview-only" && stale.certificate.degradedEvidence.includes("shared-preferences"), "공유 성향 stale preview");
   assert(unavailable.certificate.sharedEvidenceMemberIds.length === 0, "오래된 공유 성향을 효용에 넣으면 안 된다");
+  assert(unavailable.certificate.localApplyEligible && stale.certificate.localApplyEligible, "성향 미응답·stale만으로 초안 적용을 막으면 안 된다");
+  assert(unavailable.certificate.localApplyReviewWarnings.some((warning) => warning.includes("공유 성향")), "제외한 공유 성향 신호를 경고로 알려야 한다");
+});
+
+scenario("성향 미응답인 빈 일정과 부분 일정도 적용 가능한 중립 초안을 만든다", () => {
+  const empty = planPreferenceAutoFill(input({
+    candidates: [candidate("a", [])],
+    preferenceResults: {},
+  }), request);
+  const partial = planPreferenceAutoFill(input({
+    placesById: { fixed: place("fixed"), a: place("a") },
+    candidates: [candidate("a", [])],
+    itinerary: [item("fixed-item", "fixed", "2026-09-01", "09:00", 60)],
+    preferenceResults: {},
+  }), { ...request, dailyStartTime: "09:00", dailyEndTime: "13:00" });
+  assert(empty.status === "preview-only" && empty.certificate.selectionBasis === "neutral-structural", "빈 일정은 중립 초안을 만들어야 한다");
+  assert(partial.status === "preview-only" && partial.assignments.length === 1, "부분 일정의 빈 구간도 채워야 한다");
+  assert(empty.certificate.localApplyEligible && partial.certificate.localApplyEligible, "성향 미응답이나 부분 일정만으로 적용을 막으면 안 된다");
+  assert(empty.certificate.localApplyReviewWarnings.some((warning) => warning.includes("실제 이동시간")), "이동정보 미확인을 적용 전 경고로 남겨야 한다");
+});
+
+scenario("기기 잠금 조회 실패와 연결되지 않은 문서는 실제 충돌이 아니므로 확인 경고로 내린다", () => {
+  const result = planPreferenceAutoFill(input({
+    scheduleOverlayStatus: "unavailable",
+    documentReferences: [{ id: "unlinked-ticket", kind: "train", itineraryItemIds: [] }],
+  }), request);
+  assert(result.status === "preview-only" && result.certificate.localApplyEligible, "조회 실패나 미연결 문서만으로 초안 적용을 막으면 안 된다");
+  assert(result.certificate.localApplyReviewWarnings.some((warning) => warning.includes("사용자 잠금")), "기기 잠금 조회 실패를 알려야 한다");
+  assert(result.certificate.localApplyReviewWarnings.some((warning) => warning.includes("예약·티켓 문서 1개")), "미연결 문서 확인을 알려야 한다");
+});
+
+scenario("접근 경로 데이터가 없는 이동 제약은 전체 초안을 막지 않고 명시 확인을 요구한다", () => {
+  const sharedPreferenceEvidence = sharedPreferences(["u1"], []);
+  sharedPreferenceEvidence.members[0] = {
+    ...sharedPreferenceEvidence.members[0],
+    mobilityConstraints: {
+      values: ["LONG_WALK"],
+      status: "present",
+      source: "user",
+      version: 2,
+      updatedAt: "2026-08-26T00:00:00.000Z",
+    },
+  };
+  const result = planPreferenceAutoFill(input({
+    sourceFactsVersion: 4,
+    sharedPreferenceEvidenceStatus: "loaded",
+    sharedPreferenceEvidence,
+  }), request);
+  assert(result.status === "preview-only" && result.certificate.localApplyEligible, "경로 정보가 없다는 이유만으로 전체 초안 적용을 막으면 안 된다");
+  assert(result.certificate.localApplyReviewWarnings.some((warning) => warning.includes("장거리 도보 접근 조건")), "미검증 접근 조건을 적용 전 경고로 알려야 한다");
+});
+
+scenario("발견 후보는 저장 전만 막고 후보 저장·재조회 뒤에는 적용 가능하다", () => {
+  const persistedInput = input();
+  const transient = planPreferenceAutoFill(persistedInput, { ...request, transientDiscoveryPlaceIds: ["a"] });
+  const persisted = planPreferenceAutoFill(persistedInput, request);
+  assert(transient.status === "preview-only" && !transient.certificate.localApplyEligible, "서버 후보가 아닌 장소를 곧바로 적용하면 안 된다");
+  assert(transient.certificate.localApplyBlockReasons.some((reason) => reason.includes("여행방 후보")), "후보 저장 필요 이유를 남겨야 한다");
+  assert(persisted.status === "preview-only" && persisted.certificate.discoveryCandidatePlaceIds.length === 0, "저장 후 재조회에서는 발견 후보 표시가 사라져야 한다");
+  assert(persisted.certificate.localApplyEligible, "저장된 후보를 같은 이유로 계속 막으면 안 된다");
+  const envelope = buildPreferenceAutoFillSuggestionEnvelope(
+    createDuriAnalysisSession(persistedInput, "2026-08-23T00:00:00.000Z"),
+    persisted,
+    "2026-08-23T00:00:01.000Z",
+  );
+  assert(envelope?.suggestion.canApply, "후보 저장·재조회 뒤의 suggestion은 실제 적용 가능해야 한다");
+});
+
+scenario("완료된 여행방은 초안이 계산되어도 적용할 수 없다", () => {
+  const result = planPreferenceAutoFill(input({ trip: room(["u1"], { status: "completed" }) }), request);
+  assert(result.status === "preview-only" && !result.certificate.localApplyEligible, "완료된 여행방 적용은 차단해야 한다");
+  assert(result.certificate.localApplyBlockReasons.some((reason) => reason.includes("완료된 여행방")), "완료 상태 차단 이유를 남겨야 한다");
 });
 
 scenario("mustVisit/avoid 충돌 후보만 격리하고 안전한 나머지 초안을 계속 만든다", () => {
@@ -604,7 +686,7 @@ scenario("여러 날짜는 최소 부하 우선으로 분산하고 하루 일정
     preferenceResults: { u1: preference("u1", { window: { start: 540, end: 1080, duration: 60, daily: 60 } }) },
   }), { ...request, maxNewItems: 3 });
   assert(dailySoft.status === "preview-only" && dailySoft.assignments.length === 3, "명시 요청이 물리 슬롯 안이면 Soft 하루 목표를 넘어도 preview해야 한다");
-  assert(dailySoft.limitations.some((entry) => entry.includes("Soft 목표를 넘")), "초과 사실은 숨기지 않아야 한다");
+  assert(dailySoft.limitations.some((entry) => entry.includes("원하는 하루 일정량보다 많")), "초과 사실은 내부 용어 없이 분명히 안내해야 한다");
 });
 
 scenario("같은 여행의 contentType 실제 체류시간을 후보별로 적응시킨다", () => {
@@ -831,6 +913,34 @@ scenario("중립 후보의 분류가 같고 좌표가 모두 있으면 MST 직�
   assert(result.certificate.structuralSelection?.comparableCoordinateCoverage
     && (result.certificate.structuralSelection.mstDistanceMeters ?? Infinity) < 200,
   "모든 후보에 좌표가 있을 때만 MST 보조 지표를 기록해야 한다");
+});
+
+scenario("제한 beam 탐색도 후보 ID와 무관하게 지리적으로 밀집된 묶음을 보존한다", () => {
+  const clusterByPlaceId: Record<string, "north" | "south"> = {};
+  const placeIds = Array.from({ length: 30 }, (_, index) => `beam-geo-${index.toString().padStart(2, "0")}`);
+  const placesById = Object.fromEntries(placeIds.map((placeId, index) => {
+    const cluster = index % 2 === 0 ? "north" as const : "south" as const;
+    clusterByPlaceId[placeId] = cluster;
+    return [placeId, {
+      ...place(placeId, "명소", [], 12),
+      latitude: cluster === "north" ? 37.5 : 35.1,
+      longitude: (cluster === "north" ? 127 : 129) + Math.floor(index / 2) * 0.0001,
+    }];
+  }));
+  const result = planPreferenceAutoFill(input({
+    placesById,
+    candidates: placeIds.map((placeId) => candidate(placeId, [])),
+    preferenceResults: {},
+  }), {
+    dailyStartTime: "00:00",
+    dailyEndTime: "24:00",
+    proposedVisitDurationMinutes: 15,
+    maxNewItems: 15,
+  });
+  const selectedClusters = new Set(result.assignments.map((assignment) => clusterByPlaceId[assignment.placeId]));
+  assert(result.status === "preview-only" && !result.certificate.selectionExact, "큰 조합은 제한 탐색 경로를 사용해야 한다");
+  assert(selectedClusters.size === 1, "ID가 교차된 먼 두 지역을 한 묶음으로 섞으면 안 된다");
+  assert((result.certificate.structuralSelection?.mstDistanceMeters ?? Infinity) < 500, "선택된 묶음의 최종 exact MST도 밀집되어야 한다");
 });
 
 scenario("같은 빈 구간의 여러 장소는 양 끝 기존 일정을 포함한 최단 직선거리 순서로 재배치한다", () => {
@@ -1185,6 +1295,8 @@ scenario("시각 없는 확정 사실은 연결 장소만 보존하고 하루 �
   }), request);
   assert(result.status === "preview-only" && result.assignments.length === 1, "date-only 사실을 all-day blocker로 오인하면 안 된다");
   assert(result.limitations.some((limitation) => limitation.includes("시각 구간이 완전하지 않은")), "불완전 확정 사실을 사용자에게 알려야 한다");
+  assert(result.certificate.localApplyEligible, "충돌하지 않도록 제외한 불완전 사실 때문에 나머지 초안 적용까지 막으면 안 된다");
+  assert(result.certificate.localApplyReviewWarnings.some((warning) => warning.includes("종료 시각")), "불완전 확정 사실을 적용 전 경고로 남겨야 한다");
 });
 
 scenario("중복 공유 후보 행의 must/avoid 충돌도 한 후보로 합쳐 보류한다", () => {
@@ -1285,16 +1397,17 @@ scenario("중복 후보를 한 번만 배치하고 입력 순서와 무관하게
   assert(JSON.stringify(forward.assignments.map((assignment) => assignment.placeId)) === JSON.stringify(reverse.assignments.map((assignment) => assignment.placeId)), "후보 배열 순서가 결과를 바꾸면 안 된다");
 });
 
-scenario("초안 envelope는 적용 불가지만 동일 validation으로 미리보기 가능하다", () => {
+scenario("확인되지 않은 이동·운영 정보는 명시 경고 후 적용할 수 있다", () => {
   const source = input();
   const plan = planPreferenceAutoFill(source, request);
   assert(plan.status === "preview-only", "초안이 필요하다");
   const session = createDuriAnalysisSession(source, "2026-08-23T00:00:00.000Z");
   const envelope = buildPreferenceAutoFillSuggestionEnvelope(session, plan, "2026-08-23T00:00:01.000Z");
-  assert(envelope && !envelope.suggestion.canApply && !plan.certificate.localApplyEligible, "local/mock도 자동 적용 가능으로 표시하면 안 된다");
+  assert(envelope && envelope.suggestion.canApply && plan.certificate.localApplyEligible, "보호 정보가 모두 확인된 초안은 사용자가 검토 후 적용할 수 있어야 한다");
+  assert((envelope.suggestion.reviewWarnings?.length ?? 0) >= 1, "확인하지 못한 이동·운영 사실을 숨기면 안 된다");
   const context = { tripId: source.trip.id, tripDates: getTripDates(source.trip.startDate, source.trip.endDate), placesById: source.placesById, candidates: source.candidates };
   const applied = applySuggestionChanges(source.itinerary, envelope.suggestion, context);
-  assert(!applied.success && applied.status === "not-applicable", "실제 apply는 차단되어야 한다");
+  assert(applied.success && applied.itinerary.length === plan.assignments.length, "확인 가능한 초안은 실제 apply 경로에서도 동작해야 한다");
   const previewed = previewSuggestion(source.itinerary, envelope.suggestion, context);
   assert(previewed.success && previewed.previewItinerary.length === plan.assignments.length, "검토용 diff 미리보기는 가능해야 한다");
 });
@@ -1379,6 +1492,28 @@ scenario("편향된 duration 128후보도 물리적 count 상한으로 빠르게
 });
 
 async function runAsyncScenarios() {
+  await asyncScenario("연속 탭과 취소된 이전 요청의 늦은 완료가 새 요청 잠금을 해제하지 않는다", async () => {
+    const gate = createAbortableRequestGate();
+    const first = gate.begin();
+    assert(first && gate.isActive(), "첫 요청은 즉시 잠금을 가져야 한다");
+    assert(gate.begin() === undefined, "React 상태 반영 전 연속 탭도 두 번째 요청을 시작하면 안 된다");
+    gate.cancel();
+    assert(first.signal.aborted && !gate.isActive(), "화면 입력 변경은 진행 중 요청과 잠금을 함께 취소해야 한다");
+
+    const replacement = gate.begin();
+    assert(replacement && gate.isCurrent(replacement), "취소 뒤 최신 입력 요청은 시작할 수 있어야 한다");
+    assert(!gate.finish(first), "취소된 이전 요청의 finally가 최신 요청 잠금을 해제하면 안 된다");
+    assert(gate.isCurrent(replacement), "이전 요청 완료 뒤에도 최신 요청 소유권을 유지해야 한다");
+    assert(gate.finish(replacement) && !gate.isActive(), "최신 요청만 자신의 잠금을 정상 해제해야 한다");
+  });
+
+  await asyncScenario("적용 응답은 시작한 여행방과 사용자 scope가 모두 같을 때만 게시한다", async () => {
+    const requested = { tripId: "room-a", userId: "member-a" };
+    assert(isSameDuriRequestScope(requested, { ...requested }), "같은 방과 사용자는 현재 요청이어야 한다");
+    assert(!isSameDuriRequestScope(requested, { tripId: "room-b", userId: "member-a" }), "방이 바뀐 응답을 현재 화면에 게시하면 안 된다");
+    assert(!isSameDuriRequestScope(requested, { tripId: "room-a", userId: "member-b" }), "사용자가 바뀐 응답을 현재 화면에 게시하면 안 된다");
+  });
+
   await asyncScenario("응답하지 않는 일정 공급자도 제한시간 뒤 생성 UI를 해제한다", async () => {
     const startedAt = Date.now();
     let caught: unknown;

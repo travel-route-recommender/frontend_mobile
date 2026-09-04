@@ -11,7 +11,7 @@ function stateLabel(item: ScheduleDiffItem["before"]) {
 
 export function ScheduleDiffView({ diff }: { diff: ScheduleDiffItem[] }) {
   const changed = diff.filter((item) => item.kind !== "unchanged");
-  return <View style={styles.wrap}><Text style={styles.heading}>날짜별 변경 diff</Text>{changed.length ? changed.map((item) => <View accessibilityLabel={`${kindLabel[item.kind]}, ${item.placeName}, 변경 전 ${stateLabel(item.before)}, 변경 후 ${stateLabel(item.after)}`} key={item.itemId} style={styles.item}><View style={styles.top}><Text style={styles.kind}>{kindLabel[item.kind]}</Text><Text style={styles.name}>{item.placeName}</Text></View><Text style={styles.state}>전 · {stateLabel(item.before)}</Text><Text style={styles.state}>후 · {stateLabel(item.after)}</Text></View>) : <Text style={styles.empty}>변경되는 일정이 없어요.</Text>}</View>;
+  return <View style={styles.wrap}><Text style={styles.heading}>날짜별 변경 내용</Text>{changed.length ? changed.map((item) => <View accessibilityLabel={`${kindLabel[item.kind]}, ${item.placeName}, 변경 전 ${stateLabel(item.before)}, 변경 후 ${stateLabel(item.after)}`} key={item.itemId} style={styles.item}><View style={styles.top}><Text style={styles.kind}>{kindLabel[item.kind]}</Text><Text style={styles.name}>{item.placeName}</Text></View><Text style={styles.state}>전 · {stateLabel(item.before)}</Text><Text style={styles.state}>후 · {stateLabel(item.after)}</Text></View>) : <Text style={styles.empty}>변경되는 일정이 없어요.</Text>}</View>;
 }
 
 const styles = StyleSheet.create({

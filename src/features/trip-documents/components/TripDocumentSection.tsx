@@ -2,8 +2,11 @@ import { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from "r
 import { Modal, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Card, SecondaryButton } from "../../../components/common";
+import { useDuriStore } from "../../../store/useDuriStore";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
+import { ensureTripTodoStoreHydrated } from "../../trip-todos/hooks/useTripTodoHydration";
 import { resolveDeletedDocumentOcrConfirmationTodo } from "../../trip-todos/services/tripTodoAutomationService";
+import { useTripTodoStore } from "../../trip-todos/store/useTripTodoStore";
 import { ensureTripDocumentStoreHydrated } from "../hooks/useTripDocumentHydration";
 import { deleteStoredTravelDocument, formatTravelDocumentSize, openOrShareTravelDocument, shareExternalTravelDocument } from "../services/travelDocumentStorage";
 import { useTravelDocumentAvailability } from "../hooks/useTravelDocumentAvailability";
@@ -52,6 +55,7 @@ export const TripDocumentSection = forwardRef<TripDocumentSectionHandle, TripDoc
   const [addOpen, setAddOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [pendingDelete, setPendingDelete] = useState<TravelDocument>();
+  const [deleting, setDeleting] = useState(false);
   const [reviewDocumentId, setReviewDocumentId] = useState<string>();
   const [internalExpanded, setInternalExpanded] = useState(false);
   const documents = useTripDocumentStore((state) => state.documentsByTripId[tripId] ?? EMPTY_DOCUMENTS);
@@ -97,25 +101,72 @@ export const TripDocumentSection = forwardRef<TripDocumentSectionHandle, TripDoc
     if (!result.ok) setMessage(result.message);
   };
 
-  const deleteDocument = async () => {
-    if (!pendingDelete) return;
-    if (readOnly || (!isOwner && pendingDelete.createdByUserId !== currentUserId)) {
+  const deleteDocument = async (deleteLinkedSchedules: boolean) => {
+    if (!pendingDelete || deleting) return;
+    const target = pendingDelete;
+    if (readOnly || (!isOwner && target.createdByUserId !== currentUserId)) {
       setMessage("이 문서를 삭제할 권한이 없어요.");
       setPendingDelete(undefined);
       return;
     }
+    setDeleting(true);
     setMessage("");
-    const result = await deleteStoredTravelDocument(pendingDelete);
-    if (!result.ok) { setMessage(result.message); return; }
-    const removed = removeDocument(tripId, pendingDelete.id);
-    if (!removed) {
-      setMessage("문서는 삭제했지만 목록을 갱신하지 못했어요. 화면을 다시 열어 확인해 주세요.");
+    const itineraryBefore = (useDuriStore.getState().itineraryByTripId[tripId] ?? [])
+      .map((item) => ({ ...item, preferredByUserIds: [...item.preferredByUserIds] }));
+    try {
+      if (deleteLinkedSchedules) {
+        const existingIds = new Set(itineraryBefore.map((item) => item.id));
+        for (const itemId of [...new Set(target.itineraryItemIds)].filter((id) => existingIds.has(id))) {
+          const removeResult = useDuriStore.getState().removeItineraryItem(tripId, itemId);
+          if (removeResult !== "success") {
+            useDuriStore.setState((state) => ({
+              itineraryByTripId: { ...state.itineraryByTripId, [tripId]: itineraryBefore },
+            }));
+            setMessage("연결 일정을 확인하지 못해 아무것도 삭제하지 않았어요. 여행방을 다시 열어 주세요.");
+            return;
+          }
+        }
+      }
+
+      const result = await deleteStoredTravelDocument(target);
+      if (!result.ok) {
+        if (deleteLinkedSchedules) {
+          useDuriStore.setState((state) => ({
+            itineraryByTripId: { ...state.itineraryByTripId, [tripId]: itineraryBefore },
+          }));
+        }
+        setMessage(result.message);
+        return;
+      }
+      const removed = removeDocument(tripId, target.id);
+      if (!removed) {
+        if (deleteLinkedSchedules) {
+          useDuriStore.setState((state) => ({
+            itineraryByTripId: { ...state.itineraryByTripId, [tripId]: itineraryBefore },
+          }));
+        }
+        setMessage("파일은 삭제했지만 목록을 갱신하지 못했어요. 화면을 다시 열어 확인해 주세요.");
+        setPendingDelete(undefined);
+        return;
+      }
+
+      const validItineraryIds = (useDuriStore.getState().itineraryByTripId[tripId] ?? []).map((item) => item.id);
+      reconcileTripLinks(tripId, validItineraryIds);
+      // TODO 정리 실패가 이미 완료된 문서·일정 삭제를 되돌리거나 Workspace를 막아서는 안 된다.
+      await resolveDeletedDocumentOcrConfirmationTodo({ tripId, documentId: target.id }).catch(() => undefined);
+      await ensureTripTodoStoreHydrated().then(() => {
+        useTripTodoStore.getState().reconcileLinks(tripId, {
+          itineraryItemIds: validItineraryIds,
+          documentIds: (useTripDocumentStore.getState().documentsByTripId[tripId] ?? []).map((document) => document.id),
+        });
+      }).catch(() => undefined);
       setPendingDelete(undefined);
-      return;
+      setMessage(deleteLinkedSchedules && target.itineraryItemIds.length
+        ? "문서와 선택한 연결 일정을 삭제했어요."
+        : "문서를 삭제했어요. 연결된 일정은 그대로 유지했어요.");
+    } finally {
+      setDeleting(false);
     }
-    // TODO 정리 실패가 이미 완료된 문서 삭제를 되돌리거나 Workspace를 막아서는 안 된다.
-    await resolveDeletedDocumentOcrConfirmationTodo({ tripId, documentId: pendingDelete.id }).catch(() => undefined);
-    setPendingDelete(undefined);
   };
 
   const Container = compact ? View : Card;
@@ -148,7 +199,7 @@ export const TripDocumentSection = forwardRef<TripDocumentSectionHandle, TripDoc
           <Pressable accessibilityRole="button" disabled={!available} onPress={() => openDocument(document)} style={({ pressed }) => [styles.smallButton, !available && styles.disabled, pressed && styles.pressed]}><Text style={styles.smallButtonText}>{document.storage === "external-url" ? "링크 열기" : "열기·공유"}</Text></Pressable>
           {document.storage === "external-url" ? <Pressable accessibilityRole="button" onPress={() => shareDocumentLink(document)} style={({ pressed }) => [styles.smallButton, pressed && styles.pressed]}><Text style={styles.smallButtonText}>링크 공유</Text></Pressable> : null}
           {!readOnly && (isOwner || document.createdByUserId === currentUserId) ? <Pressable accessibilityRole="button" onPress={() => setReviewDocumentId(document.id)} style={({ pressed }) => [styles.smallButton, pressed && styles.pressed]}><Text style={styles.smallButtonText}>{document.storage === "external-url" ? "일정 정보 입력" : "예약 정보 확인"}</Text></Pressable> : null}
-          {!readOnly && (isOwner || document.createdByUserId === currentUserId) ? <Pressable accessibilityRole="button" onPress={() => setPendingDelete(document)} style={({ pressed }) => [styles.deleteButton, pressed && styles.pressed]}><Text style={styles.deleteText}>삭제</Text></Pressable> : null}
+          {!readOnly && (isOwner || document.createdByUserId === currentUserId) ? <Pressable accessibilityRole="button" onPress={() => { setMessage(""); setPendingDelete(document); }} style={({ pressed }) => [styles.deleteButton, pressed && styles.pressed]}><Text style={styles.deleteText}>삭제</Text></Pressable> : null}
         </View>
       </View>;
     })}</View> : <View style={styles.empty}><Text style={styles.emptyTitle}>아직 보관한 문서가 없어요</Text><Text style={styles.emptyText}>PDF와 이미지를 15MB까지 추가할 수 있어요.</Text></View>}
@@ -171,19 +222,22 @@ export const TripDocumentSection = forwardRef<TripDocumentSectionHandle, TripDoc
       scheduleCreationUnavailableMessage={scheduleCreationUnavailableMessage}
       onClose={() => setReviewDocumentId(undefined)}
     />
-    <Modal visible={Boolean(pendingDelete)} transparent animationType="fade" onRequestClose={() => setPendingDelete(undefined)}>
+    <Modal visible={Boolean(pendingDelete)} transparent animationType="fade" onRequestClose={() => { if (!deleting) setPendingDelete(undefined); }}>
       <View style={styles.confirmOverlay}>
-        <Pressable accessibilityRole="button" accessibilityLabel="문서 삭제 취소" onPress={() => setPendingDelete(undefined)} style={StyleSheet.absoluteFill} />
+        <Pressable accessibilityRole="button" accessibilityLabel="문서 삭제 취소" disabled={deleting} onPress={() => setPendingDelete(undefined)} style={StyleSheet.absoluteFill} />
         <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.confirmSafeArea}>
           <View accessibilityViewIsModal style={styles.confirmCard}>
             <Text style={styles.confirmTitle}>문서를 삭제할까요?</Text>
             <Text style={styles.confirmText}>{pendingDelete?.extraction?.facts.some((fact) => fact.reviewState === "confirmed")
-              ? `확정한 예약 정보와 두리 검증 조건도 함께 제거됩니다.${pendingDelete.itineraryItemIds.length ? ` 연결된 일정 ${pendingDelete.itineraryItemIds.length}개는 삭제하지 않고 문서 연결만 해제합니다.` : ""} 기기 파일은 복구할 수 없어요.`
+              ? `확정한 예약 정보와 두리 검증 조건도 함께 제거됩니다.${pendingDelete.itineraryItemIds.length ? ` 연결된 일정 ${pendingDelete.itineraryItemIds.length}개를 유지할지 함께 삭제할지 선택해 주세요.` : ""} 기기 파일은 복구할 수 없어요.`
               : pendingDelete?.itineraryItemIds.length
-                ? "연결된 일정 " + pendingDelete.itineraryItemIds.length + "개에서도 해제됩니다. 일정 자체는 삭제하지 않으며 기기 파일은 복구할 수 없어요."
+                ? "연결된 일정 " + pendingDelete.itineraryItemIds.length + "개를 유지할지 함께 삭제할지 선택해 주세요. 기기 파일은 복구할 수 없어요."
                 : "기기에 저장된 파일도 함께 삭제되며 복구할 수 없어요."}</Text>
-            <Pressable accessibilityRole="button" onPress={deleteDocument} style={({ pressed }) => [styles.confirmDelete, pressed && styles.pressed]}><Text style={styles.confirmDeleteText}>문서 삭제</Text></Pressable>
-            <SecondaryButton label="취소" onPress={() => setPendingDelete(undefined)} />
+            {pendingDelete?.itineraryItemIds.length ? <>
+              <Pressable accessibilityRole="button" disabled={deleting} onPress={() => { void deleteDocument(false); }} style={({ pressed }) => [styles.confirmKeepSchedule, deleting && styles.disabled, pressed && styles.pressed]}><Text style={styles.confirmKeepScheduleText}>{deleting ? "삭제 중…" : "문서만 삭제하고 일정 유지"}</Text></Pressable>
+              <Pressable accessibilityRole="button" disabled={deleting} onPress={() => { void deleteDocument(true); }} style={({ pressed }) => [styles.confirmDelete, deleting && styles.disabled, pressed && styles.pressed]}><Text style={styles.confirmDeleteText}>{deleting ? "삭제 중…" : `문서와 연결 일정 ${pendingDelete.itineraryItemIds.length}개 삭제`}</Text></Pressable>
+            </> : <Pressable accessibilityRole="button" disabled={deleting} onPress={() => { void deleteDocument(false); }} style={({ pressed }) => [styles.confirmDelete, deleting && styles.disabled, pressed && styles.pressed]}><Text style={styles.confirmDeleteText}>{deleting ? "삭제 중…" : "문서 삭제"}</Text></Pressable>}
+            <SecondaryButton label="취소" disabled={deleting} onPress={() => setPendingDelete(undefined)} />
           </View>
         </SafeAreaView>
       </View>
@@ -238,4 +292,6 @@ const styles = StyleSheet.create({
   confirmText: { ...typography.body, color: colors.textSecondary },
   confirmDelete: { minHeight: 52, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: colors.danger },
   confirmDeleteText: { ...typography.button, color: colors.white },
+  confirmKeepSchedule: { minHeight: 52, alignItems: "center", justifyContent: "center", borderRadius: radius.md, borderWidth: 1, borderColor: colors.danger, backgroundColor: colors.surface },
+  confirmKeepScheduleText: { ...typography.button, color: colors.danger },
 });

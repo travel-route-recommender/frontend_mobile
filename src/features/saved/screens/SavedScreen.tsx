@@ -2,8 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AccessibilityInfo, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { EmptyState, ErrorState } from "../../../components/feedback";
+import { EmptyState, ErrorState, LoadingState } from "../../../components/feedback";
 import { Screen } from "../../../components/common";
+import { ApiError } from "../../../services/apiClient";
+import { toUserFacingApiErrorMessage } from "../../../services/userFacingApiError";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import { AddCandidateTripPickerModal, PlaceFeedbackBanner } from "../../places/components/PlaceExploreControls";
 import { usePlaceActions } from "../../places/hooks/usePlaceActions";
@@ -65,12 +67,15 @@ export function SavedScreen() {
 
   if (!placeRepository.available) return <Screen includeBottomSafeArea={false}><ErrorState message={placeRepository.message ?? "저장 장소 데이터를 사용할 수 없어요."} /></Screen>;
   if (actions.sessionKind !== "member") return <Screen includeBottomSafeArea={false}><View style={styles.gateHeader}><Text style={styles.gateTitle}>저장</Text><Text style={styles.supporting}>{actions.sessionKind === "guest" ? "초대 게스트의 개인 저장은 정식 계정 전환 후 사용할 수 있어요. 참여 여행방 후보 추가는 탐색에서 계속 가능해요." : "탐색은 자유롭게 할 수 있고, 로그인하면 장소를 개인 목록에 저장할 수 있어요."}</Text></View><EmptyState title="회원 전용 저장 공간이에요" description="로그인하거나 가입하면 가고 싶은 장소를 안전하게 모을 수 있어요." ctaLabel="로그인 또는 가입" onPress={() => actions.requestMember("저장한 장소 보기")} />{actions.memberGatePrompt}</Screen>;
+  if (actions.remoteSavesEnabled && actions.savedPlacesQuery.isPending) return <Screen includeBottomSafeArea={false}><LoadingState label="저장한 장소를 불러오고 있어요" /></Screen>;
+  if (actions.remoteSavesEnabled && actions.savedPlacesQuery.isError && !actions.savedPlacesQuery.data) return <Screen includeBottomSafeArea={false}><ErrorState message={savedPlacesLoadErrorMessage(actions.savedPlacesQuery.error)} onRetry={() => { void actions.savedPlacesQuery.refetch(); }} /></Screen>;
 
   const header = <View style={styles.header}>
     <Text style={styles.pageTitle}>저장</Text>
     <Text style={styles.count}>저장한 장소 {resolved.places.length}곳</Text>
     <Text style={styles.supporting}>마음에 든 장소를 다시 찾고 여행에 활용해보세요.</Text>
-    {resolved.missingIds.length ? <View accessibilityRole="alert" style={styles.warning}><Text style={styles.warningText}>저장 관계 {resolved.missingIds.length}개의 장소 정보를 불러오지 못했어요. 관계는 자동 삭제하지 않았어요.</Text></View> : null}
+    {actions.remoteSavesEnabled && actions.savedPlacesQuery.isError ? <View accessibilityRole="alert" style={styles.warning}><Text style={styles.warningText}>최신 저장 목록을 확인하지 못해 마지막으로 불러온 내용을 보여드려요.</Text></View> : null}
+    {resolved.missingIds.length ? <View accessibilityRole="alert" style={styles.warning}><Text style={styles.warningText}>저장한 장소 {resolved.missingIds.length}곳의 상세 정보를 불러오지 못했어요. 저장 상태는 그대로 유지했어요.</Text></View> : null}
     {resolved.places.length ? <View style={styles.controls}>
       <SavedSearchInput value={keyword} onChangeText={setKeyword} onClear={() => setKeyword("")} />
       <SavedFilterChips items={categoryItems} selected={normalizedCategory} onSelect={setCategory} />
@@ -118,6 +123,16 @@ function withObjectParticle(value: string) {
   const lastCode = value.charCodeAt(value.length - 1);
   if (lastCode >= 0xac00 && lastCode <= 0xd7a3) return `${value}${(lastCode - 0xac00) % 28 ? "을" : "를"}`;
   return `${value}을(를)`;
+}
+
+function savedPlacesLoadErrorMessage(error: unknown) {
+  if (error instanceof ApiError && error.status === 401) {
+    return "로그인이 만료됐어요. 다시 로그인한 뒤 저장한 장소를 확인해 주세요.";
+  }
+  return toUserFacingApiErrorMessage(
+    error,
+    "저장한 장소를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.",
+  );
 }
 
 const styles = StyleSheet.create({

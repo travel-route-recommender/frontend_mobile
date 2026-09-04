@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { toUserFacingApiErrorMessage } from "../../../services/userFacingApiError";
 import type { RegionOption, RegionService } from "../services/regionService";
 
 export function useTripRegionOptions(service: RegionService) {
@@ -26,7 +27,7 @@ export function useTripRegionOptions(service: RegionService) {
         keyword,
         reloadKey,
         options: [],
-        error: reason instanceof Error ? reason.message : "여행지 목록을 불러오지 못했어요.",
+        error: toUserFacingApiErrorMessage(reason, "여행지 목록을 불러오지 못했어요. 잠시 후 다시 시도해 주세요."),
       });
     });
     return () => { active = false; };

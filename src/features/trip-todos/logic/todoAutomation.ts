@@ -1,6 +1,7 @@
 import type { ItineraryItem } from "../../../domain";
 import { redactSensitiveTextPreview } from "../../../utils/sensitiveText";
 import type { DuriAnalysisCoverage, DuriReportIssue } from "../../duri/types";
+import { plainDuriUserText } from "../../duri/presentation/plainDuriUserText";
 import type { TravelDocument, TravelDocumentKind } from "../../trip-documents/types";
 import { hasScheduleRelevantChange, isValidCalendarDate } from "./tripTodoState";
 import type { TripTodoGeneratedSeed, TripTodoPriority } from "../types";
@@ -82,11 +83,11 @@ export function createDuriIssueTodoSeed(
   issue: DuriReportIssue,
   createdByUserId: string,
 ): TripTodoGeneratedSeed {
-  const evidence = issue.evidence.slice(0, 3).map((entry) => `${entry.label}: ${entry.value}`).join("\n");
+  const evidence = issue.evidence.slice(0, 3).map((entry) => `${plainDuriUserText(entry.label)}: ${plainDuriUserText(entry.value)}`).join("\n");
   return {
     tripId,
-    title: issue.title,
-    description: [issue.summary, evidence].filter(Boolean).join("\n\n"),
+    title: plainDuriUserText(issue.title),
+    description: [plainDuriUserText(issue.summary), evidence].filter(Boolean).join("\n\n"),
     priority: priorityFromDuriIssue(issue),
     assigneeUserIds: [...new Set(issue.affectedMemberIds)],
     ...(issue.date && isValidCalendarDate(issue.date) ? { due: { date: issue.date } } : {}),
@@ -238,10 +239,10 @@ function scheduleImpactReferenceSummary(
 ) {
   return [
     documents.length
-      ? `이 기기 문서: ${documents.map((document) => `${documentKindLabel[document.kind]} ${document.displayName}`).join(", ")}`
+      ? `이 기기에만 저장된 문서: ${documents.map((document) => `${documentKindLabel[document.kind]} ${document.displayName}`).join(", ")}`
       : "",
     externalReferences.length
-      ? `서버 참조: ${externalReferences.map((reference) => `${reference.sourceLabel} ${reference.label}`).join(", ")}`
+      ? `여행방 공유 자료: ${externalReferences.map((reference) => `${reference.sourceLabel} ${reference.label}`).join(", ")}`
       : "",
   ].filter(Boolean).join("\n");
 }

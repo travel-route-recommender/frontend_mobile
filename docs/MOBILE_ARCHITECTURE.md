@@ -87,7 +87,7 @@ Workspace Candidates/Schedule은 `workspaceScheduleService` 정책을 사용한�
 
 ## 딥링크
 
-scheme은 `tripmatch`다. `tripmatch://invite/:code`는 `app/invite/[code].tsx`로 받을 준비만 했다. 빈 code는 복구 가능한 오류 설명을 표시한다. 실제 조회·수락·인증 전환은 백엔드 계약 후 연결한다.
+운영 초대는 API 서버의 HTTPS App/Universal Link를 사용하고 `app/+native-intent.tsx`가 이를 `app/invite/[code].tsx`로 변환한다. `tripmatch://invite/:code` scheme은 안내 페이지와 기존 링크의 하위호환 경로로 유지한다. 초대 미리보기·기존 사용자 수락·게스트 입장과 참여 후 여행방 이동은 실제 Backend API에 연결되어 있으며, 빈 코드와 만료·교체·완료·권한 오류는 복구 가능한 상태로 표시한다.
 
 ## 출시 전 TODO
 

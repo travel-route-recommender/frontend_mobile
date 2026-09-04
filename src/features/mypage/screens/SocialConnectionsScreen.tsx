@@ -11,6 +11,10 @@ export function SocialConnectionsScreen() {
   const provider = useAuthSessionStore((state) => state.provider);
   const [linked, setLinked] = useState(provider === "kakao");
   const [error, setError] = useState<string | null>(null);
+  const leave = () => {
+    if (router.canGoBack()) router.back();
+    else router.replace("/(tabs)/mypage");
+  };
 
   const linkKakao = async () => {
     setError(null);
@@ -25,11 +29,11 @@ export function SocialConnectionsScreen() {
   if (!authCapabilities.socialIdentityLinking) {
     return (
       <Screen testID="social-connections-screen">
-        <AppHeader title="로그인 수단" subtitle="계정에 연결된 로그인 방법을 확인해요" onBack={() => router.back()} />
+        <AppHeader title="로그인 수단" subtitle="현재 계정으로 로그인한 방법을 확인해요" onBack={leave} />
         <Card style={styles.providerCard}>
-          <Text style={styles.providerName}>{provider === "kakao" ? "카카오 계정으로 로그인 중이에요." : "현재 로그인 수단을 추가할 수 없어요."}</Text>
-          <Text style={styles.noticeText}>현재 백엔드는 로그인 수단 연결 API를 제공하지 않아요.</Text>
-          <PrimaryButton label="마이페이지로 돌아가기" onPress={() => router.back()} />
+          <Text style={styles.providerName}>{provider === "kakao" ? "카카오 계정으로 로그인했어요" : "이메일로 로그인했어요"}</Text>
+          <Text style={styles.noticeText}>로그아웃한 뒤에도 같은 방법으로 다시 로그인할 수 있어요.</Text>
+          <PrimaryButton label="마이페이지로 돌아가기" onPress={leave} />
         </Card>
       </Screen>
     );
@@ -37,7 +41,7 @@ export function SocialConnectionsScreen() {
 
   return (
     <Screen testID="social-connections-screen">
-      <AppHeader title="로그인 수단" subtitle="계정에 연결된 로그인 방법을 관리해요" onBack={() => router.back()} />
+      <AppHeader title="로그인 수단" subtitle="계정에 연결된 로그인 방법을 관리해요" onBack={leave} />
       <Card style={styles.providerCard}>
         <View style={styles.providerRow}>
           <View style={styles.kakaoMark}><Text style={styles.kakaoMarkText}>K</Text></View>
@@ -50,7 +54,7 @@ export function SocialConnectionsScreen() {
           </View>
         </View>
         {linked
-          ? <PrimaryButton label="마이페이지로 돌아가기" onPress={() => router.back()} />
+          ? <PrimaryButton label="마이페이지로 돌아가기" onPress={leave} />
           : <KakaoButton testID="link-kakao-button" label="카카오 계정 연결하기" onPress={linkKakao} />}
       </Card>
       <AuthErrorBanner message={error} />

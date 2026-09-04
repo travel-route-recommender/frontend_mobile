@@ -22,12 +22,18 @@ export function getWorkspaceModalHeightBounds(
   topInset = 0,
   bottomInset = 0,
 ): WorkspaceModalHeightBounds {
-  const availableHeight = Math.max(
+  const safeViewportHeight = Math.max(
     finiteNonNegative(viewportHeight)
       - finiteNonNegative(topInset)
-      - finiteNonNegative(bottomInset)
-      - WORKSPACE_MODAL_TOP_GAP_PX,
-    WORKSPACE_MODAL_MIN_AVAILABLE_HEIGHT_PX,
+      - finiteNonNegative(bottomInset),
+    0,
+  );
+  const availableHeight = Math.min(
+    safeViewportHeight,
+    Math.max(
+      safeViewportHeight - WORKSPACE_MODAL_TOP_GAP_PX,
+      Math.min(WORKSPACE_MODAL_MIN_AVAILABLE_HEIGHT_PX, safeViewportHeight),
+    ),
   );
   const minHeight = Math.min(WORKSPACE_MODAL_MIN_HEIGHT_PX, availableHeight);
   return { minHeight, maxHeight: Math.max(minHeight, availableHeight) };

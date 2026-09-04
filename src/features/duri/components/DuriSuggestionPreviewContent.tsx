@@ -6,6 +6,7 @@ import { colors, radius, shadows, sizes, spacing, typography } from "../../../th
 import { formatDayLabel } from "../../../utils/formatters";
 import { getEndTime } from "../../../utils/schedule";
 import { getChangedSuggestionItems } from "../presentation/duriPresentation";
+import { plainDuriUserText } from "../presentation/plainDuriUserText";
 import type { DuriAnalysisSession, DuriSuggestionPreview, ScheduleDiffItem } from "../types";
 import { DuriKoreanText } from "./DuriKoreanText";
 import { DuriPlanningIllustration } from "./DuriPlanningIllustration";
@@ -40,11 +41,13 @@ export function DuriSuggestionPreviewContent({
   const compactHero = width <= 360;
   const [compareOpen, setCompareOpen] = useState(false);
   const changedItems = useMemo(() => getChangedSuggestionItems(preview), [preview]);
+  const title = plainDuriUserText(suggestion.title);
+  const summary = plainDuriUserText(suggestion.summary);
 
   return <View style={styles.content}>
-    <View accessibilityLabel={`개선 제안. ${suggestion.title}. ${suggestion.summary}`} style={styles.hero}>
+    <View accessibilityLabel={`개선 제안. ${title}. ${summary}`} style={styles.hero}>
       <DuriPlanningIllustration compact={compactHero} variant="suggestion" />
-      <View style={styles.heroCopy}><Text style={styles.eyebrow}>DURI SUGGESTION</Text><DuriKoreanText style={styles.heroTitle}>{suggestion.title}</DuriKoreanText><DuriKoreanText style={styles.heroText}>{suggestion.summary}</DuriKoreanText></View>
+      <View style={styles.heroCopy}><Text style={styles.eyebrow}>두리의 일정 제안</Text><DuriKoreanText style={styles.heroTitle}>{title}</DuriKoreanText><DuriKoreanText style={styles.heroText}>{summary}</DuriKoreanText></View>
     </View>
 
     <View style={styles.section}>
@@ -55,16 +58,21 @@ export function DuriSuggestionPreviewContent({
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>왜 바꾸나요?</Text>
       <View style={styles.reasonCard}>
-        <View style={styles.reasonRow}><View style={[styles.reasonIcon, styles.lavenderSoft]}><Text style={styles.lavenderText}>✦</Text></View><DuriKoreanText style={styles.reasonText}>{suggestion.reason}</DuriKoreanText></View>
-        {sourceIssueTitles.map((title) => <View key={title} style={[styles.reasonRow, styles.reasonDivider]}><View style={[styles.reasonIcon, styles.peachSoft]}><Text style={styles.peachText}>!</Text></View><DuriKoreanText style={styles.reasonText}>{title}</DuriKoreanText></View>)}
+        <View style={styles.reasonRow}><View style={[styles.reasonIcon, styles.lavenderSoft]}><Text style={styles.lavenderText}>✦</Text></View><DuriKoreanText style={styles.reasonText}>{plainDuriUserText(suggestion.reason)}</DuriKoreanText></View>
+        {sourceIssueTitles.map((issueTitle) => <View key={issueTitle} style={[styles.reasonRow, styles.reasonDivider]}><View style={[styles.reasonIcon, styles.peachSoft]}><Text style={styles.peachText}>!</Text></View><DuriKoreanText style={styles.reasonText}>{plainDuriUserText(issueTitle)}</DuriKoreanText></View>)}
       </View>
     </View>
+
+    {suggestion.reviewWarnings?.length ? <View accessibilityRole="alert" style={styles.reviewWarning}>
+      <Text style={styles.reviewWarningTitle}>적용 전에 직접 확인해 주세요</Text>
+      {suggestion.reviewWarnings.map((warning) => <DuriKoreanText key={warning} style={styles.reviewWarningText}>• {plainDuriUserText(warning)}</DuriKoreanText>)}
+    </View> : null}
 
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>기대 효과</Text>
       {preview.impact.metrics.length ? <View style={styles.effects}>{preview.impact.metrics.map((metric) => <View key={metric.id} style={styles.effect}>
         <Text style={styles.effectLabel}>{metric.label}</Text><View style={styles.effectValues}><Text style={styles.effectBefore}>{metric.before}{metric.unit}</Text><Text style={styles.effectArrow}>→</Text><Text style={styles.effectAfter}>{metric.after}{metric.unit}</Text></View>
-      </View>)}</View> : <View style={styles.noEffect}><Text style={styles.noEffectTitle}>계산 가능한 숫자 변화가 없어요</Text><Text style={styles.noEffectText}>만족도나 이동 효과처럼 계산하지 않은 값은 표시하지 않아요.</Text></View>}
+      </View>)}</View> : <View style={styles.noEffect}><Text style={styles.noEffectTitle}>숫자로 비교할 변화는 없어요</Text><Text style={styles.noEffectText}>확인하지 않은 만족도나 이동 효과는 추측해서 표시하지 않아요.</Text></View>}
     </View>
 
     <View style={styles.section}>
@@ -144,6 +152,9 @@ const styles = StyleSheet.create({
   safety: { gap: spacing.xs, borderRadius: radius.md, backgroundColor: "#F2F8FF", padding: spacing.md },
   safetyTitle: { ...typography.bodyStrong, color: colors.primary },
   safetyText: { ...typography.caption, color: "#60719B" },
+  reviewWarning: { gap: spacing.xs, borderRadius: radius.md, borderWidth: 1, borderColor: "#F1C98E", backgroundColor: colors.warningSoft, padding: spacing.md },
+  reviewWarningTitle: { ...typography.bodyStrong, color: colors.warning },
+  reviewWarningText: { ...typography.caption, color: colors.textSecondary },
   pressed: { opacity: 0.72 },
   lavenderSoft: { backgroundColor: "#F0EDFF" },
   lavenderText: { color: "#735BC4", fontWeight: "900" },

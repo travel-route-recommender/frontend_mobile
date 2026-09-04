@@ -69,6 +69,10 @@ export function PersonalResultScreen() {
   );
 
   const backDestination = sessionKind === "anonymous" ? "/(tabs)/home" : "/(tabs)/mypage";
+  const leave = () => {
+    if (router.canGoBack()) router.back();
+    else router.replace(backDestination);
+  };
   const restart = () => {
     if (!owner) { setRestartVisible(false); router.replace("/(auth)/login"); return; }
     startTest(owner);
@@ -77,12 +81,12 @@ export function PersonalResultScreen() {
   };
 
   if (apiMode && !sessionUserId) return <Screen><ErrorState message="현재 로그인 사용자를 확인할 수 없어요." onRetry={() => router.replace("/(auth)/login")} /></Screen>;
-  if (apiMode && apiPreferenceProfile.isPending) return <Screen><LoadingState label="서버에 저장된 여행 성향을 확인하고 있어요" /></Screen>;
-  if (apiMode && apiPreferenceProfile.isError) return <Screen><ErrorState message="여행 성향을 불러오지 못했어요. 완료 상태를 임의로 바꾸지 않았습니다." onRetry={() => { void apiPreferenceProfile.refetch(); }} /></Screen>;
+  if (apiMode && apiPreferenceProfile.isPending) return <Screen><LoadingState label="저장된 여행 성향을 확인하고 있어요" /></Screen>;
+  if (apiMode && apiPreferenceProfile.isError) return <Screen><ErrorState message="여행 성향을 불러오지 못했어요. 이전 결과는 그대로 유지했어요." onRetry={() => { void apiPreferenceProfile.refetch(); }} /></Screen>;
 
   if (!presentation) return <Screen
     backgroundColor={colors.surface}
-    header={<PreferenceFlowHeader onBack={() => router.back()} />}
+    header={<PreferenceFlowHeader onBack={leave} />}
   >
     <EmptyState title="아직 여행 성향 테스트를 완료하지 않았어요" description={sessionKind === "anonymous" ? "체험 결과는 앱을 다시 시작하면 사라질 수 있어요. 테스트를 완료해 결과를 확인해 보세요." : "모든 문항을 완료하면 저장된 결과를 이곳에서 다시 볼 수 있어요."} ctaLabel="테스트 시작" onPress={() => router.replace("/tests/personal")} />
   </Screen>;
@@ -106,10 +110,10 @@ export function PersonalResultScreen() {
       >
         <View style={styles.detailIcon}><Text style={styles.detailIconText}>≡</Text></View>
         <View style={styles.detailCopy}>
-          <Text style={styles.detailTitle}>{apiMode ? "서버에 저장된 여행 기준" : "내가 선택한 여행 기준"}</Text>
+          <Text style={styles.detailTitle}>{apiMode ? "계정에 저장된 여행 기준" : "내가 선택한 여행 기준"}</Text>
           <Text style={styles.detailMeta}>{serverProfile?.completedAt
             ? formatPreferenceCompletedAt(serverProfile.completedAt)
-            : result?.completedAt ? formatPreferenceCompletedAt(result.completedAt) : "서버의 최신 결과"}</Text>
+            : result?.completedAt ? formatPreferenceCompletedAt(result.completedAt) : "최근 완료한 결과"}</Text>
         </View>
         <Text style={styles.detailAction}>{detailsVisible ? "닫기" : "전체 보기"} ›</Text>
       </Pressable>
@@ -133,16 +137,19 @@ export function PersonalResultScreen() {
           })}</Card>
         </> : <ServerPreferenceDetails profile={serverProfile!} />}
         {sessionKind === "anonymous" ? <View style={styles.anonymousNotice}><Text style={styles.anonymousTitle}>체험 결과는 영구 저장되지 않아요</Text><DuriKoreanText style={styles.noticeBody}>로그인하거나 가입한 뒤 테스트를 완료하면 새 결과를 여행방의 동행자 성향 비교에 활용할 수 있어요. 현재 체험 결과는 자동 이전되지 않아요.</DuriKoreanText></View> : null}
-        {sessionKind === "guest" ? <View style={styles.guestNotice}><Text style={styles.guestTitle}>게스트 결과로 저장됐어요</Text><DuriKoreanText style={styles.noticeBody}>현재 초대 계정에서 확인할 수 있어요. 정식 계정으로 결과를 옮기는 기능은 아직 제공하지 않아요.</DuriKoreanText></View> : null}
+        {sessionKind === "guest" ? <View style={styles.guestNotice}><Text style={styles.guestTitle}>게스트 결과로 저장됐어요</Text><DuriKoreanText style={styles.noticeBody}>현재 초대 계정으로 다시 접속하면 이 결과를 확인할 수 있어요. 새 회원 계정을 만들더라도 게스트 여행과 검사 결과는 현재 초대 계정에 그대로 유지돼요.</DuriKoreanText></View> : null}
         {sessionKind !== "anonymous" && sessionUserId !== domainUserId ? <Pressable accessibilityRole="button" onPress={() => router.replace("/")}><Text style={styles.sessionWarning}>사용자 상태 다시 확인하기</Text></Pressable> : null}
       </View> : null}
     </View>
 
     <View style={styles.actionSection}>
       <Text style={styles.sectionTitle}>다음 여행 이어가기</Text>
-      {sessionKind === "member" ? <>
+      {sessionKind === "member" && environment.dataSource === "mock" ? <>
         <PrimaryButton label="친구와 궁합 보기" onPress={() => router.push("/tests/compatibility")} />
         <SecondaryButton label="홈으로 이동" onPress={() => router.replace("/(tabs)/home")} />
+      </> : sessionKind === "member" ? <>
+        <PrimaryButton label="홈으로 이동" onPress={() => router.replace("/(tabs)/home")} />
+        <SecondaryButton label="마이페이지로 이동" onPress={() => router.replace("/(tabs)/mypage")} />
       </> : sessionKind === "anonymous" ? <>
         <PrimaryButton label="로그인하고 결과 저장하기" onPress={() => router.push("/(auth)/login")} />
         <SecondaryButton label="회원가입" onPress={() => router.push("/(auth)/signup-choice")} />
@@ -165,7 +172,7 @@ function ServerPreferenceDetails({ profile }: { profile: ApiPreferenceProfile })
     { key: "challenge", label: "새로운 경험 선호도", value: profile.axes.challenging },
   ] : [];
   return <>
-    <Text style={styles.detailCaption}>서버가 보관한 최신 결과를 표시해요. 다른 기기에서 완료한 설문의 개별 선택지는 내려오지 않아, 서버가 계산한 성향 축과 유형만 보여드려요.</Text>
+    <Text style={styles.detailCaption}>계정에 저장된 최신 성향 축과 여행 유형을 표시해요. 설문에서 고른 개별 선택지는 이 화면에서 다시 보여드리지 않아요.</Text>
     {rows.length ? <Card style={styles.serverAxesCard}>{rows.map((row, index) => <View key={row.key}>
       <View style={styles.serverAxisRow}>
         <View style={styles.serverAxisHeading}><Text style={styles.dimension}>{row.label}</Text><Text style={styles.serverAxisValue}>{Math.round(row.value)} / 100</Text></View>
@@ -174,7 +181,7 @@ function ServerPreferenceDetails({ profile }: { profile: ApiPreferenceProfile })
         </View>
       </View>
       {index < rows.length - 1 ? <View style={styles.divider} /> : null}
-    </View>)}</Card> : <Card><Text style={styles.detailCaption}>서버에 유형과 태그는 저장되어 있지만 세부 성향 축은 제공되지 않았어요.</Text></Card>}
+    </View>)}</Card> : <Card><Text style={styles.detailCaption}>이 검사 결과에는 여행 유형과 태그만 저장되어 있어요. 세부 성향 점수가 필요한 경우 테스트를 다시 완료해 주세요.</Text></Card>}
   </>;
 }
 

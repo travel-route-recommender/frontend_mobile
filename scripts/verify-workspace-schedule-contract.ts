@@ -617,7 +617,7 @@ assert(apiTimeImpacts.length === 1
   && apiTimeImpacts[0]?.serverTickets.length === 1
   && apiTimeImpacts[0]?.localDocuments.length === 1,
 "27a. API 시각 변경에서 서버 티켓과 중복 제거한 로컬 문서 연관성을 함께 탐지");
-assert(describeApiWorkspaceScheduleReservationImpacts(apiTimeImpacts).includes("서버 티켓 1개")
+assert(describeApiWorkspaceScheduleReservationImpacts(apiTimeImpacts).includes("공유 티켓 1개")
   && ticketRemovalItemIdsFromImpacts(apiTimeImpacts).length === 0,
 "27b. 비삭제 변경은 사용자에게 알리되 Backend 티켓 삭제 확인으로 오인하지 않음");
 const apiDeleteImpacts = findApiWorkspaceScheduleReservationImpacts({
@@ -678,7 +678,7 @@ const reservationOnlyImpacts = findApiWorkspaceScheduleReservationImpacts({
   localDocuments: [],
 });
 assert(reservationOnlyImpacts[0]?.serverReservation?.id === "res-impact"
-  && describeApiWorkspaceScheduleReservationImpacts(reservationOnlyImpacts).includes("서버 예약 unconfirmed"),
+  && describeApiWorkspaceScheduleReservationImpacts(reservationOnlyImpacts).includes("예약 미확정"),
 "27g. 티켓이 없어도 서버 예약이 연결된 일정 변경을 공유 TODO 영향으로 탐지");
 
 class FakeApiClient implements ApiClient {

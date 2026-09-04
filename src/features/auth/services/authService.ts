@@ -1,4 +1,5 @@
 import type { User } from "../../../domain";
+import { environment } from "../../../config/environment";
 import { ApiError, ApiNetworkError, apiClient, configureApiAuth } from "../../../services/apiClient";
 import { createRequestId } from "../../../services/clientMetadata";
 import { nativeTokenStorage } from "../../../services/tokenStorage";
@@ -72,10 +73,13 @@ export interface AuthService {
 let sessionInvalidatedHandler: (() => void) | undefined;
 
 const usingNativePlatform = process.env.EXPO_OS === "android" || process.env.EXPO_OS === "ios";
+const googleNativeConfigured = Boolean(environment.googleWebClientId?.trim())
+  && (process.env.EXPO_OS !== "ios" || Boolean(environment.googleIosClientId?.trim()));
+const kakaoNativeConfigured = Boolean(environment.kakaoNativeAppKey?.trim());
 
 export const authCapabilities = {
-  googleLogin: supportsBackendSocialProvider("google") && usingNativePlatform,
-  kakaoLogin: supportsBackendSocialProvider("kakao") && usingNativePlatform,
+  googleLogin: supportsBackendSocialProvider("google") && usingNativePlatform && googleNativeConfigured,
+  kakaoLogin: supportsBackendSocialProvider("kakao") && usingNativePlatform && kakaoNativeConfigured,
   socialIdentityLinking: backendAuthCapabilities.socialIdentityLinking,
   guestUpgrade: backendAuthCapabilities.guestUpgrade,
   accountDeletion: backendAuthCapabilities.accountDeletion,
@@ -129,7 +133,7 @@ function failure(error: unknown): AuthFailure {
     if (["ROOM_CLOSED", "ROOM_NOT_ONGOING", "INVITE_ROOM_CLOSED"].includes(error.code ?? "")) return { status: "error", code: "room-unavailable", message: "이미 종료된 여행방이라 참여할 수 없어요." };
     if (error.code === "ROOM_FULL") return { status: "error", code: "room-full", message: "여행방 참여 인원이 가득 찼어요." };
     if (error.code === "INVITE_RATE_LIMITED" || error.status === 429) return { status: "error", code: "rate-limited", message: "요청을 너무 많이 보냈어요. 잠시 후 다시 시도해 주세요." };
-    if (error.code === "ACCOUNT_LINK_REQUIRED" || error.code === "ACCOUNT_MERGE_REQUIRED") return { status: "error", code: "account-link-required", message: "같은 이메일의 기존 계정이 있어요. 기존 방식으로 로그인한 뒤 소셜 계정을 연결해 주세요." };
+    if (error.code === "ACCOUNT_LINK_REQUIRED" || error.code === "ACCOUNT_MERGE_REQUIRED") return { status: "error", code: "account-link-required", message: "같은 이메일로 만든 계정이 있어요. 처음 가입할 때 사용한 방식으로 로그인해 주세요." };
     if (error.status === 409) return { status: "error", code: "account-exists", message: "이미 가입된 이메일이거나 다른 계정에 연결된 정보예요." };
     if (error.status === 401) return { status: "error", code: "invalid-credentials", message: "이메일 또는 비밀번호가 올바르지 않아요." };
     return { status: "error", code: "unknown", message: toKoreanAuthErrorMessage(error) };
@@ -273,7 +277,7 @@ class ApiAuthService implements AuthService {
 
   async loginWithSocial(provider: SocialProvider): Promise<AuthResult> {
     if (!supportsBackendSocialProvider(provider)) {
-      return { status: "error", code: "provider-unavailable", message: "현재 백엔드는 Google 로그인을 지원하지 않아요." };
+      return { status: "error", code: "provider-unavailable", message: "현재 Google 로그인을 이용할 수 없어요. 다른 로그인 방법을 선택해 주세요." };
     }
     try {
       this.cancelInFlightRefresh();
@@ -287,11 +291,11 @@ class ApiAuthService implements AuthService {
   }
 
   async linkSocialIdentity(provider: SocialProvider): Promise<SocialLinkResult> {
-    return { status: "error", code: "contract-unavailable", message: "현재 백엔드는 로그인 수단 연결을 지원하지 않아요." };
+    return { status: "error", code: "contract-unavailable", message: "현재 로그인 수단을 추가로 연결할 수 없어요." };
   }
 
   async upgradeGuestWithPassword(_input: GuestUpgradeInput): Promise<AuthResult> {
-    return { status: "error", code: "contract-unavailable", message: "현재 백엔드는 게스트 계정 업그레이드를 지원하지 않아요." };
+    return { status: "error", code: "contract-unavailable", message: "현재 계정을 전환할 수 없어요. 이메일로 새 계정을 만들어 주세요." };
   }
 
   async hasStoredSession() {
@@ -314,7 +318,7 @@ class ApiAuthService implements AuthService {
 
   async deleteAccount(password?: string) {
     void password;
-    throw new Error("현재 백엔드는 계정 삭제를 지원하지 않아요.");
+    throw new Error("현재 앱에서 계정을 삭제할 수 없어요. 고객지원에 삭제를 요청해 주세요.");
   }
 
   async logout() {
@@ -382,7 +386,7 @@ class ApiAuthService implements AuthService {
           auth: false,
           retryUnauthorized: false,
           signal: attemptSignal.signal,
-          body: createRefreshRequestBody(pending.refreshToken),
+          body: createRefreshRequestBody(pending.refreshToken, pending.operationId),
         });
         if (signal.aborted || generation !== this.sessionGeneration) throw createAbortError();
         // R1과 pending 제거를 한 SecureStore 값으로 기록한 다음 A1을 메모리에 활성화한다.

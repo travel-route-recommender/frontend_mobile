@@ -11,6 +11,7 @@ import { Screen } from "../../../components/common";
 import { environment } from "../../../config/environment";
 import { colors, radius, shadows, spacing, typography } from "../../../theme/tokens";
 import { queryKeys } from "../../../query/keys";
+import { toUserFacingApiErrorMessage } from "../../../services/userFacingApiError";
 import { useDuriStore } from "../../../store/useDuriStore";
 import type { Place, Region } from "../../../domain";
 import { placeRepository } from "../../places/services/placeDataPolicy";
@@ -805,7 +806,7 @@ export function ExploreScreen() {
   const listEmptyComponent = placeRepository.remoteEnabled && backendPlacesQuery.isLoading
     ? <LoadingState label={`${activeRegionLabel || "선택 지역"} 여행지를 불러오는 중이에요.`} />
     : placeRepository.remoteEnabled && backendPlacesQuery.isError
-      ? <ErrorState message={backendPlacesQuery.error instanceof Error ? backendPlacesQuery.error.message : "백엔드 장소 데이터를 불러오지 못했어요."} onRetry={() => { void backendPlacesQuery.refetch(); }} />
+      ? <ErrorState message={toUserFacingApiErrorMessage(backendPlacesQuery.error, "장소를 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.")} onRetry={() => { void backendPlacesQuery.refetch(); }} />
       : <EmptyState title="검색 결과가 없어요" description="검색어나 지역, 카테고리 조건을 바꿔 다시 찾아보세요." ctaLabel="조건 초기화" onPress={resetFilters} />;
 
   const searchHeader = <View style={[styles.fixedSearchHeader, hasRegionContext && isMapMode && styles.fixedSearchHeaderMapOverlay]}>

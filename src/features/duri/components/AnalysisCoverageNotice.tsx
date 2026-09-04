@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
+import { plainDuriUserText } from "../presentation/plainDuriUserText";
 import type { DuriAnalysisCoverage } from "../types";
 
 const coverageLabel = { insufficient: "확인 정보 부족", partial: "확인된 만큼 반영", complete: "모두 확인", unavailable: "확인하지 못함", available: "확인 완료" } as const;
@@ -14,11 +15,11 @@ export function AnalysisCoverageNotice({ coverage }: { coverage: DuriAnalysisCov
     <View style={styles.summary}><Text style={styles.subtitle}>이번 분석에서 확인하지 못한 범위</Text><Text style={styles.description}>{coverage.limitations.length ? `${coverage.limitations.length}가지가 있어요. 이 항목은 문제가 없다는 뜻이 아니라 아직 판단하지 않았다는 뜻이에요.` : "현재 표시할 추가 한계가 없어요."}</Text></View>
     <Pressable accessibilityRole="button" accessibilityState={{ expanded }} onPress={() => setExpanded((value) => !value)} style={({ pressed }) => [styles.expand, pressed && styles.pressed]}><Text style={styles.expandText}>{expanded ? "정보 범위 접기" : "정보 범위 자세히 보기"}</Text></Pressable>
     {expanded ? <View style={styles.details}>
-      <EvidenceMessage title="이동 경로" value={coverage.routeMessage} />
-      <EvidenceMessage title="운영·휴무" value={coverage.operatingMessage} />
-      <EvidenceMessage title="관광 혼잡" value={coverage.congestionMessage} />
-      <EvidenceMessage title="예약·문서" value={coverage.documentMessage} />
-      {coverage.limitations.length ? <View style={styles.limitations}><Text style={styles.subtitle}>현재 판단하지 않은 내용</Text>{coverage.limitations.map((limitation, index) => <Text key={`${index}-${limitation}`} style={styles.description}>· {limitation}</Text>)}</View> : null}
+      <EvidenceMessage title="이동 경로" value={plainDuriUserText(coverage.routeMessage)} />
+      <EvidenceMessage title="운영·휴무" value={plainDuriUserText(coverage.operatingMessage)} />
+      <EvidenceMessage title="관광 혼잡" value={plainDuriUserText(coverage.congestionMessage)} />
+      <EvidenceMessage title="예약·문서" value={plainDuriUserText(coverage.documentMessage)} />
+      {coverage.limitations.length ? <View style={styles.limitations}><Text style={styles.subtitle}>현재 판단하지 않은 내용</Text>{coverage.limitations.map((limitation, index) => <Text key={`${index}-${limitation}`} style={styles.description}>· {plainDuriUserText(limitation)}</Text>)}</View> : null}
     </View> : null}
   </View>;
 }

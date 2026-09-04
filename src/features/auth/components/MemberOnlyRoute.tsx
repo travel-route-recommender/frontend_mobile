@@ -1,11 +1,12 @@
 import type { PropsWithChildren } from "react";
-import { Redirect, router, usePathname } from "expo-router";
+import { Redirect, router, useGlobalSearchParams, usePathname } from "expo-router";
 import { StyleSheet, Text, View } from "react-native";
 import { PrimaryButton, Screen, SecondaryButton } from "../../../components/common";
 import { colors, spacing, typography } from "../../../theme/tokens";
 import type { RestrictedFeature } from "../services/guestAccessPolicy";
 import { restrictedFeatureMessage } from "../services/guestAccessPolicy";
 import { authCapabilities } from "../services/authService";
+import { buildAuthReturnPath } from "../services/inviteFlowPolicy";
 import { useAuthSessionStore } from "../store/useAuthSessionStore";
 
 type MemberOnlyRouteProps = PropsWithChildren<{
@@ -15,11 +16,12 @@ type MemberOnlyRouteProps = PropsWithChildren<{
 
 export function MemberOnlyRoute({ children, feature, title = "회원 전용 화면이에요" }: MemberOnlyRouteProps) {
   const pathname = usePathname();
+  const searchParams = useGlobalSearchParams();
   const sessionKind = useAuthSessionStore((state) => state.sessionKind);
 
   if (sessionKind === "member") return children;
   if (sessionKind !== "guest") {
-    return <Redirect href={{ pathname: "/(auth)/login", params: { returnTo: pathname } }} />;
+    return <Redirect href={{ pathname: "/(auth)/login", params: { returnTo: buildAuthReturnPath(pathname, searchParams) } }} />;
   }
 
   const leave = () => {

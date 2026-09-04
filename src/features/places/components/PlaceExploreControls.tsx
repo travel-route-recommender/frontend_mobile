@@ -421,7 +421,7 @@ function ExploreFilterSheetContent({
                   </View> : null}
                   {draftClassifications.length ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.selectedClassificationList}>{draftClassifications.map((selection) => <Pressable key={selection.value} accessibilityRole="button" accessibilityLabel={`${selection.label} 태그 선택 해제`} onPress={() => removeClassification(selection.value)} style={styles.selectedClassificationChip}><Text numberOfLines={1} style={styles.selectedClassificationText}>{selection.label}</Text><Text style={styles.selectedClassificationRemove}>×</Text></Pressable>)}</ScrollView> : null}
                 </View> : null}
-              </> : <Text style={styles.caption}>백엔드 분류체계 메타가 연결되면 자연, 역사, 카페, 캠핑처럼 더 세부적으로 고를 수 있어요.</Text>}
+              </> : <Text style={styles.caption}>세부 분류를 불러오지 못해 주요 카테고리만 보여드려요.</Text>}
             </View>
             {festivalSelected ? <View style={styles.eventDatePanel}>
               <Text style={styles.filterTitle}>행사 날짜</Text>

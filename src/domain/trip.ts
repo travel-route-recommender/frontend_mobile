@@ -10,6 +10,11 @@ export type TripEndConditionType = "train" | "intercity-bus" | "rental-car-retur
 export type TripLocation = {
   name: string;
   address?: string;
+  lat?: number;
+  lng?: number;
+  placeId?: string;
+  externalId?: string;
+  source?: "tour" | "kakao" | "manual";
 };
 
 export type TripEndCondition = {

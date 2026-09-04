@@ -1,10 +1,13 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { Image, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useQuery } from "@tanstack/react-query";
 import type { Place, TripRoom } from "../../../domain";
 import { Avatar, RemoteImage } from "../../../components/common";
 import { environment } from "../../../config/environment";
+import { queryKeys } from "../../../query/keys";
+import { toUserFacingApiErrorMessage } from "../../../services/userFacingApiError";
 import { useDuriStore } from "../../../store/useDuriStore";
 import { formatTripDateRange, formatTripStatus } from "../../../utils/formatters";
 import { colors, radius, shadows, spacing, typography } from "../../../theme/tokens";
@@ -12,6 +15,8 @@ import { DuriLogo } from "../../auth/components/DuriLogo";
 import { useMemberGate } from "../../auth/hooks/useMemberGate";
 import { useAuthSessionStore } from "../../auth/store/useAuthSessionStore";
 import { usePlaceActions } from "../../places/hooks/usePlaceActions";
+import { placeRepository } from "../../places/services/placeDataPolicy";
+import { searchBackendPlacePage } from "../../places/services/placeApi";
 import { selectRoomPreferenceResponseSummary } from "../../trips/selectors";
 import { useApiTripListQuery } from "../../trips/useApiTripListQuery";
 import type { TripRoomCardViewModel } from "../../trips/types";
@@ -35,6 +40,13 @@ export function HomeScreen() {
   const placeActions = usePlaceActions();
   const apiMode = environment.dataSource === "api";
   const apiTripsQuery = useApiTripListQuery(currentSessionUserId, apiMode && sessionKind !== "anonymous");
+  const upsertPlaces = useDuriStore((store) => store.upsertPlaces);
+  const recommendedPlacesQuery = useQuery({
+    queryKey: queryKeys.places.search({ surface: "home-recommendations", page: 1, limit: 4 }),
+    queryFn: ({ signal }) => searchBackendPlacePage({ page: 1, limit: 4, signal }),
+    enabled: placeRepository.remoteEnabled,
+    staleTime: 10 * 60 * 1000,
+  });
   const user = sessionKind === "anonymous" ? undefined : state.usersById[state.currentUserId];
   const tripCardWidth = Math.max(252, width - 96);
   const createCardWidth = Math.max(84, Math.min(96, width * 0.23));
@@ -57,12 +69,18 @@ export function HomeScreen() {
   const activeTripId = apiMode ? activeApiTrip?.id : activeTrip?.id;
 
   const recommendedPlaces = useMemo(() => {
+    if (placeRepository.remoteEnabled) return recommendedPlacesQuery.data?.places ?? [];
     const places = Object.values(state.placesById);
-    if (apiMode || !activeTrip) return places.slice(0, 4);
+    if (!activeTrip) return places.slice(0, 4);
     const nearby = places.filter((place) => place.regionId === activeTrip.regionId);
     const elsewhere = places.filter((place) => place.regionId !== activeTrip.regionId);
     return [...nearby, ...elsewhere].slice(0, 4);
-  }, [activeTrip, apiMode, state.placesById]);
+  }, [activeTrip, recommendedPlacesQuery.data?.places, state.placesById]);
+
+  useEffect(() => {
+    const places = recommendedPlacesQuery.data?.places ?? [];
+    if (places.length) upsertPlaces(places);
+  }, [recommendedPlacesQuery.data?.places, upsertPlaces]);
 
   const createTrip = () => requireMember(() => router.push("/trips/new"), "여행방 만들기");
   const openDuri = () => {
@@ -87,11 +105,11 @@ export function HomeScreen() {
         />
 
         {apiMode && apiTripsQuery.isLoading ? (
-          <HomeTripStatusCard title="여행을 불러오고 있어요" description="여행 탭과 같은 서버 목록을 확인하고 있어요." />
+          <HomeTripStatusCard title="여행을 불러오고 있어요" description="내 여행 목록을 확인하고 있어요." />
         ) : apiMode && apiTripsQuery.error && !apiTripsQuery.data ? (
           <HomeTripStatusCard
             title="여행을 불러오지 못했어요"
-            description={apiTripsQuery.error instanceof Error ? apiTripsQuery.error.message : "서버 여행방 목록을 다시 확인해 주세요."}
+            description={toUserFacingApiErrorMessage(apiTripsQuery.error, "인터넷 연결을 확인한 뒤 다시 시도해 주세요.")}
             actionLabel="다시 불러오기"
             onAction={() => void apiTripsQuery.refetch()}
           />
@@ -129,18 +147,31 @@ export function HomeScreen() {
 
         <HomeSectionHeader icon="♥" title="추천 장소" actionLabel="더 보기  ›" onAction={() => router.push("/(tabs)/explore")} />
 
-        <View style={styles.placeList}>
-          {recommendedPlaces.map((place) => (
-            <CompactPlaceRow
-              key={place.id}
-              place={place}
-              regionName={state.regionsById[place.regionId]?.name ?? "지역 정보 없음"}
-              saved={sessionKind !== "anonymous" && (state.savedPlaceIdsByUserId[state.currentUserId] ?? []).includes(place.id)}
-              onOpen={() => router.push({ pathname: "/places/[placeId]", params: { placeId: place.id } })}
-              onToggleSaved={() => placeActions.toggleSaved(place.id)}
-            />
-          ))}
-        </View>
+        {placeRepository.remoteEnabled && recommendedPlacesQuery.isPending ? (
+          <HomeTripStatusCard title="추천 장소를 찾고 있어요" description="지금 둘러보기 좋은 장소를 확인하고 있어요." />
+        ) : placeRepository.remoteEnabled && recommendedPlacesQuery.isError ? (
+          <HomeTripStatusCard
+            title="추천 장소를 불러오지 못했어요"
+            description="잠시 뒤 다시 시도하거나 탐색에서 원하는 지역을 찾아보세요."
+            actionLabel="다시 불러오기"
+            onAction={() => void recommendedPlacesQuery.refetch()}
+          />
+        ) : recommendedPlaces.length ? (
+          <View style={styles.placeList}>
+            {recommendedPlaces.map((place) => (
+              <CompactPlaceRow
+                key={place.id}
+                place={place}
+                regionName={placeActions.source.regionsById[place.regionId]?.name ?? place.address.split(" ")[0] ?? "지역 정보 없음"}
+                saved={sessionKind !== "anonymous" && (placeActions.source.savedPlaceIdsByUserId[placeActions.source.currentUserId] ?? []).includes(place.id)}
+                onOpen={() => router.push({ pathname: "/places/[placeId]", params: { placeId: place.id } })}
+                onToggleSaved={() => placeActions.toggleSaved(place.id)}
+              />
+            ))}
+          </View>
+        ) : (
+          <HomeTripStatusCard title="추천할 장소를 찾지 못했어요" description="탐색에서 지역과 카테고리를 선택해 원하는 장소를 찾아보세요." />
+        )}
       </ScrollView>
       {memberGatePrompt}
       {placeActions.memberGatePrompt}

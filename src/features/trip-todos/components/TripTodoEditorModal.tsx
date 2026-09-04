@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { PrimaryButton, SecondaryButton, TextField } from "../../../components/common";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
@@ -79,6 +79,7 @@ export function TripTodoEditorModal({ visible, initialTodo, initialDraft, member
   };
 
   return <Modal visible={visible} transparent animationType="slide" navigationBarTranslucent statusBarTranslucent onRequestClose={onClose}>
+    <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : Platform.OS === "android" ? "height" : undefined} style={styles.keyboardAvoider}>
     <View style={styles.overlay}>
       <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.safeArea}>
         <Pressable accessibilityRole="button" accessibilityLabel="TODO 편집 닫기" onPress={onClose} style={StyleSheet.absoluteFill} />
@@ -98,7 +99,7 @@ export function TripTodoEditorModal({ visible, initialTodo, initialDraft, member
               <View style={styles.fieldFlex}><TextField label="마감 시간" value={draft.dueTime} onChangeText={(value) => update("dueTime", value)} placeholder="HH:mm (선택)" keyboardType="numbers-and-punctuation" maxLength={5} error={errors.dueTime} /></View>
             </View>
             {suggestedDates.length ? <FieldGroup label="빠른 날짜 선택"><ChoiceRow>{suggestedDates.map((option) => <Choice key={option.id} label={option.label} selected={draft.dueDate === option.id} onPress={() => update("dueDate", option.id)} />)}<Choice label="날짜 없음" selected={!draft.dueDate} onPress={() => { update("dueDate", ""); update("dueTime", ""); update("reminderMinutesBefore", undefined); }} /></ChoiceRow></FieldGroup> : null}
-            <FieldGroup label="미리 알림 (인앱)"><ChoiceRow>{reminderOptions.map((option) => <Choice key={option.label} label={option.label} selected={draft.reminderMinutesBefore === option.value} onPress={() => update("reminderMinutesBefore", option.value)} />)}</ChoiceRow>{errors.reminder ? <Text style={styles.error}>{errors.reminder}</Text> : <Text style={styles.helper}>현재는 여행방을 열었을 때 강조해 줍니다. OS 푸시 알림은 서버·알림 권한 연동이 필요해요.</Text>}</FieldGroup>
+            <FieldGroup label="여행방 미리 알림"><ChoiceRow>{reminderOptions.map((option) => <Choice key={option.label} label={option.label} selected={draft.reminderMinutesBefore === option.value} onPress={() => update("reminderMinutesBefore", option.value)} />)}</ChoiceRow>{errors.reminder ? <Text style={styles.error}>{errors.reminder}</Text> : <Text style={styles.helper}>알림 시각이 지나면 여행방에서 이 할 일을 눈에 띄게 표시해요.</Text>}</FieldGroup>
 
             {members.length ? <FieldGroup label="담당자"><OptionList options={members} selectedIds={draft.assigneeUserIds} onToggle={(id) => toggleIn("assigneeUserIds", id)} /></FieldGroup> : null}
 
@@ -120,6 +121,7 @@ export function TripTodoEditorModal({ visible, initialTodo, initialDraft, member
         </View>
       </SafeAreaView>
     </View>
+    </KeyboardAvoidingView>
   </Modal>;
 }
 
@@ -129,7 +131,7 @@ function Choice({ label, selected, onPress }: { label: string; selected: boolean
 function OptionList({ options, selectedIds, onToggle }: { options: readonly TripTodoEditorOption[]; selectedIds: readonly string[]; onToggle(id: string): void }) { return <View style={styles.optionList}>{options.map((option) => { const selected = selectedIds.includes(option.id); return <Pressable key={option.id} accessibilityRole="checkbox" accessibilityState={{ checked: selected }} onPress={() => onToggle(option.id)} style={({ pressed }) => [styles.option, selected && styles.optionSelected, pressed && styles.pressed]}><Text style={[styles.optionCheck, selected && styles.choiceTextSelected]}>{selected ? "✓" : "○"}</Text><View style={styles.optionCopy}><Text style={styles.optionLabel}>{option.label}</Text>{option.description ? <Text style={styles.optionDescription}>{option.description}</Text> : null}</View></Pressable>; })}</View>; }
 
 const styles = StyleSheet.create({
-  overlay: { flex: 1, backgroundColor: colors.overlay }, safeArea: { flex: 1, width: "100%", justifyContent: "flex-end" }, sheet: { width: "100%", maxWidth: 680, maxHeight: "94%", alignSelf: "center", overflow: "hidden", gap: spacing.sm, borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl, backgroundColor: colors.surface, padding: spacing.lg }, handle: { width: 44, height: 5, alignSelf: "center", borderRadius: radius.pill, backgroundColor: colors.borderStrong }, title: { ...typography.title, color: colors.text }, scroll: { minHeight: 0 }, content: { gap: spacing.lg, paddingBottom: spacing.sm },
+  keyboardAvoider: { flex: 1 }, overlay: { flex: 1, backgroundColor: colors.overlay }, safeArea: { flex: 1, width: "100%", justifyContent: "flex-end" }, sheet: { width: "100%", maxWidth: 680, maxHeight: "94%", alignSelf: "center", overflow: "hidden", gap: spacing.sm, borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl, backgroundColor: colors.surface, padding: spacing.lg }, handle: { width: 44, height: 5, alignSelf: "center", borderRadius: radius.pill, backgroundColor: colors.borderStrong }, title: { ...typography.title, color: colors.text }, scroll: { minHeight: 0 }, content: { gap: spacing.lg, paddingBottom: spacing.sm },
   generatedNotice: { gap: spacing.xxs, borderRadius: radius.md, backgroundColor: colors.primarySoft, padding: spacing.sm }, generatedTitle: { ...typography.bodyStrong, color: colors.primary }, generatedText: { ...typography.caption, color: colors.textSecondary },
   group: { gap: spacing.xs }, label: { ...typography.bodyStrong, color: colors.text }, choiceRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs }, choice: { minHeight: 40, justifyContent: "center", borderWidth: 1, borderColor: colors.border, borderRadius: radius.pill, paddingHorizontal: spacing.sm, backgroundColor: colors.surface }, choiceSelected: { borderColor: colors.primary, backgroundColor: colors.primarySoft }, choiceText: { ...typography.caption, color: colors.textSecondary }, choiceTextSelected: { color: colors.primary },
   twoFields: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }, fieldFlex: { flex: 1, minWidth: 150 }, helper: { ...typography.caption, color: colors.textSecondary }, error: { ...typography.caption, color: colors.danger },

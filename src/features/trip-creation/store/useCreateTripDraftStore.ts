@@ -3,6 +3,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { createPersistHydrationStore } from "../../../store/createPersistHydrationStore";
 import { CREATE_TRIP_DRAFT_VERSION, CREATE_TRIP_STEP_COUNT } from "../types";
+import type { TripLocation } from "../../../domain";
 import type { CreateTripDraft, CreateTripDraftPatch, CreateTripEndConditionDraft, CreateTripStep, TripCompanionType } from "../types";
 import { getRegionSelectionPatch } from "../logic/tripDraftEditing";
 
@@ -13,11 +14,29 @@ const nowIso = () => new Date().toISOString();
 const endConditionTypes: CreateTripEndConditionDraft["type"][] = ["train", "intercity-bus", "rental-car-return", "other"];
 const asLimitedString = (value: unknown, maxLength: number) => typeof value === "string" ? value.slice(0, maxLength) : "";
 
+function normalizeLocation(value: unknown): TripLocation | null {
+  if (!isRecord(value)) return null;
+  const name = asLimitedString(value.name, 100).trim();
+  if (!name) return null;
+  const lat = typeof value.lat === "number" && Number.isFinite(value.lat) ? value.lat : undefined;
+  const lng = typeof value.lng === "number" && Number.isFinite(value.lng) ? value.lng : undefined;
+  const source: TripLocation["source"] = value.source === "tour" || value.source === "kakao" || value.source === "manual" ? value.source : undefined;
+  return {
+    name,
+    ...(asLimitedString(value.address, 200).trim() ? { address: asLimitedString(value.address, 200).trim() } : {}),
+    ...(lat !== undefined && lng !== undefined ? { lat, lng } : {}),
+    ...(asLimitedString(value.placeId, 64).trim() ? { placeId: asLimitedString(value.placeId, 64).trim() } : {}),
+    ...(asLimitedString(value.externalId, 100).trim() ? { externalId: asLimitedString(value.externalId, 100).trim() } : {}),
+    ...(source ? { source } : {}),
+  };
+}
+
 function normalizeEndCondition(value: unknown): CreateTripEndConditionDraft | null {
   if (!isRecord(value) || !endConditionTypes.includes(value.type as CreateTripEndConditionDraft["type"])) return null;
   return {
     type: value.type as CreateTripEndConditionDraft["type"],
     location: asLimitedString(value.location, 100),
+    locationDetails: normalizeLocation(value.locationDetails),
     deadline: asLimitedString(value.deadline, 5),
     travelMinutes: asLimitedString(value.travelMinutes, 4),
     serviceBufferMinutes: asLimitedString(value.serviceBufferMinutes, 3),
@@ -36,6 +55,7 @@ export function createEmptyTripDraft(ownerUserId: string, startedAt = nowIso()):
     dateUndecided: false,
     transport: null,
     accommodationLocation: "",
+    accommodationLocationDetails: null,
     endCondition: null,
     companionType: null,
     expectedMemberCount: null,
@@ -49,7 +69,7 @@ export function createEmptyTripDraft(ownerUserId: string, startedAt = nowIso()):
 
 export function normalizeCreateTripDraft(value: unknown): { draft: CreateTripDraft | null; notice: string | null } {
   if (!isRecord(value)) return { draft: null, notice: null };
-  if (value.configVersion !== 1 && value.configVersion !== 2 && value.configVersion !== CREATE_TRIP_DRAFT_VERSION) return { draft: null, notice: "여행방 생성 방식이 변경되어 이전 초안을 초기화했어요." };
+  if (value.configVersion !== 1 && value.configVersion !== 2 && value.configVersion !== 3 && value.configVersion !== CREATE_TRIP_DRAFT_VERSION) return { draft: null, notice: "여행방 생성 방식이 변경되어 이전 초안을 초기화했어요." };
   if (typeof value.ownerUserId !== "string" || !value.ownerUserId || typeof value.startedAt !== "string" || typeof value.updatedAt !== "string") return { draft: null, notice: null };
   const rawStep = typeof value.currentStep === "number" && Number.isInteger(value.currentStep) ? value.currentStep : 0;
   const dateUndecided = value.dateUndecided === true;
@@ -80,6 +100,7 @@ export function normalizeCreateTripDraft(value: unknown): { draft: CreateTripDra
       dateUndecided,
       transport,
       accommodationLocation: asLimitedString(value.accommodationLocation, 100),
+      accommodationLocationDetails: normalizeLocation(value.accommodationLocationDetails),
       endCondition,
       companionType,
       expectedMemberCount,

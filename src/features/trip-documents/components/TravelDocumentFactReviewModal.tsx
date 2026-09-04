@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { PrimaryButton, SecondaryButton, TextField } from "../../../components/common";
 import { useDuriStore, type AddLockedDocumentScheduleResult } from "../../../store/useDuriStore";
@@ -229,7 +229,7 @@ function TravelDocumentFactReviewEditor({
     let targetItemId: string | undefined;
     if (scheduleTarget === "create") {
       if (!allowCreateSchedule) {
-        setMessage(scheduleCreationUnavailableMessage ?? "이 여행방에서는 새 일정을 자동으로 만들 수 없어요. 기존 일정에 연결하거나 예약 사실만 확정해 주세요.");
+        setMessage(scheduleCreationUnavailableMessage ?? "이 여행방에서는 새 일정을 바로 만들 수 없어요. 기존 일정에 연결하거나 예약 정보만 확정해 주세요.");
         return;
       }
       const draftResult = buildLockedDocumentScheduleDraft({ kind, label, date, startTime, endTime, ...(placeId ? { placeId } : {}) });
@@ -290,17 +290,18 @@ function TravelDocumentFactReviewEditor({
 
   return <Modal visible transparent animationType="slide" navigationBarTranslucent statusBarTranslucent onRequestClose={close}>
     <View style={styles.overlay}>
-      <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.safeArea}>
-        <Pressable accessibilityRole="button" accessibilityLabel="예약 정보 확인 닫기" disabled={busy} onPress={close} style={StyleSheet.absoluteFill} />
-        <View accessibilityViewIsModal style={styles.sheet}>
-          <View style={styles.handle} />
-          <Text style={styles.title}>예약 정보 확인</Text>
-          <ScrollView style={styles.scroll} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator>
-            <View style={styles.notice}><Text style={styles.noticeTitle}>확정 전에는 일정 제약이 아니에요</Text><Text style={styles.noticeText}>{extractionMessage(working)}</Text></View>
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : Platform.OS === "android" ? "height" : undefined} style={styles.keyboardArea}>
+        <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.safeArea}>
+          <Pressable accessibilityRole="button" accessibilityLabel="예약 정보 확인 닫기" disabled={busy} onPress={close} style={StyleSheet.absoluteFill} />
+          <View accessibilityViewIsModal style={styles.sheet}>
+            <View style={styles.handle} />
+            <Text style={styles.title}>예약 정보 확인</Text>
+            <ScrollView style={styles.scroll} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator>
+            <View style={styles.notice}><Text style={styles.noticeTitle}>확정하기 전에는 일정을 고정하지 않아요</Text><Text style={styles.noticeText}>{extractionMessage(working)}</Text></View>
             {recognizer && document.storage !== "external-url" ? <SecondaryButton label="기기에서 문자 인식" loading={busy} disabled={!fileAvailable} onPress={recognize} />
               : <Text style={styles.capability}>{document.storage === "external-url"
                 ? "외부 링크의 페이지 내용은 자동으로 읽지 않아요. 링크가 열리지 않거나 로그인이 필요해도 아래에 예약 정보를 직접 입력할 수 있어요."
-                : "현재 빌드에는 검증된 기기 내 OCR 모듈이 없어 직접 입력을 제공합니다. 문서 파일은 외부로 전송하지 않아요."}</Text>}
+                : "이 파일에서는 문자 인식을 사용할 수 없어요. 아래에 예약 정보를 직접 입력하고 원본과 대조한 뒤 확정해 주세요."}</Text>}
             <View style={styles.kindOptions}>{factKindOptions.map((option) => <Pressable
               key={option.value}
               accessibilityRole="radio"
@@ -318,25 +319,27 @@ function TravelDocumentFactReviewEditor({
             {placeOptions.length ? <View style={styles.targetSection}><Text style={styles.targetTitle}>여행방 장소와 연결 (선택)</Text><Text style={styles.targetHint}>아직 일정에 없는 예약 장소라면 연결해 누락 여부를 검사할 수 있어요.</Text><View style={styles.targetOptions}><Pressable accessibilityRole="radio" accessibilityState={{ checked: !placeId }} onPress={() => setPlaceId("")} style={({ pressed }) => [styles.targetOption, !placeId && styles.targetOptionSelected, pressed && styles.pressed]}><Text style={[styles.targetLabel, !placeId && styles.targetLabelSelected]}>선택 안 함</Text></Pressable>{placeOptions.map((option) => <Pressable key={option.id} accessibilityRole="radio" accessibilityState={{ checked: placeId === option.id }} onPress={() => { setPlaceId(option.id); if (!placeName.trim()) setPlaceName(option.label); }} style={({ pressed }) => [styles.targetOption, placeId === option.id && styles.targetOptionSelected, pressed && styles.pressed]}><Text style={[styles.targetLabel, placeId === option.id && styles.targetLabelSelected]}>{option.label}</Text></Pressable>)}</View></View> : null}
             <View style={styles.targetSection}>
               <Text style={styles.targetTitle}>일정표 반영</Text>
-              <Text style={styles.targetHint}>{allowCreateSchedule ? "새 일정은 확인한 시작·종료 시각 그대로 추가되고 두리 변경 잠금이 켜집니다. 기존 일정 연결은 그 일정을 자동으로 옮기지 않아요." : scheduleCreationUnavailableMessage ?? "새 일정 자동 추가는 지원되지 않아 기존 일정에 연결하거나 예약 사실만 검증할 수 있어요."}</Text>
+              <Text style={styles.targetHint}>{allowCreateSchedule ? "새 일정은 확인한 시작·종료 시각 그대로 추가되고 두리가 바꾸지 않도록 잠깁니다. 기존 일정 연결은 그 일정을 자동으로 옮기지 않아요." : scheduleCreationUnavailableMessage ?? "새 일정을 바로 만들 수 없어 기존 일정에 연결하거나 예약 정보만 확인할 수 있어요."}</Text>
               <View style={styles.targetOptions}>
                 {allowCreateSchedule ? <Pressable accessibilityRole="radio" accessibilityState={{ checked: scheduleTarget === "create" }} onPress={() => setScheduleTarget("create")} style={({ pressed }) => [styles.targetOption, scheduleTarget === "create" && styles.targetOptionSelected, pressed && styles.pressed]}><Text style={[styles.targetLabel, scheduleTarget === "create" && styles.targetLabelSelected]}>새 잠금 일정으로 추가</Text></Pressable> : null}
-                {placeId || !allowCreateSchedule ? <Pressable accessibilityRole="radio" accessibilityState={{ checked: scheduleTarget === "place-only" }} onPress={() => setScheduleTarget("place-only")} style={({ pressed }) => [styles.targetOption, scheduleTarget === "place-only" && styles.targetOptionSelected, pressed && styles.pressed]}><Text style={[styles.targetLabel, scheduleTarget === "place-only" && styles.targetLabelSelected]}>{placeId ? "일정 추가 없이 장소만 검증" : "일정 추가 없이 예약 사실만 검증"}</Text></Pressable> : null}
+                {placeId || !allowCreateSchedule ? <Pressable accessibilityRole="radio" accessibilityState={{ checked: scheduleTarget === "place-only" }} onPress={() => setScheduleTarget("place-only")} style={({ pressed }) => [styles.targetOption, scheduleTarget === "place-only" && styles.targetOptionSelected, pressed && styles.pressed]}><Text style={[styles.targetLabel, scheduleTarget === "place-only" && styles.targetLabelSelected]}>{placeId ? "일정 추가 없이 장소만 확인" : "일정 추가 없이 예약 정보만 확인"}</Text></Pressable> : null}
                 {itineraryOptions.map((item, index) => <Pressable key={item.id} accessibilityRole="radio" accessibilityState={{ checked: scheduleTarget === item.id }} onPress={() => setScheduleTarget(item.id)} style={({ pressed }) => [styles.targetOption, scheduleTarget === item.id && styles.targetOptionSelected, pressed && styles.pressed]}><Text style={[styles.targetLabel, scheduleTarget === item.id && styles.targetLabelSelected]}>{linkedItems.has(item.id) ? "연결됨 · " : ""}{itineraryItemLabelsById[item.id] ?? item.label ?? `기존 일정 ${index + 1}`}</Text></Pressable>)}
               </View>
             </View>
             {message ? <Text accessibilityRole="alert" style={styles.message}>{message}</Text> : null}
             <PrimaryButton label={scheduleTarget === "create" ? "확정하고 잠금 일정 추가" : "확정하고 일정 검증에 사용"} disabled={busy} onPress={save} />
             <SecondaryButton label="취소" disabled={busy} onPress={close} />
-          </ScrollView>
-        </View>
-      </SafeAreaView>
+            </ScrollView>
+          </View>
+        </SafeAreaView>
+      </KeyboardAvoidingView>
     </View>
   </Modal>;
 }
 
 const styles = StyleSheet.create({
   overlay: { flex: 1, backgroundColor: "rgba(17, 32, 67, 0.32)" },
+  keyboardArea: { flex: 1 },
   safeArea: { flex: 1, width: "100%", justifyContent: "flex-end" },
   sheet: { width: "100%", maxWidth: 680, maxHeight: "94%", alignSelf: "center", overflow: "hidden", gap: spacing.md, borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl, backgroundColor: colors.surface, padding: spacing.lg },
   handle: { width: 44, height: 5, alignSelf: "center", borderRadius: radius.pill, backgroundColor: colors.borderStrong },

@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
-import { router } from "expo-router";
+import { Redirect, router } from "expo-router";
 import { PrimaryButton, SecondaryButton } from "../../../components/common";
+import { environment } from "../../../config/environment";
 import type { PersonalPreferenceAnswers } from "../../../domain";
 import {
   isCompletePersonalPreferenceAnswers,
@@ -30,6 +31,10 @@ export function OnboardingPreferenceTestScreen() {
   const question = personalTestQuestions[questionIndex];
   const selectedValue = question ? answers[question.dimension] : undefined;
   const isLast = questionIndex === personalTestQuestions.length - 1;
+
+  // 이 간단 검사는 로컬 데모의 레거시 결과 형식이다. API 계정에서는
+  // 서버에 실제 저장되는 상세 검사로 보내 완료 상태가 엇갈리지 않게 한다.
+  if (environment.dataSource !== "mock") return <Redirect href="/tests/personal" />;
 
   const skip = () => {
     setIntroSeen(true);

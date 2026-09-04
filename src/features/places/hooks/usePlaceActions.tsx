@@ -1,16 +1,24 @@
 import { useMemo, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useShallow } from "zustand/react/shallow";
 import type { EntityId } from "../../../domain";
 import { environment } from "../../../config/environment";
 import { queryKeys } from "../../../query/keys";
 import { ApiError, apiClient } from "../../../services/apiClient";
+import { toUserFacingApiErrorMessage } from "../../../services/userFacingApiError";
 import { useDuriStore } from "../../../store/useDuriStore";
 import { useAuthSessionStore } from "../../auth/store/useAuthSessionStore";
 import { useMemberGate } from "../../auth/hooks/useMemberGate";
 import { useExploreSearchStore } from "../../explore/store/useExploreSearchStore";
 import { canAddPlaceCandidate, canSavePlace } from "../logic/placeCapabilities";
 import { selectCandidateStateForPlace, selectEligibleTripsForPlaceCandidate } from "../selectors/placeSelectors";
+import {
+  fetchBackendSavedPlaces,
+  getBackendPlace,
+  removeBackendSavedPlace,
+  saveBackendPlace,
+  type BackendSavedPlace,
+} from "../services/placeApi";
 import type { PlaceActionFeedback } from "../types";
 
 export function usePlaceActions() {
@@ -19,7 +27,7 @@ export function usePlaceActions() {
   const sessionUserId = useAuthSessionStore((state) => state.currentSessionUserId) ?? "";
   const apiTripContext = useExploreSearchStore((state) => state.activeTripRegionContext);
   const { requireMember, memberGatePrompt } = useMemberGate();
-  const source = useDuriStore(useShallow((state) => ({
+  const localSource = useDuriStore(useShallow((state) => ({
     currentUserId: state.currentUserId,
     activeTripId: state.activeTripId,
     usersById: state.usersById,
@@ -38,6 +46,29 @@ export function usePlaceActions() {
   const clearActiveTrip = useDuriStore((state) => state.clearActiveTrip);
   const [selectedPlaceId, setSelectedPlaceId] = useState<EntityId>();
   const [feedback, setFeedback] = useState<PlaceActionFeedback>();
+  const remoteSavesEnabled = environment.dataSource === "api" && sessionKind === "member" && Boolean(sessionUserId);
+  const savedPlacesQuery = useQuery({
+    queryKey: queryKeys.users.saves(sessionUserId),
+    queryFn: ({ signal }) => fetchBackendSavedPlaces(signal),
+    enabled: remoteSavesEnabled,
+    staleTime: 2 * 60 * 1000,
+  });
+  const source = useMemo(() => {
+    if (!remoteSavesEnabled) return localSource;
+    const entries = savedPlacesQuery.data ?? [];
+    const savedPlaces = entries.map((entry) => entry.place);
+    return {
+      ...localSource,
+      placesById: {
+        ...localSource.placesById,
+        ...Object.fromEntries(savedPlaces.map((place) => [place.id, place])),
+      },
+      savedPlaceIdsByUserId: {
+        ...localSource.savedPlaceIdsByUserId,
+        [localSource.currentUserId]: savedPlaces.map((place) => place.id),
+      },
+    };
+  }, [localSource, remoteSavesEnabled, savedPlacesQuery.data]);
   const eligibleTrips = useMemo(() => selectEligibleTripsForPlaceCandidate(source), [source]);
   const selectedPlace = selectedPlaceId ? source.placesById[selectedPlaceId] : undefined;
 
@@ -49,6 +80,45 @@ export function usePlaceActions() {
       return;
     }
     const wasSaved = (source.savedPlaceIdsByUserId[source.currentUserId] ?? []).includes(placeId);
+    if (remoteSavesEnabled) {
+      const queryKey = queryKeys.users.saves(sessionUserId);
+      const current = queryClient.getQueryData<BackendSavedPlace[]>(queryKey) ?? [];
+      const existing = current.find((entry) => entry.place.id === placeId);
+      const optimisticEntry: BackendSavedPlace = existing ?? {
+        id: `${placeId}:pending`,
+        savedAt: new Date().toISOString(),
+        place,
+      };
+      queryClient.setQueryData<BackendSavedPlace[]>(queryKey, wasSaved
+        ? current.filter((entry) => entry.place.id !== placeId)
+        : [optimisticEntry, ...current.filter((entry) => entry.place.id !== placeId)]);
+      if (!options?.silent) setFeedback({ message: wasSaved ? "저장을 해제했어요." : "저장한 장소에 추가했어요." });
+
+      void (async () => {
+        try {
+          let backendPlaceId = existing?.place.backendPlaceId ?? place.backendPlaceId;
+          if (!wasSaved && !backendPlaceId) {
+            const resolved = await getBackendPlace(place.id);
+            backendPlaceId = resolved?.backendPlaceId;
+          }
+          if (!backendPlaceId) throw new Error("장소 저장에 필요한 정보를 확인하지 못했어요.");
+          if (wasSaved) await removeBackendSavedPlace(backendPlaceId);
+          else await saveBackendPlace(backendPlaceId);
+          await queryClient.invalidateQueries({ queryKey });
+        } catch (reason) {
+          queryClient.setQueryData<BackendSavedPlace[]>(queryKey, (latest = []) => {
+            if (wasSaved) {
+              return latest.some((entry) => entry.place.id === placeId) ? latest : [optimisticEntry, ...latest];
+            }
+            return latest.filter((entry) => entry.place.id !== placeId);
+          });
+          setFeedback({ message: reason instanceof ApiError && reason.status === 401
+            ? "로그인 상태를 다시 확인해 주세요."
+            : "저장 상태를 반영하지 못했어요. 잠시 뒤 다시 시도해 주세요." });
+        }
+      })();
+      return;
+    }
     toggleSavedPlace(placeId);
     if (!options?.silent) setFeedback({ message: wasSaved ? "저장을 해제했어요." : "저장한 장소에 추가했어요." });
   };
@@ -92,7 +162,7 @@ export function usePlaceActions() {
     if (environment.dataSource === "api") {
       const tripId = apiTripContext?.tripId;
       if (!tripId || !/^[a-f\d]{24}$/i.test(tripId)) {
-        setFeedback({ message: "여행방의 ‘장소 더 찾기’에서 접근하면 서버 후보로 추가할 수 있어요." });
+        setFeedback({ message: "여행방의 ‘장소 더 찾기’에서 들어오면 해당 여행의 후보에 담을 수 있어요." });
         return;
       }
       const place = source.placesById[placeId];
@@ -107,10 +177,10 @@ export function usePlaceActions() {
         }
         : /^[a-f\d]{24}$/i.test(place.id) ? { placeId: place.id } : undefined;
       if (!body) {
-        setFeedback({ message: "이 장소는 현재 서버 후보 계약으로 추가할 수 없어요." });
+        setFeedback({ message: "장소 상세 정보를 다시 연 뒤 여행 후보에 담아 주세요." });
         return;
       }
-      setFeedback({ message: "서버 여행방 후보에 추가하고 있어요.", tripId });
+      setFeedback({ message: "여행방 후보에 추가하고 있어요.", tripId });
       void apiClient.request<unknown>({
         path: `/rooms/${encodeURIComponent(tripId)}/candidates`,
         method: "POST",
@@ -130,7 +200,7 @@ export function usePlaceActions() {
               ? "이미 이 여행방 후보에 담긴 장소예요."
               : reason instanceof ApiError && ["ROOM_CLOSED", "ROOM_NOT_ONGOING"].includes(reason.code ?? "")
                 ? "완료된 여행방에는 후보를 담을 수 없어요."
-              : reason instanceof Error ? reason.message : "서버 여행방 후보에 추가하지 못했어요.";
+              : toUserFacingApiErrorMessage(reason, "여행방 후보에 추가하지 못했어요. 잠시 후 다시 시도해 주세요.");
         setFeedback({ message });
       });
       return;
@@ -176,6 +246,8 @@ export function usePlaceActions() {
 
   return {
     source,
+    savedPlacesQuery,
+    remoteSavesEnabled,
     sessionKind,
     eligibleTrips,
     selectedPlace,

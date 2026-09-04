@@ -10,8 +10,10 @@ import { buildDuriAnalysisInputWithDocuments, isDuriAnalysisCompletionCurrent } 
 import { isDuriAnalysisEntryBlocked } from "../src/features/duri/logic/analysisEntry";
 import { createDuriAnalysisSession } from "../src/features/duri/logic/analysisSession";
 import { createDuriAnalysisSnapshot, createDuriInputFingerprint, getDuriAnalysisAvailability, isSuggestionStale } from "../src/features/duri/logic/analysisSnapshot";
+import { apiScheduleMatchesProposal, restoreProposalLocalOverlays } from "../src/features/duri/logic/apiApplyReconciliation";
 import { analyzePlaceCongestionConstraints, analyzePlaceOperatingConstraints, analyzePlacePracticalConstraints, analyzeRecommendedDurations, hasEvaluableOperatingFactForDate, parseExplicitParkingAvailability, parseOperatingWindows, parseRecommendedDurationMinutes } from "../src/features/duri/logic/placeConstraintAnalysis";
 import { analyzePreferenceConstraints } from "../src/features/duri/logic/preferenceConstraintAnalysis";
+import { plainDuriUserText } from "../src/features/duri/presentation/plainDuriUserText";
 import { buildScheduledRouteLegs, collectCarRouteEvidence, isRouteOptimizationFixedItem } from "../src/features/duri/logic/routeEvidence";
 import { analyzeConfirmedScheduleConstraints, analyzeDocumentReferences, analyzeDuplicateVisits, analyzeRouteCostEvidence, analyzeRouteOptimization, analyzeRouteTimeConstraints } from "../src/features/duri/logic/scheduleConstraintAnalysis";
 import { generateDuriSuggestions } from "../src/features/duri/logic/suggestionGeneration";
@@ -19,6 +21,7 @@ import { getDuriItemProtection } from "../src/features/duri/logic/suggestionProt
 import { createDuriSuggestionPreview, diffItinerarySnapshots } from "../src/features/duri/logic/suggestionPreview";
 import { buildDuriAnalysisInputFromState } from "../src/features/duri/selectors/duriSelectors";
 import { enrichDuriAnalysisInput, enrichPreferenceAutoFillCandidateEvidence, normalizeTourCongestionDays } from "../src/features/duri/services/duriEvidenceService";
+import { useDuriAnalysisStore } from "../src/features/duri/store/useDuriAnalysisStore";
 import type { DuriInputSource, DuriSuggestionEnvelope } from "../src/features/duri/types";
 import { prepareDuriSuggestionAtomicApply, validateDuriSuggestion } from "../src/features/duri/validation/atomicSuggestionApply";
 import {
@@ -31,6 +34,18 @@ import { analyzeTripEndCondition, buildTripEndConditionAdjustment, resolveTripEn
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
+
+const plainInternalTerms = plainDuriUserText("rule-based-4axis · Kemeny · Pareto 효율 · Nash 후생 · leximin · MST · 2-opt · 1-swap");
+assert(!/rule-based-4axis|Kemeny|Pareto|Nash|leximin|\bMST\b|2-opt|1-swap/i.test(plainInternalTerms), "일반 화면용 문구에서 내부 계산 명칭을 제거한다");
+assert(plainDuriUserText("Nashville · Capital Hotel · The Local") === "Nashville · Capital Hotel · The Local", "장소명 일부를 내부 용어로 오인해 바꾸지 않는다");
+
+useDuriAnalysisStore.getState().clearAll();
+assert(useDuriAnalysisStore.getState().beginAnalysis("cancelled-trip"), "cancelled analysis fixture must start");
+useDuriAnalysisStore.getState().cancelAnalysis("cancelled-trip");
+assert(useDuriAnalysisStore.getState().analysisStatusByTripId["cancelled-trip"] === "idle"
+  && useDuriAnalysisStore.getState().analysisErrorByTripId["cancelled-trip"] === undefined,
+"an intentional analysis cancellation must return to idle without a visible failure");
+useDuriAnalysisStore.getState().clearAll();
 
 const users: Record<string, User> = {
   owner: { id: "owner", name: "수민", initial: "수" },
@@ -192,6 +207,44 @@ const apiScheduleData = {
 };
 const apiAnalysisInput = buildApiDuriAnalysisInput(apiScheduleData, "owner");
 assert(apiAnalysisInput, "API schedule snapshot should build a Duri input");
+const proposedApiItinerary = apiScheduleData.scheduleSnapshot.itinerary.map((entry) => ({
+  ...entry,
+  placeId: "507f1f77bcf86cd799439011",
+  startTime: "11:00",
+  note: "동행자 의견 반영",
+  preferredByUserIds: ["friend"],
+  lockedForDuri: true,
+}));
+const proposedApiMetadata = {
+  "api-item": {
+    ...apiScheduleData.scheduleSnapshot.metadataByItemId["api-item"],
+    reason: "동행자 의견 반영",
+  },
+};
+const appliedApiSnapshot = {
+  ...apiScheduleData.scheduleSnapshot,
+  itinerary: proposedApiItinerary,
+  metadataByItemId: {
+    "api-item": { ...proposedApiMetadata["api-item"], locked: true },
+  },
+  scheduleVersion: 8,
+};
+assert(apiScheduleMatchesProposal(appliedApiSnapshot, {
+  itinerary: proposedApiItinerary,
+  metadataByItemId: proposedApiMetadata,
+}), "응답이 끊겨도 서버의 저장 필드가 제안 post-state와 같으면 적용 성공으로 복구한다");
+assert(!apiScheduleMatchesProposal({
+  ...appliedApiSnapshot,
+  itinerary: appliedApiSnapshot.itinerary.map((entry) => ({ ...entry, startTime: "11:15" })),
+}, {
+  itinerary: proposedApiItinerary,
+  metadataByItemId: proposedApiMetadata,
+}), "서버 일정 시각이 제안과 다르면 적용 성공으로 오판하지 않는다");
+const restoredApiSnapshot = restoreProposalLocalOverlays(appliedApiSnapshot, proposedApiItinerary);
+assert(restoredApiSnapshot.itinerary[0]?.preferredByUserIds[0] === "friend"
+  && restoredApiSnapshot.itinerary[0]?.itemType === "place"
+  && restoredApiSnapshot.itinerary[0]?.lockedForDuri === true,
+"응답 유실 복구 시 서버 사실은 유지하고 기기 전용 제안 overlay를 복원한다");
 assert(Object.keys(apiAnalysisInput.preferenceResults).length === 0, "API 분석은 서버에 없는 상세 성향을 중립값이나 mock으로 채우지 않는다");
 assert(apiAnalysisInput.documentReferences?.[0]?.kind === "other"
   && apiAnalysisInput.documentReferences[0].extractionStatus === "not-requested"
@@ -210,8 +263,9 @@ assert(sharedPreferenceIssues.some((issue) => issue.id.startsWith("shared-candid
   && issue.confidence === "high"),
 "공유 mustVisit/avoid 충돌을 고신뢰 문제로 노출한다");
 assert(sharedPreferenceIssues.some((issue) => issue.id.startsWith("shared-derived-axis-")
-  && issue.evidence.some((entry) => entry.value.includes("rule-based-4axis"))),
-"공유 파생 축 차이는 해상도와 산출 provenance를 보존해 비교한다");
+  && issue.evidence.some((entry) => entry.value.includes("여행 성향 응답을 바탕으로 계산"))
+  && !issue.evidence.some((entry) => entry.value.includes("rule-based-4axis"))),
+"공유 성향 차이는 측정 범위를 보존하되 내부 산출 방식 이름을 사용자 근거에 노출하지 않는다");
 assert(createDuriAnalysisSession(apiAnalysisInput, "2026-07-01T00:00:00.000Z").groupInsights
   .some((insight) => insight.id === "group-coverage-shared-derived" && insight.description.includes("원본 상세 설문")),
 "원본 설문 미응답을 완료로 꾸미지 않으면서 공유 파생 근거 사용 범위를 설명한다");
@@ -325,7 +379,7 @@ const changedApiVersionInput = buildApiDuriAnalysisInput({
 assert(changedApiVersionInput
   && changedApiVersionInput.sharedPreferenceEvidenceStatus === "stale"
   && changedApiVersionInput.sharedPreferenceEvidence === undefined
-  && calculateAnalysisCoverage(createDuriAnalysisSnapshot(changedApiVersionInput)).limitations.some((message) => message.includes("facts revision"))
+  && calculateAnalysisCoverage(createDuriAnalysisSnapshot(changedApiVersionInput)).limitations.some((message) => message.includes("오래된 내용은 이번 분석에 사용하지 않았어요"))
   && createDuriInputFingerprint(apiAnalysisInput) !== createDuriInputFingerprint(changedApiVersionInput),
 "API 일정 내용이 같아도 scheduleVersion 변경은 이전 분석을 stale로 만든다");
 assert(!buildApiDuriAnalysisInput({
@@ -459,9 +513,10 @@ const legacyPreferenceSnapshot = snapshotFor(state({
 }));
 const legacyPreferenceIssues = analyzePreferenceConstraints(legacyPreferenceSnapshot, "2026-07-14T00:00:00.000Z");
 assert(legacyPreferenceIssues.some((issue) => issue.id === "preference-coordination-pace"
-  && issue.summary.includes("Pareto")
-  && issue.evidence.some((entry) => entry.label === "최적성·계산 가정" && entry.value.includes("동일 가중치"))),
-"analysis 20a: legacy 직접 3단계 응답의 공정 조율은 Pareto·max-min·Nash 기준과 등거리 가정을 공개한다");
+  && issue.summary.includes("가장 아쉬운 사람을 먼저 배려")
+  && !/Pareto|Nash|leximin/i.test(issue.summary)
+  && issue.evidence.some((entry) => entry.label === "비교 기준" && entry.value.includes("같은 비중"))),
+"analysis 20a: legacy 직접 3단계 응답의 공정 조율 근거를 내부 알고리즘명 없이 설명한다");
 const unavailableOverlayPreferenceIssues = analyzePreferenceConstraints({
   ...legacyPreferenceSnapshot,
   scheduleOverlayStatus: "unavailable",
@@ -497,7 +552,9 @@ const sameTopBudgetSnapshot = snapshotFor(state({
 }));
 const sameTopBudgetIssue = analyzePreferenceConstraints(sameTopBudgetSnapshot, "2026-07-14T00:00:00.000Z")
   .find((issue) => issue.id.startsWith("preference-budget-priority-"));
-assert(sameTopBudgetIssue?.summary.includes("Kemeny") && sameTopBudgetIssue.confidence === "low",
+assert(sameTopBudgetIssue?.summary.includes("우선순위 차이를 가장 적게")
+  && !sameTopBudgetIssue.summary.includes("Kemeny")
+  && sameTopBudgetIssue.confidence === "low",
 "analysis 20e: 1순위가 같아도 하위 순위 역전을 분석하고 부분 응답을 낮은 신뢰도로 공개한다");
 
 const unsupportedDetailed = detailedPreference("owner", 0, ["walk"]);

@@ -9,6 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { RemoteImage, Screen } from "../../../components/common";
 import { ErrorState } from "../../../components/feedback";
 import { queryKeys } from "../../../query/keys";
+import { toUserFacingApiErrorMessage } from "../../../services/userFacingApiError";
 import { useDuriHydrationState, useDuriStore } from "../../../store/useDuriStore";
 import { colors, radius, shadows, spacing } from "../../../theme/tokens";
 import { AddCandidateTripPickerModal, PlaceFeedbackBanner } from "../components/PlaceExploreControls";
@@ -139,7 +140,10 @@ export function PlaceDetailScreen() {
     setActiveTrip(tripContextTrip.id);
   }, [setActiveTrip, source.activeTripId, source.currentUserId, tripContextTrip]);
 
-  const onBack = tripExploreContext ? backToExplore : () => router.back();
+  const onBack = tripExploreContext ? backToExplore : () => {
+    if (router.canGoBack()) router.back();
+    else router.replace("/(tabs)/explore");
+  };
 
   if (!placeRepository.available) {
     return <DetailStatusScreen onBack={onBack}><ErrorState message={placeRepository.message ?? "장소 데이터를 사용할 수 없어요."} /></DetailStatusScreen>;
@@ -149,7 +153,7 @@ export function PlaceDetailScreen() {
     return <DetailLoadingScreen heroHeight={heroHeight} onBack={onBack} />;
   }
   if (placeRepository.remoteEnabled && detailQuery.isError && !place) {
-    return <DetailStatusScreen onBack={onBack}><ErrorState message={detailQuery.error instanceof Error ? detailQuery.error.message : "한국관광공사 상세 데이터를 불러오지 못했어요."} onRetry={() => { void detailQuery.refetch(); }} /></DetailStatusScreen>;
+    return <DetailStatusScreen onBack={onBack}><ErrorState message={toUserFacingApiErrorMessage(detailQuery.error, "장소 상세 정보를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.")} onRetry={() => { void detailQuery.refetch(); }} /></DetailStatusScreen>;
   }
   if (!place || !viewModel) {
     return <DetailStatusScreen onBack={backToExplore}><ErrorState message="존재하지 않거나 삭제된 장소예요." onRetry={backToExplore} /></DetailStatusScreen>;
@@ -170,7 +174,7 @@ export function PlaceDetailScreen() {
         <View style={[styles.hero, { height: heroHeight }]}>
           {viewModel.imageUrl && failedHeroImageUrl !== viewModel.imageUrl
             ? <Image source={viewModel.imageUrl} accessibilityLabel={`${viewModel.name} 대표 이미지`} contentFit="cover" onError={() => setFailedHeroImageUrl(viewModel.imageUrl)} style={styles.heroImage} />
-            : <View accessibilityLabel={`${viewModel.name} 이미지 없음`} style={styles.heroFallback}><Text style={styles.heroFallbackText}>이미지 준비 중</Text></View>}
+            : <View accessibilityLabel={`${viewModel.name} 이미지 없음`} style={styles.heroFallback}><Text style={styles.heroFallbackText}>등록된 이미지가 없어요</Text></View>}
           <View style={styles.heroActions}>
             <DetailBackButton onPress={onBack} />
             <Pressable accessibilityRole="button" accessibilityLabel={viewModel.isSaved ? `${viewModel.name} 저장 해제` : `${viewModel.name} 저장`} accessibilityState={{ selected: viewModel.isSaved }} hitSlop={8} onPress={() => actions.toggleSaved(place.id)} style={({ pressed }) => [styles.heroHeartButton, pressed && styles.pressed]}>

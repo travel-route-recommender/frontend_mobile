@@ -19,7 +19,7 @@ type Props = {
 export function TripDestinationStep({ keyword, options, selectedId, isLoading, error, onKeywordChange, onSelect, onRetry }: Props) {
   return <View style={styles.stack}>
     <TextField label="여행지 검색" value={keyword} onChangeText={onKeywordChange} placeholder="경주, 제주처럼 지역 이름을 검색해 보세요" returnKeyType="search" />
-    <View style={styles.sectionHeading}><Text style={styles.sectionTitle}>{keyword.trim() ? "검색 결과" : "추천 여행지"}</Text>{!isLoading && !error ? <Text style={styles.resultCount}>{options.length}곳</Text> : null}</View>
+    <View style={styles.sectionHeading}><Text style={styles.sectionTitle}>{keyword.trim() ? "검색 결과" : options.some((option) => option.source === "reference") ? "여행지 선택" : "추천 여행지"}</Text>{!isLoading && !error ? <Text style={styles.resultCount}>{options.length}곳</Text> : null}</View>
     {isLoading ? <LoadingState label="여행지를 불러오고 있어요" /> : null}
     {!isLoading && error ? <ErrorState message={error} onRetry={onRetry} /> : null}
     {!isLoading && !error && !options.length ? <EmptyState title="검색 결과가 없어요" description="다른 지역명을 입력해 주세요." /> : null}

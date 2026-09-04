@@ -39,7 +39,7 @@
 | `/login` | `LoginPage` | `app/(auth)/login.tsx` | `LoginScreen` | mock 완료·API 계약 대기 표시 |
 | `/signup` | 가입 방식 선택 | `app/(auth)/signup-choice.tsx` | `SignupChoiceScreen` | 완료 |
 | `/signup/email` | 이메일 가입 | `app/(auth)/signup-email.tsx` | `SignupEmailScreen` | mock 완료·API 계약 대기 표시 |
-| `/invite` | `InviteJoinPage` | `app/(auth)/invite.tsx` | `InviteJoinScreen` | mock guest 완료·API 계약 대기 표시 |
+| `/invite` | `InviteJoinPage` | `app/(auth)/invite.tsx` | `InviteJoinScreen` | HTTPS/custom scheme 진입·미리보기·회원/guest API 참여 완료 |
 | `/onboarding/profile` | 프로필 설정 | `app/(onboarding)/profile.tsx` | `ProfileSetupScreen` | 완료 |
 | `/onboarding/intro` | 서비스 소개 | `app/(onboarding)/intro.tsx` | `OnboardingIntroScreen` | 완료 |
 | `/duri` | `DuriPage` | `/trips/[tripId]/analysis` 및 suggestion 상세 | `DuriAnalysisScreen`, `DuriSuggestionPreviewScreen` | 리포트·preview·local atomic apply 완료 |

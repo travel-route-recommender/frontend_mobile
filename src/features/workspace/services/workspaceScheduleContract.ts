@@ -238,14 +238,14 @@ function asOptionalMongoObjectId(value: unknown, path: string): string | undefin
   const parsed = asOptionalString(value, path);
   if (parsed === undefined) return undefined;
   if (!MONGO_OBJECT_ID_PATTERN.test(parsed)) {
-    return contractError(path, "Backend DTO와 같은 Mongo ObjectId(24자리 16진수)여야 합니다.");
+    return contractError(path, "저장된 장소 식별 정보가 올바르지 않습니다.");
   }
   return parsed;
 }
 
 function asRequiredMongoObjectId(value: unknown, path: string): string {
   const parsed = asOptionalMongoObjectId(value, path);
-  if (!parsed) return contractError(path, "Backend place ID가 필요합니다.");
+  if (!parsed) return contractError(path, "저장된 장소 식별 정보가 필요합니다.");
   return parsed;
 }
 
@@ -431,7 +431,7 @@ function asPriority(value: unknown, path: string): BackendSchedulePriority {
 
 function timeToMinutes(value: string, path: string): number {
   if (!BACKEND_TIME_PATTERN.test(value)) {
-    return contractError(path, "Backend DTO와 같은 HH:mm(00:00-23:59) 형식이어야 합니다.");
+    return contractError(path, "시각은 00:00부터 23:59 사이여야 합니다.");
   }
   const [hour, minute] = value.split(":").map(Number);
   return hour * 60 + minute;
@@ -439,7 +439,7 @@ function timeToMinutes(value: string, path: string): number {
 
 function formatBackendEndTime(minutes: number, path: string): string {
   if (!Number.isInteger(minutes) || minutes < 0 || minutes > 23 * 60 + 59) {
-    return contractError(path, "Backend DTO는 24:00을 표현할 수 없으므로 같은 날짜의 23:59 이내여야 합니다.");
+    return contractError(path, "하루를 넘기는 일정은 나누어 입력해 주세요. 종료 시각은 같은 날짜의 23:59까지 사용할 수 있어요.");
   }
   return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 }
@@ -788,7 +788,7 @@ export function mapWorkspaceScheduleToBatch(input: {
     const startMinutes = timeToMinutes(item.startTime, `${path}.startTime`);
     const endTime = formatBackendEndTime(startMinutes + item.durationMinutes, `${path}.durationMinutes`);
     const metadata = input.metadataByItemId[itemId];
-    if (!metadata) return contractError(`${path}.metadata`, "서버 필드 보존을 위한 메타데이터가 필요합니다.");
+    if (!metadata) return contractError(`${path}.metadata`, "기존 일정 정보를 안전하게 유지할 수 없어 변경하지 않았습니다.");
     if (metadata.itemId !== itemId) return contractError(`${path}.metadata.itemId`, "일정 ID와 일치해야 합니다.");
     const coordinates = asCoordinates(metadata.lat, metadata.lng, `${path}.metadata`);
 

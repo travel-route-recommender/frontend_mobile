@@ -12,7 +12,7 @@ export async function requestSocialLoginSession<Session>(
   dependencies: SocialLoginFlowDependencies,
 ): Promise<Session> {
   if (!supportsBackendSocialProvider(provider)) {
-    throw new Error("현재 백엔드는 Google 로그인을 지원하지 않아요.");
+    throw new Error("현재 Google 로그인을 이용할 수 없어요. 다른 로그인 방법을 선택해 주세요.");
   }
 
   const accessToken = await dependencies.requestKakaoAccessToken();

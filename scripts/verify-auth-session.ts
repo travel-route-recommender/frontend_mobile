@@ -16,13 +16,14 @@ import {
   SingleFlight,
   type StoredAuthState,
 } from "../src/features/auth/services/authTokenState";
-import { ApiError, NativeApiClient, configureApiAuth, type ApiClient, type ApiRequest } from "../src/services/apiClient";
+import { ApiError, ApiTimeoutError, NativeApiClient, configureApiAuth, type ApiClient, type ApiRequest } from "../src/services/apiClient";
 import { apiPermissionMessage, guestPagePolicy, restrictedFeatureMessage } from "../src/features/auth/services/guestAccessPolicy";
 import { requestGoogleNativeIdToken } from "../src/features/auth/services/googleNativeAuth";
 import { requestKakaoNativeAccessToken, requestKakaoNativeIdToken } from "../src/features/auth/services/kakaoNativeAuth";
-import { buildInviteReturnPath, inviteErrorMessage, resolveAuthReturnTo } from "../src/features/auth/services/inviteFlowPolicy";
+import { buildAuthReturnPath, buildInviteReturnPath, inviteErrorMessage, resolveAuthReturnTo } from "../src/features/auth/services/inviteFlowPolicy";
 import { requestSocialLoginSession } from "../src/features/auth/services/socialLoginFlow";
 import {
+  backendAuthCapabilities,
   createInviteJoinRequestBody,
   createLoginRequestBody,
   createRefreshRequestBody,
@@ -69,6 +70,22 @@ function verifyKoreanAuthErrorMessages() {
     "specific Korean app errors must remain unchanged",
   );
 }
+
+assert(
+  buildAuthReturnPath("/trips/room-1/explore", { tripId: "room-1", origin: "workspace" })
+    === "/trips/room-1/explore?origin=workspace",
+  "authentication return path must preserve workspace explore context without duplicating a path-bound tripId",
+);
+assert(
+  buildAuthReturnPath("/places/place-1", { placeId: "place-1", tripId: "room-1", origin: "room", returnTo: "/ignored" })
+    === "/places/place-1?origin=room&tripId=room-1",
+  "authentication return path must preserve trip place context without duplicating placeId or nesting returnTo",
+);
+assert(
+  buildAuthReturnPath("/trips/room-1/suggestions/suggestion-1", { tripId: "room-1", suggestionId: "suggestion-1", source: "analysis" })
+    === "/trips/room-1/suggestions/suggestion-1?source=analysis",
+  "authentication return path must omit every dynamic segment already represented by the concrete pathname",
+);
 
 async function expectApiError(operation: Promise<unknown>, code?: string) {
   try {
@@ -292,6 +309,39 @@ async function verifyMultipartRequestBody() {
   }
 }
 
+async function verifyRequestTimeout() {
+  const originalFetch = globalThis.fetch;
+  const client = new NativeApiClient("https://api.example.test/api");
+  try {
+    globalThis.fetch = ((_input, init) => new Promise<Response>((_resolve, reject) => {
+      const abort = () => {
+        const error = new Error("aborted");
+        error.name = "AbortError";
+        reject(error);
+      };
+      if (init?.signal?.aborted) abort();
+      else init?.signal?.addEventListener("abort", abort, { once: true });
+    })) as typeof fetch;
+
+    const startedAt = Date.now();
+    await client.request({ path: "/slow", auth: false, timeoutMs: 1_000 }).then(
+      () => { throw new Error("timed-out request unexpectedly succeeded"); },
+      (error: unknown) => assert(error instanceof ApiTimeoutError, "an internally timed-out request must produce the retryable Korean timeout error"),
+    );
+    assert(Date.now() - startedAt < 2_500, "a stalled API request must not leave the UI loading indefinitely");
+
+    const caller = new AbortController();
+    const request = client.request({ path: "/cancelled", auth: false, signal: caller.signal, timeoutMs: 30_000 });
+    caller.abort();
+    await request.then(
+      () => { throw new Error("caller-aborted request unexpectedly succeeded"); },
+      (error: unknown) => assert(error instanceof Error && error.name === "AbortError", "navigation cancellation must remain distinguishable from a network timeout"),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
 async function verifyKakaoNativeTokens() {
   let accessInitializedWith: string | undefined;
   let accessLoginNonce: string | undefined;
@@ -380,7 +430,7 @@ async function verifySocialLoginContracts() {
     },
   }).then(
     () => { throw new Error("unsupported Google login unexpectedly reached the backend"); },
-    (error: unknown) => assert(error instanceof Error && error.message.includes("지원하지 않아요"), "Google login must fail with a clear unsupported-provider error"),
+    (error: unknown) => assert(error instanceof Error && error.message.includes("Google 로그인") && error.message.includes("이용할 수 없어요"), "Google login must fail with a clear unavailable-provider error"),
   );
   assert(googleCalls.length === 0 && googleKakaoTokenCalls === 0, "unsupported Google login must make no SDK or backend request");
   assert(supportsBackendSocialProvider("kakao") && !supportsBackendSocialProvider("google"), "the capability list must match the backend OAuth endpoints");
@@ -396,8 +446,9 @@ function verifyBackendAuthRequestBodies() {
   const invite = createInviteJoinRequestBody({ code: " abcd1234 ", nickname: " 게스트 ", tripId: "client-only-trip" });
   assert(invite.inviteCode === "ABCD1234" && invite.nickname === "게스트" && Object.keys(invite).length === 2, "invite join must omit client-only fields and metadata");
 
-  const refresh = createRefreshRequestBody("refresh-token");
-  assert(refresh.refreshToken === "refresh-token" && Object.keys(refresh).length === 1, "refresh must send only refreshToken");
+  const operationId = "8fb9d9a8-71c3-42fc-9690-c18e274f3122";
+  const refresh = createRefreshRequestBody("refresh-token", operationId);
+  assert(refresh.refreshToken === "refresh-token" && refresh.operationId === operationId && Object.keys(refresh).length === 2, "refresh must send refreshToken and the stable operationId");
 }
 
 async function verifyGoogleNativeOidc() {
@@ -518,7 +569,12 @@ function verifyInviteLoginReturnFlow() {
   assert(returnTo === "/invite/AB12CD34?tripId=trip%2Fid&revision=rev%201", "invite return path must preserve normalized code and mock link metadata");
   assert(resolveAuthReturnTo(returnTo, false) === returnTo, "a member login must return to the pending invite route");
   assert(resolveAuthReturnTo("/signup-email?returnTo=/trips/1", false) === undefined, "auth entry screens must not form a return loop");
+  assert(resolveAuthReturnTo("/(auth)/login?returnTo=/trips/1", false) === undefined, "route-group aliases must not bypass the auth return-loop guard");
+  assert(resolveAuthReturnTo("/login/", false) === undefined, "trailing slashes must not bypass the auth return-loop guard");
+  assert(resolveAuthReturnTo("/log%2569n", false) === undefined, "nested path encoding must not bypass the auth return-loop guard");
   assert(resolveAuthReturnTo("//outside.example", false) === undefined, "external protocol-relative return targets must be rejected");
+  assert(resolveAuthReturnTo("/\\outside.example", false) === undefined, "backslash-normalized external return targets must be rejected");
+  assert(resolveAuthReturnTo("/trips/%250Aroom-a", false) === undefined, "nested encoded control characters must be rejected");
   assert(resolveAuthReturnTo("/trips/room-a", true) === "/trips/room-a", "a guest may return to an invited room");
   assert(resolveAuthReturnTo(returnTo, true) === undefined, "an existing guest may not use login return handling to switch invite rooms");
   assert(inviteErrorMessage(new ApiError("expired", { status: 410, code: "INVITE_EXPIRED" }), "anonymous").includes("만료"), "expired invite errors must be actionable");
@@ -533,6 +589,7 @@ async function main() {
   await verifyTenConcurrentExpiredRequests();
   await verifyApi401Policy();
   await verifyMultipartRequestBody();
+  await verifyRequestTimeout();
   await verifyGoogleNativeOidc();
   await verifyKakaoNativeTokens();
   await verifySocialLoginContracts();
@@ -560,8 +617,16 @@ async function main() {
   assert(refreshRetryDelayMs(0, 0.5) === 300 && refreshRetryDelayMs(1, 0.5) === 600, "refresh retry must use bounded exponential backoff");
   assert(restrictedFeatureMessage("guest", "schedule-edit").includes("후보 장소 추가"), "guest schedule denial must explain the still-allowed candidate action");
   assert(apiPermissionMessage(new ApiError("Forbidden", { status: 403 }), "guest", "duri", "fallback").includes("회원 전용"), "403 messaging must combine the requested feature with guest session kind");
+  assert(apiPermissionMessage(new ApiError("Cannot POST /api/v1/invite", { status: 404 }), "member", "room-join", "초대를 확인하지 못했어요.") === "초대를 확인하지 못했어요.", "invite flows must not expose raw routes");
+  assert(apiPermissionMessage(new ApiError("초대 링크가 만료됐어요.", { status: 410 }), "member", "room-join", "fallback") === "초대 링크가 만료됐어요.", "useful Korean invite errors must remain visible");
   assert(guestPagePolicy.allowed.includes("장소 탐색 및 장소 상세"), "guests must retain read-only explore access");
   assert(guestPagePolicy.memberOnly.includes("저장 장소"), "saved places must remain member-only");
+  assert(
+    !backendAuthCapabilities.socialIdentityLinking
+      && !backendAuthCapabilities.guestUpgrade
+      && !backendAuthCapabilities.accountDeletion,
+    "unsupported account linking, guest transfer, and deletion controls must stay hidden until matching endpoints exist",
+  );
   console.log("Mobile auth verification passed: provider login contracts, token recovery, terminal-code policy, and account-scoped local document/OCR/TODO isolation");
 }
 

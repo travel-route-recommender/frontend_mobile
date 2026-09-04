@@ -1,12 +1,14 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Card, PrimaryButton, SecondaryButton, TextField } from "../../../components/common";
 import type { ItineraryItem, Place } from "../../../domain";
 import { queryClient } from "../../../query/queryClient";
 import { queryKeys } from "../../../query/keys";
+import { toUserFacingApiErrorMessage } from "../../../services/userFacingApiError";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
+import { plainDuriUserText } from "../../duri/presentation/plainDuriUserText";
 import {
   apiRoomTodoToDraft,
   createApiRoomTodo,
@@ -32,6 +34,10 @@ type EditorState = {
   instanceKey: string;
 };
 type PendingDelete = { todo: ApiRoomTodo; mutationId: string };
+
+function automaticDuriText(todo: ApiRoomTodo, value: string) {
+  return todo.source.kind === "duriAnalysis" && !todo.source.userEdited ? plainDuriUserText(value) : value;
+}
 
 const filterOptions: readonly { value: Filter; label: string }[] = [
   { value: "active", label: "할 일" },
@@ -169,7 +175,7 @@ export function ApiTripTodoSection({
   const refetchAfterMutation = async (successMessage: string) => {
     const refreshed = await query.refetch();
     setMessage(refreshed.isError
-      ? `${successMessage} 서버 저장은 완료됐지만 최신 목록을 다시 불러오지 못했어요. 다시 불러와 확인해 주세요.`
+      ? `${successMessage} 저장은 완료됐지만 최신 목록을 다시 불러오지 못했어요. 다시 불러와 확인해 주세요.`
       : successMessage);
   };
 
@@ -196,9 +202,12 @@ export function ApiTripTodoSection({
 
   const openEdit = (todo: ApiRoomTodo) => {
     setMessage("");
+    const draft = apiRoomTodoToDraft(todo);
     setEditor({
       todo,
-      draft: apiRoomTodoToDraft(todo),
+      draft: todo.source.kind === "duriAnalysis" && !todo.source.userEdited
+        ? { ...draft, title: automaticDuriText(todo, draft.title), description: automaticDuriText(todo, draft.description) }
+        : draft,
       mutationId: createApiTodoMutationId("todo-update"),
       instanceKey: createApiTodoMutationId("todo-editor"),
     });
@@ -230,15 +239,13 @@ export function ApiTripTodoSection({
         setEditor((current) => current ? { ...current, todo: latest } : current);
         return {
           ok: false as const,
-          message: "다른 참여자가 먼저 수정했어요. 최신 내용은 목록에 반영했고 작성 중인 입력은 유지했습니다. 내용을 확인한 뒤 다시 저장하면 최신 revision을 기준으로 적용합니다.",
+          message: "다른 참여자가 먼저 수정했어요. 최신 내용은 목록에 반영했고 작성 중인 입력은 유지했습니다. 내용을 확인한 뒤 다시 저장해 주세요.",
         };
       }
       const refreshed = await query.refetch();
       return {
         ok: false as const,
-        message: error instanceof Error
-          ? `${error.message} ${refreshed.isError ? "최신 서버 목록도 확인하지 못했어요." : "최신 서버 목록을 다시 확인했어요."} 작성 중인 내용은 유지했으며 같은 창에서 다시 시도할 수 있습니다.`
-          : "TODO 저장 결과를 확인하지 못했어요. 작성 중인 내용은 유지했습니다.",
+        message: `${toUserFacingApiErrorMessage(error, "TODO를 저장하지 못했어요.")} ${refreshed.isError ? "최신 TODO 목록도 확인하지 못했어요." : "최신 TODO 목록을 다시 확인했어요."} 작성 중인 내용은 유지했으며 같은 창에서 다시 시도할 수 있습니다.`,
       };
     } finally {
       setBusy(false);
@@ -263,9 +270,7 @@ export function ApiTripTodoSection({
         setMessage("다른 참여자가 먼저 수정해 최신 TODO를 불러왔어요. 변경 내용을 확인한 뒤 다시 시도해 주세요.");
       } else {
         const refreshed = await query.refetch();
-        setMessage(error instanceof Error
-          ? `${error.message} ${refreshed.isError ? "최신 목록도 확인하지 못했어요." : "최신 서버 목록에서 반영 여부를 확인해 주세요."}`
-          : "TODO 변경 결과를 확인하지 못했어요.");
+        setMessage(`${toUserFacingApiErrorMessage(error, "TODO 변경 결과를 확인하지 못했어요.")} ${refreshed.isError ? "최신 목록도 확인하지 못했어요." : "새로 불러온 목록에서 반영 여부를 확인해 주세요."}`);
       }
     } finally {
       setBusy(false);
@@ -296,10 +301,10 @@ export function ApiTripTodoSection({
           else removeCachedTodo(target.todo.id);
           setPendingDelete(undefined);
           setMessage(refreshedTodo
-            ? "응답은 확인하지 못했지만 서버 목록에서 자동 TODO가 보관·억제된 것을 확인했어요."
-            : "응답은 확인하지 못했지만 서버 목록에서 삭제된 것을 확인했어요.");
+            ? "응답은 확인하지 못했지만 새로 불러온 목록에서 자동 TODO가 보관된 것을 확인했어요."
+            : "응답은 확인하지 못했지만 새로 불러온 목록에서 삭제된 것을 확인했어요.");
         } else {
-          setMessage(error instanceof Error ? error.message : "TODO 삭제 결과를 확인하지 못했어요.");
+          setMessage(toUserFacingApiErrorMessage(error, "TODO 삭제 결과를 확인하지 못했어요. 다시 시도해 주세요."));
         }
       }
     } finally {
@@ -308,24 +313,23 @@ export function ApiTripTodoSection({
   };
 
   if (query.isLoading && !query.data) return <Card style={styles.card}><Text style={styles.emptyTitle}>공유 TODO를 불러오는 중이에요</Text></Card>;
-  if (query.error && !query.data) return <Card style={styles.card}><Text style={styles.emptyTitle}>공유 TODO를 불러오지 못했어요</Text><Text accessibilityRole="alert" style={styles.error}>{query.error instanceof Error ? query.error.message : "서버 응답을 확인할 수 없어요."}</Text><SecondaryButton label="다시 불러오기" onPress={() => { void query.refetch(); }} /></Card>;
+  if (query.error && !query.data) return <Card style={styles.card}><Text style={styles.emptyTitle}>공유 TODO를 불러오지 못했어요</Text><Text accessibilityRole="alert" style={styles.error}>{toUserFacingApiErrorMessage(query.error, "잠시 후 다시 불러와 주세요.")}</Text><SecondaryButton label="다시 불러오기" onPress={() => { void query.refetch(); }} /></Card>;
 
   return <Card style={styles.card}>
     <View style={styles.heading}>
-      <View style={styles.headingCopy}><Text style={styles.eyebrow}>SHARED TRIP TODO</Text><Text style={styles.title}>여행 준비 TODO</Text><Text style={styles.description}>서버 여행방의 참여자들과 제목, 내용, 마감, 체크리스트와 관련 일정을 공유합니다.</Text></View>
+      <View style={styles.headingCopy}><Text style={styles.eyebrow}>함께 준비하기</Text><Text style={styles.title}>여행 준비 TODO</Text><Text style={styles.description}>동행자와 할 일, 마감, 체크리스트와 관련 일정을 함께 관리해요.</Text></View>
       <View style={styles.count}><Text style={styles.countValue}>{activeCount}</Text><Text style={styles.countLabel}>남음</Text></View>
     </View>
-    <View style={styles.contractNotice}><Text style={styles.contractTitle}>API 모드 저장 범위</Text><Text style={styles.contractText}>담당자는 한 명만 지정할 수 있어요. 서버가 표현하지 못하는 ‘확인 필요’ 상태, 태그, 개인 미리 알림과 다시 알림은 공유 TODO에 저장하지 않습니다.</Text></View>
-    {query.error ? <View style={styles.staleNotice}><Text style={styles.staleTitle}>최신 목록을 확인하지 못했어요</Text><Text style={styles.staleText}>아래에는 마지막으로 서버에서 확인한 목록만 표시합니다. 로컬 TODO로 대신하지 않으며 다시 연결될 때까지 변경을 중지합니다.</Text><SecondaryButton label="다시 불러오기" onPress={() => { void query.refetch(); }} /></View> : null}
+    {query.error ? <View style={styles.staleNotice}><Text style={styles.staleTitle}>최신 목록을 확인하지 못했어요</Text><Text style={styles.staleText}>마지막으로 확인한 목록을 표시하고 있어요. 연결이 복구되면 다시 불러와 주세요.</Text><SecondaryButton label="다시 불러오기" onPress={() => { void query.refetch(); }} /></View> : null}
     {message ? <Text accessibilityRole="alert" style={styles.message}>{message}</Text> : null}
     <View style={styles.filters}>{filterOptions.map((option) => <Pressable key={option.value} accessibilityRole="tab" accessibilityState={{ selected: filter === option.value }} onPress={() => setFilter(option.value)} style={({ pressed }) => [styles.filter, filter === option.value && styles.filterSelected, pressed && styles.pressed]}><Text style={[styles.filterText, filter === option.value && styles.filterTextSelected]}>{option.label}</Text></Pressable>)}</View>
     {filtered.length ? <View style={styles.list}>{filtered.map((todo) => {
       const canMutate = !readOnly && (isOwner || todo.createdBy === currentUserId || todo.assigneeId === currentUserId);
       const completedChecklist = todo.checklist.filter((entry) => entry.done).length;
       return <View key={todo.id} style={[styles.todo, todo.archived && styles.todoMuted]}>
-        <View style={styles.todoHeading}><View style={styles.todoCopy}><Text style={styles.todoTitle}>{todo.title}</Text>{todo.description ? <Text numberOfLines={3} style={styles.todoDescription}>{todo.description}</Text> : null}</View><Text style={[styles.priority, todo.priority === "urgent" && styles.priorityUrgent]}>{priorityLabel[toApiTodoUiPriority(todo.priority)]}</Text></View>
+        <View style={styles.todoHeading}><View style={styles.todoCopy}><Text style={styles.todoTitle}>{automaticDuriText(todo, todo.title)}</Text>{todo.description ? <Text numberOfLines={3} style={styles.todoDescription}>{automaticDuriText(todo, todo.description)}</Text> : null}</View><Text style={[styles.priority, todo.priority === "urgent" && styles.priorityUrgent]}>{priorityLabel[toApiTodoUiPriority(todo.priority)]}</Text></View>
         <View style={styles.metaRow}><Text style={styles.meta}>{todo.archived ? "보관" : statusLabel[toApiTodoUiStatus(todo.status)]}</Text><Text style={styles.meta}>{dateLabel(todo)}</Text><Text style={styles.meta}>{todo.assigneeId ? memberNames[todo.assigneeId] ?? "알 수 없는 담당자" : "담당자 없음"}</Text></View>
-        <Text style={styles.source}>{sourceLabel[todo.source.kind]} · revision {todo.revision}{todo.source.userEdited ? " · 사용자 편집됨" : ""}</Text>
+        <Text style={styles.source}>{sourceLabel[todo.source.kind]}{todo.source.userEdited ? " · 직접 수정함" : ""}</Text>
         {todo.checklist.length ? <View style={styles.checklist}>{todo.checklist.map((entry) => <Pressable key={entry.id} accessibilityRole="checkbox" accessibilityState={{ checked: entry.done }} disabled={!canMutate || mutationsDisabled} onPress={() => void updateQuickly(todo, { ...apiRoomTodoToDraft(todo), checklist: todo.checklist.map((item) => ({ id: item.id, title: item.title, done: item.id === entry.id ? !item.done : item.done })) }, "체크리스트를 저장했어요.")} style={({ pressed }) => [styles.checkItem, (!canMutate || mutationsDisabled) && styles.disabled, pressed && styles.pressed]}><Text style={styles.checkIcon}>{entry.done ? "✓" : "○"}</Text><Text style={[styles.checkText, entry.done && styles.completedText]}>{entry.title}</Text></Pressable>)}</View> : null}
         {todo.checklist.length ? <Text style={styles.checkSummary}>체크리스트 {completedChecklist}/{todo.checklist.length}</Text> : null}
         {canMutate ? <View style={styles.actions}><Pressable accessibilityRole="button" disabled={mutationsDisabled} onPress={() => void updateQuickly(todo, { ...apiRoomTodoToDraft(todo), status: todo.status === "done" ? "open" : "completed" }, todo.status === "done" ? "TODO를 다시 열었어요." : "TODO를 완료했어요.")} style={({ pressed }) => [styles.action, mutationsDisabled && styles.disabled, pressed && styles.pressed]}><Text style={styles.actionText}>{todo.status === "done" ? "다시 열기" : "완료"}</Text></Pressable><Pressable accessibilityRole="button" disabled={mutationsDisabled} onPress={() => openEdit(todo)} style={({ pressed }) => [styles.action, mutationsDisabled && styles.disabled, pressed && styles.pressed]}><Text style={styles.actionText}>편집</Text></Pressable><Pressable accessibilityRole="button" disabled={mutationsDisabled} onPress={() => setPendingDelete({ todo, mutationId: createApiTodoMutationId("todo-delete") })} style={({ pressed }) => [styles.deleteAction, mutationsDisabled && styles.disabled, pressed && styles.pressed]}><Text style={styles.deleteText}>삭제</Text></Pressable></View> : null}
@@ -345,7 +349,7 @@ export function ApiTripTodoSection({
       onSave={saveEditor}
     /> : null}
     <Modal visible={Boolean(pendingDelete)} transparent animationType="fade" onRequestClose={() => { if (!busy) setPendingDelete(undefined); }}>
-      <View style={styles.confirmOverlay}><Pressable accessibilityRole="button" accessibilityLabel="TODO 삭제 취소" disabled={busy} onPress={() => setPendingDelete(undefined)} style={StyleSheet.absoluteFill} /><SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.confirmSafeArea}><View accessibilityViewIsModal style={styles.confirmCard}><Text style={styles.confirmTitle}>TODO를 삭제할까요?</Text><Text style={styles.confirmText}>{pendingDelete?.todo.source.kind === "manual" ? "직접 만든 TODO는 서버에서 삭제되며 되돌릴 수 없어요." : "자동 TODO는 보관되고 같은 원인으로 즉시 다시 생성되지 않아요."}</Text><Pressable accessibilityRole="button" disabled={busy} onPress={() => { void removeTodo(); }} style={({ pressed }) => [styles.confirmDelete, busy && styles.disabled, pressed && styles.pressed]}><Text style={styles.confirmDeleteText}>{busy ? "처리 중…" : "삭제"}</Text></Pressable><SecondaryButton label="취소" disabled={busy} onPress={() => setPendingDelete(undefined)} /></View></SafeAreaView></View>
+      <View style={styles.confirmOverlay}><Pressable accessibilityRole="button" accessibilityLabel="TODO 삭제 취소" disabled={busy} onPress={() => setPendingDelete(undefined)} style={StyleSheet.absoluteFill} /><SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.confirmSafeArea}><View accessibilityViewIsModal style={styles.confirmCard}><Text style={styles.confirmTitle}>TODO를 삭제할까요?</Text><Text style={styles.confirmText}>{pendingDelete?.todo.source.kind === "manual" ? "직접 만든 TODO는 동행자 목록에서도 삭제되며 되돌릴 수 없어요." : "자동 TODO는 보관되고 같은 원인으로 즉시 다시 생성되지 않아요."}</Text><Pressable accessibilityRole="button" disabled={busy} onPress={() => { void removeTodo(); }} style={({ pressed }) => [styles.confirmDelete, busy && styles.disabled, pressed && styles.pressed]}><Text style={styles.confirmDeleteText}>{busy ? "처리 중…" : "삭제"}</Text></Pressable><SecondaryButton label="취소" disabled={busy} onPress={() => setPendingDelete(undefined)} /></View></SafeAreaView></View>
     </Modal>
   </Card>;
 }
@@ -425,9 +429,10 @@ function ApiTodoEditorModal({
   ];
 
   return <Modal visible transparent animationType="slide" navigationBarTranslucent statusBarTranslucent onRequestClose={onClose}>
+    <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : Platform.OS === "android" ? "height" : undefined} style={styles.keyboardAvoider}>
     <View style={styles.editorOverlay}><SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.editorSafeArea}><Pressable accessibilityRole="button" accessibilityLabel="TODO 편집 닫기" disabled={busy} onPress={onClose} style={StyleSheet.absoluteFill} /><View accessibilityViewIsModal style={styles.editorSheet}><View style={styles.handle} /><Text style={styles.editorTitle}>{initialTodo ? "공유 TODO 수정" : "공유 TODO 추가"}</Text><ScrollView style={styles.editorScroll} contentContainerStyle={styles.editorContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator>
-      {initialTodo?.source.kind !== "manual" ? <View style={styles.generatedNotice}><Text style={styles.generatedTitle}>자동 생성된 TODO</Text><Text style={styles.generatedText}>내용을 수정하면 서버가 사용자 편집 항목으로 보존하며 자동 해소가 덮어쓰지 않습니다.</Text></View> : null}
-      <View style={styles.contractNotice}><Text style={styles.contractTitle}>공유 가능한 항목만 편집합니다</Text><Text style={styles.contractText}>담당자 한 명, 서버 상태, 우선순위, 마감, 체크리스트와 일정·문서 연결을 저장합니다. 태그와 개인 알림은 이 창에서 제공하지 않습니다.</Text></View>
+      {initialTodo?.source.kind !== "manual" ? <View style={styles.generatedNotice}><Text style={styles.generatedTitle}>자동 생성된 TODO</Text><Text style={styles.generatedText}>내용을 직접 수정하면 이후 자동 정리 과정에서도 수정한 내용을 유지해요.</Text></View> : null}
+      <View style={styles.contractNotice}><Text style={styles.contractTitle}>동행자와 함께 관리해요</Text><Text style={styles.contractText}>상태, 우선순위, 마감, 담당자, 체크리스트와 관련 일정·문서를 함께 저장할 수 있어요.</Text></View>
       <TextField label="제목 *" value={draft.title} onChangeText={(value) => update("title", value)} maxLength={200} placeholder="예: KTX 승차권 시간 다시 확인" />
       <TextField label="내용" value={draft.description} onChangeText={(value) => update("description", value)} multiline maxLength={2000} placeholder="해야 할 일과 확인 사항을 적어 주세요." />
       <FieldGroup label="상태"><ChoiceRow>{statusOptions.map((option) => <Choice key={option.value} label={option.label} selected={draft.status === option.value} onPress={() => update("status", option.value)} />)}</ChoiceRow></FieldGroup>
@@ -438,11 +443,12 @@ function ApiTodoEditorModal({
       <FieldGroup label={`체크리스트 ${draft.checklist.filter((entry) => entry.done).length}/${draft.checklist.length}`}><View style={styles.inlineInput}><View style={styles.fieldFlex}><TextField label="새 체크 항목" value={checklistTitle} onChangeText={setChecklistTitle} maxLength={200} placeholder="확인할 단계를 입력" /></View><Pressable accessibilityRole="button" onPress={addChecklist} style={({ pressed }) => [styles.addSmall, pressed && styles.pressed]}><Text style={styles.addSmallText}>추가</Text></Pressable></View>{draft.checklist.map((entry) => <View key={entry.id} style={styles.editorCheckItem}><Pressable accessibilityRole="checkbox" accessibilityState={{ checked: entry.done }} onPress={() => update("checklist", draft.checklist.map((item) => item.id === entry.id ? { ...item, done: !item.done } : item))}><Text style={styles.checkIcon}>{entry.done ? "✓" : "○"}</Text></Pressable><Text style={[styles.checkText, entry.done && styles.completedText]}>{entry.title}</Text><Pressable accessibilityRole="button" onPress={() => update("checklist", draft.checklist.filter((item) => item.id !== entry.id))}><Text style={styles.deleteText}>삭제</Text></Pressable></View>)}</FieldGroup>
       {itineraryOptions.length ? <FieldGroup label="관련 일정"><OptionCheckList options={itineraryOptions} selectedIds={draft.links.filter((link) => link.type === "scheduleItem").map((link) => link.targetId)} onToggle={(id) => toggleLink("scheduleItem", id)} /></FieldGroup> : null}
       {documentOptions.length ? <FieldGroup label="관련 공유 문서"><OptionCheckList options={documentOptions} selectedIds={draft.links.filter((link) => link.type === "document").map((link) => link.targetId)} onToggle={(id) => toggleLink("document", id)} /></FieldGroup> : null}
-      {draft.links.some((link) => link.type === "reservation" || link.type === "ticket") ? <Text style={styles.helper}>서버가 자동으로 연결한 예약·티켓 관계는 이 편집에서 그대로 보존합니다.</Text> : null}
+      {draft.links.some((link) => link.type === "reservation" || link.type === "ticket") ? <Text style={styles.helper}>예약·티켓과 연결된 정보는 내용을 수정해도 그대로 유지돼요.</Text> : null}
       {message ? <Text accessibilityRole="alert" style={styles.error}>{message}</Text> : null}
       <PrimaryButton label={initialTodo ? "수정 내용 저장" : "공유 TODO 추가"} loading={busy} onPress={() => { void submit(); }} />
       <SecondaryButton label="취소" disabled={busy} onPress={onClose} />
     </ScrollView></View></SafeAreaView></View>
+    </KeyboardAvoidingView>
   </Modal>;
 }
 
@@ -510,12 +516,13 @@ const styles = StyleSheet.create({
   confirmText: { ...typography.body, color: colors.textSecondary },
   confirmDelete: { minHeight: 52, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: colors.danger },
   confirmDeleteText: { ...typography.button, color: colors.white },
+  keyboardAvoider: { flex: 1 },
   editorOverlay: { flex: 1, backgroundColor: colors.overlay },
   editorSafeArea: { flex: 1, width: "100%", justifyContent: "flex-end" },
   editorSheet: { width: "100%", maxWidth: 680, maxHeight: "94%", alignSelf: "center", overflow: "hidden", gap: spacing.sm, borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl, backgroundColor: colors.surface, padding: spacing.lg },
   handle: { width: 44, height: 5, alignSelf: "center", borderRadius: radius.pill, backgroundColor: colors.borderStrong },
   editorTitle: { ...typography.title, color: colors.text },
-  editorScroll: { minHeight: 0 },
+  editorScroll: { minHeight: 0, flexShrink: 1 },
   editorContent: { gap: spacing.lg, paddingBottom: spacing.sm },
   generatedNotice: { gap: spacing.xxs, borderRadius: radius.md, backgroundColor: colors.primarySoft, padding: spacing.sm },
   generatedTitle: { ...typography.bodyStrong, color: colors.primary },

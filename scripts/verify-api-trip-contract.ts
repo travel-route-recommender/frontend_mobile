@@ -4,8 +4,17 @@ import { workspaceScheduleApiGateway } from "../src/features/workspace/services/
 import { buildApiDuriAnalysisInput } from "../src/features/duri/logic/apiAnalysisInput";
 import { createDuriAnalysisSession } from "../src/features/duri/logic/analysisSession";
 import { createDuriAnalysisSnapshot, createDuriInputFingerprint, getDuriAnalysisAvailability } from "../src/features/duri/logic/analysisSnapshot";
-import { derivePreferenceAutoFillDefaults, planPreferenceAutoFill } from "../src/features/duri/logic/preferenceAutoFill";
+import {
+  buildPreferenceAutoFillSuggestionEnvelope,
+  derivePreferenceAutoFillDefaults,
+  planPreferenceAutoFill,
+} from "../src/features/duri/logic/preferenceAutoFill";
+import { createDuriSuggestionPreview } from "../src/features/duri/logic/suggestionPreview";
+import { buildApiProposalMetadata } from "../src/features/duri/logic/apiProposalMetadata";
+import { enrichDuriAnalysisInput } from "../src/features/duri/services/duriEvidenceService";
 import { selectTripHomeDuriState } from "../src/features/trips/logic/selectTripHomeDuriState";
+import { getTripDates } from "../src/utils/schedule";
+import type { DuriSuggestionEnvelope, DuriSuggestionPreview } from "../src/features/duri/types";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -23,8 +32,6 @@ async function main() {
     body: JSON.stringify({
       email,
       password,
-      installationId: "duri-api-contract-verifier",
-      platform: "unknown",
     }),
   });
   assert(loginResponse.ok, `fixture 로그인 실패: HTTP ${loginResponse.status}`);
@@ -56,7 +63,8 @@ async function main() {
   assert(analysisInput, "API 일정·planning·성향 스냅샷을 두리 분석 입력으로 연결해야 합니다.");
   const analysisAvailability = getDuriAnalysisAvailability({ input: analysisInput, engineAvailable: true });
   assert(analysisAvailability.canAnalyze, `실제 API 여행방을 분석할 수 있어야 합니다: ${analysisAvailability.message}`);
-  const analysisSession = createDuriAnalysisSession(analysisInput, new Date().toISOString());
+  const enrichedAnalysisInput = await enrichDuriAnalysisInput(analysisInput);
+  const analysisSession = createDuriAnalysisSession(enrichedAnalysisInput, new Date().toISOString());
   const analysisFingerprint = createDuriInputFingerprint(createDuriAnalysisSnapshot(analysisInput));
   assert(analysisSession.tripId === target.id && analysisSession.inputFingerprint === analysisFingerprint, "API roomId와 최신 일정 fingerprint를 분석 session에 보존해야 합니다.");
   const tripHomeDuriState = selectTripHomeDuriState({
@@ -74,10 +82,11 @@ async function main() {
   }
 
   let draftSummary = "skipped";
+  let draftToApply: { envelope: DuriSuggestionEnvelope; preview: DuriSuggestionPreview } | undefined;
   if (process.env.DURI_API_VERIFY_DRAFT === "1") {
-    const defaults = derivePreferenceAutoFillDefaults(analysisInput);
+    const defaults = derivePreferenceAutoFillDefaults(enrichedAnalysisInput);
     assert(defaults.dailyStartTime && defaults.dailyEndTime, "부분 일정의 실제 시간 범위에서 자동 생성 시간창을 만들어야 합니다.");
-    const draft = planPreferenceAutoFill(analysisInput);
+    const draft = planPreferenceAutoFill(enrichedAnalysisInput);
     if (draft.status !== "preview-only") {
       console.log(JSON.stringify({
         defaults,
@@ -94,30 +103,78 @@ async function main() {
     assert(draft.certificate.mandatorySharedPlaceIds.every((placeId) => draft.assignments.some((assignment) => assignment.placeId === placeId)), "미배치 must 후보를 모두 포함해야 합니다.");
     assert(draft.certificate.excludedAvoidPlaceIds.length > 0, "명시적 avoid 후보를 제외한 근거가 필요합니다.");
     assert(draft.certificate.geographicPlacement?.comparableAssignmentCount === draft.assignments.length, "모든 제안 장소를 기존 일정 좌표와 비교해 날짜를 골라야 합니다.");
+    assert(draft.certificate.localApplyEligible, `정상 API 초안은 적용 가능해야 합니다: ${draft.certificate.localApplyBlockReasons.join(" / ")}`);
+    const envelope = buildPreferenceAutoFillSuggestionEnvelope(analysisSession, draft, new Date().toISOString());
+    assert(envelope, "생성된 일정 초안을 적용 가능한 제안 계약으로 변환해야 합니다.");
+    assert(envelope.suggestion.canApply, `정상 API 제안의 canApply가 true여야 합니다: ${envelope.suggestion.unavailableReason ?? "이유 없음"}`);
+    assert(detail.room.startDate && detail.room.endDate, "일정 초안 미리보기에는 확정된 여행 날짜가 필요합니다.");
+    const preview = createDuriSuggestionPreview({
+      envelope,
+      tripDates: getTripDates(detail.room.startDate, detail.room.endDate),
+      placesById: enrichedAnalysisInput.placesById,
+      candidates: enrichedAnalysisInput.candidates,
+      trip: enrichedAnalysisInput.trip,
+      protectionInput: enrichedAnalysisInput,
+    });
+    assert(preview.validation.valid, `생성 초안이 잠금·예약·복귀 조건을 지켜야 합니다: ${preview.validation.valid ? "" : preview.validation.message}`);
+    const addedIds = new Set(preview.diff.filter((item) => item.kind === "added").map((item) => item.itemId));
+    assert(draft.assignments.every((assignment) => addedIds.has(assignment.itemId)), "미리보기에 생성된 모든 일정이 추가되어야 합니다.");
+    assert(preview.after.length === preview.before.length + draft.assignments.length, "초안 적용 미리보기에서 기존 일정이 사라지면 안 됩니다.");
+    draftToApply = { envelope, preview };
     draftSummary = `${draft.assignments.map((assignment) => `${assignment.date} ${assignment.placeName}`).join(", ")} / ${draft.certificate.selectionBasis} / ${draft.certificate.countBasis}`;
   }
 
   let verifiedVersion = detail.scheduleSnapshot?.scheduleVersion;
   if (process.env.DURI_API_VERIFY_WRITE === "1") {
-    const snapshot = detail.scheduleSnapshot;
-    assert(snapshot && detail.room.startDate && detail.room.endDate, "쓰기 검증에는 날짜가 확정된 schedule snapshot이 필요합니다.");
-    const saved = await workspaceScheduleApiGateway.save({
-      roomId: detail.room.id,
-      tripId: detail.room.id,
-      startDate: detail.room.startDate,
-      endDate: detail.room.endDate,
+    assert(draftToApply, "핵심 쓰기 검증에는 DURI_API_VERIFY_DRAFT=1이 필요합니다.");
+    const latest = await fetchApiTripDetail(target.id, login.user.id);
+    const snapshot = latest.scheduleSnapshot;
+    assert(snapshot && latest.room.startDate && latest.room.endDate, "쓰기 검증에는 날짜가 확정된 schedule snapshot이 필요합니다.");
+    assert(Number.isInteger(latest.room.factsVersion), "제안 적용에는 최신 factsVersion이 필요합니다.");
+    assert(snapshot.scheduleVersion === detail.scheduleSnapshot?.scheduleVersion, "분석 후 일정 버전이 바뀌면 초안을 적용하면 안 됩니다.");
+    const latestInput = buildApiDuriAnalysisInput(latest, login.user.id);
+    assert(latestInput, "적용 직전 최신 API 분석 입력을 다시 구성해야 합니다.");
+    assert(
+      createDuriInputFingerprint(createDuriAnalysisSnapshot(latestInput)) === draftToApply.envelope.baseFingerprint,
+      "분석 후 사실이 변경된 초안은 서버에 보내기 전에 차단해야 합니다.",
+    );
+    const nextItinerary = draftToApply.preview.after.map(({ order: _order, ...item }) => ({
+      ...item,
+      preferredByUserIds: [...item.preferredByUserIds],
+    }));
+    const nextMetadata = buildApiProposalMetadata(snapshot, draftToApply.preview.after, latest.placesById);
+    const saved = await workspaceScheduleApiGateway.applyProposal({
+      roomId: latest.room.id,
+      tripId: latest.room.id,
+      startDate: latest.room.startDate,
+      endDate: latest.room.endDate,
       snapshot,
-      itinerary: snapshot.itinerary,
-      metadataByItemId: snapshot.metadataByItemId,
+      itinerary: nextItinerary,
+      metadataByItemId: nextMetadata,
+      expectedFactsVersion: latest.room.factsVersion as number,
     });
-    assert(saved.scheduleVersion > snapshot.scheduleVersion, "동일 일정 저장도 새 scheduleVersion을 반환해야 합니다.");
+    assert(saved.scheduleVersion > snapshot.scheduleVersion, "제안 적용은 새 scheduleVersion을 반환해야 합니다.");
+    assert(saved.itinerary.length === nextItinerary.length, "서버가 적용한 일정 수가 미리보기와 같아야 합니다.");
+    for (const itemId of Object.keys(snapshot.priorityProtectionsByItemId)) {
+      const before = snapshot.itinerary.find((item) => item.id === itemId);
+      const after = saved.itinerary.find((item) => item.id === itemId);
+      assert(before && after, `보호 일정 ${itemId}이 적용 결과에 남아 있어야 합니다.`);
+      assert(
+        before.placeId === after.placeId
+          && before.date === after.date
+          && before.startTime === after.startTime
+          && before.durationMinutes === after.durationMinutes,
+        `보호 일정 ${itemId}의 장소·날짜·시간이 바뀌면 안 됩니다.`,
+      );
+    }
     const reread = await fetchApiTripDetail(target.id, login.user.id);
     assert(reread.scheduleSnapshot?.scheduleVersion === saved.scheduleVersion, "저장 후 재조회한 scheduleVersion이 일치해야 합니다.");
-    assert(JSON.stringify(reread.itinerary) === JSON.stringify(saved.itinerary), "동일 일정 저장 왕복에서 프론트 일정이 달라지면 안 됩니다.");
+    assert(reread.itinerary.length === saved.itinerary.length, "재조회 후 적용한 일정 수가 유지되어야 합니다.");
+    assert(draftToApply.preview.diff.filter((item) => item.kind === "added").every((item) => reread.itinerary.some((savedItem) => savedItem.id === item.itemId)), "생성한 모든 일정이 서버 재조회 결과에 남아 있어야 합니다.");
     verifiedVersion = saved.scheduleVersion;
   }
 
-  console.log(`API trip contract verification passed: rooms=${rooms.length}, members=${detail.room.members.length}, candidates=${detail.candidates.length}, itinerary=${detail.itinerary.length}, analysisIssues=${analysisSession.issues.length}, scheduleVersion=${verifiedVersion ?? "n/a"}, draft=${draftSummary}, write=${process.env.DURI_API_VERIFY_WRITE === "1" ? "verified" : "skipped"}`);
+  console.log(`API trip contract verification passed: rooms=${rooms.length}, members=${detail.room.members.length}, candidates=${detail.candidates.length}, itinerary=${detail.itinerary.length}, analysisIssues=${analysisSession.issues.length}, scheduleVersion=${verifiedVersion ?? "n/a"}, draft=${draftSummary}, write=${process.env.DURI_API_VERIFY_WRITE === "1" ? "draft-applied" : "skipped"}`);
   } finally {
     // 계약 검증 로그인이 실제 앱의 fixture 계정 Refresh Token 보관 한도를
     // 잠식하지 않도록 검증에 발급된 세션만 정리한다.

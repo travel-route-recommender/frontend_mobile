@@ -63,8 +63,19 @@ export type ApiTripDocument = {
   download?: ApiTripDocumentDownload;
 };
 
+export type ApiTripDocumentCollection = {
+  documents: ApiTripDocument[];
+  scheduleVersion: number;
+  factsVersion: number;
+};
+
+export type ApiTripDocumentMutationVersion = Pick<
+  ApiTripDocumentCollection,
+  "scheduleVersion" | "factsVersion"
+>;
+
 export type ApiTripDocumentUploadResult =
-  | { status: "uploaded"; document: ApiTripDocument }
+  | ({ status: "uploaded"; document: ApiTripDocument } & ApiTripDocumentMutationVersion)
   | { status: "cancelled" }
   | { status: "rejected"; message: string }
   | { status: "error"; message: string };
@@ -204,6 +215,10 @@ export function parseApiTripDocument(value: unknown, path = "document"): ApiTrip
 }
 
 export function parseApiTripDocumentList(value: unknown) {
+  return parseApiTripDocumentCollection(value).documents;
+}
+
+export function parseApiTripDocumentCollection(value: unknown): ApiTripDocumentCollection {
   const record = asRecord(value, "documents");
   if (!Array.isArray(record.data)) return fail("documents.data", "배열 응답이어야 합니다.");
   const documents = record.data.map((entry, index) => parseApiTripDocument(entry, `documents.data[${index}]`));
@@ -212,7 +227,11 @@ export function parseApiTripDocumentList(value: unknown) {
     if (ids.has(document.id)) return fail("documents.data", `중복 문서 ID가 있습니다: ${document.id}`);
     ids.add(document.id);
   }
-  return documents;
+  return {
+    documents,
+    scheduleVersion: nonNegativeInteger(record.scheduleVersion, "documents.scheduleVersion"),
+    factsVersion: nonNegativeInteger(record.factsVersion, "documents.factsVersion"),
+  };
 }
 
 function endpoint(roomId: string, suffix = "documents") {
@@ -220,17 +239,21 @@ function endpoint(roomId: string, suffix = "documents") {
 }
 
 export async function fetchApiTripDocuments(roomId: string, signal?: AbortSignal) {
+  return (await fetchApiTripDocumentCollection(roomId, signal)).documents;
+}
+
+export async function fetchApiTripDocumentCollection(roomId: string, signal?: AbortSignal) {
   const normalizedRoomId = assertRoomId(roomId);
   const payload = await apiClient.request<unknown>({
     path: endpoint(normalizedRoomId),
     auth: true,
     signal,
   });
-  const documents = parseApiTripDocumentList(payload);
-  if (documents.some((document) => document.roomId !== normalizedRoomId)) {
+  const collection = parseApiTripDocumentCollection(payload);
+  if (collection.documents.some((document) => document.roomId !== normalizedRoomId)) {
     return fail("documents.data", "요청한 여행방과 다른 문서가 포함되어 있습니다.");
   }
-  return documents;
+  return collection;
 }
 
 function extensionOf(fileName: string) {
@@ -295,9 +318,15 @@ export async function uploadApiTripDocument(input: {
     body: form,
     auth: true,
   });
-  const document = parseApiTripDocument(payload);
+  const record = asRecord(payload, "documentUpload");
+  const document = parseApiTripDocument(record, "documentUpload");
   if (document.roomId !== roomId) return fail("document.roomId", "업로드한 여행방과 일치해야 합니다.");
-  return { ok: true as const, document };
+  return {
+    ok: true as const,
+    document,
+    scheduleVersion: nonNegativeInteger(record.scheduleVersion, "documentUpload.scheduleVersion"),
+    factsVersion: nonNegativeInteger(record.factsVersion, "documentUpload.factsVersion"),
+  };
 }
 
 export async function pickAndUploadApiTripDocument(input: {
@@ -321,13 +350,22 @@ export async function pickAndUploadApiTripDocument(input: {
   if (!asset) return { status: "error", message: "선택한 문서를 읽을 수 없어요." };
   const uploaded = await uploadApiTripDocument({ ...input, asset });
   return uploaded.ok
-    ? { status: "uploaded", document: uploaded.document }
+    ? {
+        status: "uploaded",
+        document: uploaded.document,
+        scheduleVersion: uploaded.scheduleVersion,
+        factsVersion: uploaded.factsVersion,
+      }
     : { status: "rejected", message: uploaded.message };
 }
 
 function parseDeleteResult(value: unknown) {
   const record = asRecord(value, "documentDelete");
   if (record.success !== true) return fail("documentDelete.success", "true여야 합니다.");
+  return {
+    scheduleVersion: nonNegativeInteger(record.scheduleVersion, "documentDelete.scheduleVersion"),
+    factsVersion: nonNegativeInteger(record.factsVersion, "documentDelete.factsVersion"),
+  };
 }
 
 export async function deleteApiTripDocument(roomId: string, documentId: string) {
@@ -338,7 +376,7 @@ export async function deleteApiTripDocument(roomId: string, documentId: string) 
     method: "DELETE",
     auth: true,
   });
-  parseDeleteResult(payload);
+  return parseDeleteResult(payload);
 }
 
 export async function renewApiTripDocumentDownload(roomId: string, fileUrl: string) {

@@ -93,6 +93,10 @@ export function PreferenceAutoFillTechnicalModal({
             <DuriMathFormula label="같은 분류의 중복 쌍" latex={String.raw`P(S)=\sum_g\frac{n_g(S)(n_g(S)-1)}{2}`} />
             <DuriMathFormula label="좌표가 완전할 때의 지리적 밀집도" latex={String.raw`M(S)=\sum_{e\in MST(S)}d_{haversine}(e)`} />
             <DuriMathFormula label="가중치 없는 구조 비교" latex={String.raw`S^*=\arg\max_{S\in F}^{lex}\left(C(S),-P(S),-M(S)\right)`} />
+            {!plan.certificate.selectionExact && structural?.comparableCoordinateCoverage ? <>
+              <DuriMathFormula label="제한 탐색 중간 묶음의 빠른 응집도" latex={String.raw`D_{chord}(S)=\sum_{i<j}\lVert x_i-x_j\rVert^2=|S|^2-\left\lVert\sum_i x_i\right\rVert^2`} />
+              <Text style={styles.description}>후보를 아직 채우는 중에는 위 단위구면 벡터 값을 선형 시간에 계산해 멀리 흩어진 묶음을 먼저 줄입니다. 완성된 후보 묶음과 마지막 한 장소 교체 비교에서는 다시 좌표상 직선거리 MST를 계산합니다.</Text>
+            </> : null}
             <Text selectable style={styles.mono}>이번 결과 · 분류 {structural?.recognizedCategoryCount ?? 0}개 · 중복 쌍 {structural?.categoryConcentrationPairs ?? 0}개 · {structural?.comparableCoordinateCoverage ? `MST ${Math.round(structural.mstDistanceMeters ?? 0).toLocaleString()}m` : "좌표 불완전으로 거리 비교 제외"}</Text>
             <Text style={styles.warning}>이 기준은 개인 취향이 아니라 비슷한 장소만 반복되는 초안을 피하기 위한 중립 보조 기준입니다. 실제 도로 이동시간은 별도로 확인해야 합니다.</Text>
           </> : <>

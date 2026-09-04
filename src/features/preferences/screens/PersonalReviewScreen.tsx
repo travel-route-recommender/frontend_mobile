@@ -43,9 +43,13 @@ export function PersonalReviewScreen() {
   const setIntroSeen = useAuthSessionStore((state) => state.setOnboardingIntroSeen);
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const leave = () => {
+    if (router.canGoBack()) router.back();
+    else router.replace("/tests/personal");
+  };
 
-  if (!owner) return <Screen><ErrorState message="테스트 세션을 확인할 수 없어요." onRetry={() => router.replace("/(auth)/login")} /></Screen>;
-  if (!draft || !isSameDraftOwner(owner, draft.owner)) return <Screen><AppHeader title="답변 확인" onBack={() => router.back()} /><EmptyState title="검토할 답변이 없어요" description="테스트를 시작하고 모든 항목에 답해 주세요." ctaLabel="테스트 시작" onPress={() => router.replace("/tests/personal")} /></Screen>;
+  if (!owner) return <Screen><ErrorState message="로그인 정보를 확인할 수 없어요." onRetry={() => router.replace("/(auth)/login")} /></Screen>;
+  if (!draft || !isSameDraftOwner(owner, draft.owner)) return <Screen><AppHeader title="답변 확인" onBack={leave} /><EmptyState title="검토할 답변이 없어요" description="테스트를 시작하고 모든 항목에 답해 주세요." ctaLabel="테스트 시작" onPress={() => router.replace("/tests/personal")} /></Screen>;
 
   const editQuestion = (index: number, error?: string) => {
     goToQuestion(index);

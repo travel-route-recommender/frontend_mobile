@@ -39,6 +39,6 @@ export function createInviteJoinRequestBody(input: InviteJoinInput) {
   };
 }
 
-export function createRefreshRequestBody(refreshToken: string) {
-  return { refreshToken };
+export function createRefreshRequestBody(refreshToken: string, operationId: string) {
+  return { refreshToken, operationId };
 }

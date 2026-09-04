@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { PrimaryButton, SecondaryButton, TextField } from "../../../components/common";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
@@ -91,12 +91,13 @@ export function TravelDocumentAddModal({
 
   return <Modal visible={visible} transparent animationType="slide" navigationBarTranslucent statusBarTranslucent onRequestClose={close}>
     <View style={styles.overlay}>
-      <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.safeArea}>
-        <Pressable accessibilityRole="button" accessibilityLabel="문서 추가 닫기" disabled={busy} onPress={close} style={StyleSheet.absoluteFill} />
-        <View accessibilityViewIsModal style={styles.sheet}>
-          <View style={styles.handle} />
-          <Text style={styles.title}>여행 문서 추가</Text>
-          <ScrollView style={styles.documentScroll} contentContainerStyle={styles.sheetContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator>
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : Platform.OS === "android" ? "height" : undefined} style={styles.keyboardArea}>
+        <SafeAreaView edges={["top", "right", "bottom", "left"]} style={styles.safeArea}>
+          <Pressable accessibilityRole="button" accessibilityLabel="문서 추가 닫기" disabled={busy} onPress={close} style={StyleSheet.absoluteFill} />
+          <View accessibilityViewIsModal style={styles.sheet}>
+            <View style={styles.handle} />
+            <Text style={styles.title}>여행 문서 추가</Text>
+            <ScrollView style={styles.documentScroll} contentContainerStyle={styles.sheetContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator>
             <Text style={styles.description}>종류를 고른 뒤 파일이나 예약 링크를 추가하세요. 원문과 링크 내용은 자동으로 두리의 일정 사실이 되지 않으며, 사용자가 확인한 정보만 사용해요.</Text>
             <View style={styles.sourceModes}>
               <Pressable accessibilityRole="radio" accessibilityState={{ checked: sourceMode === "file" }} onPress={() => { setSourceMode("file"); setMessage(""); }} style={({ pressed }) => [styles.sourceMode, sourceMode === "file" && styles.sourceModeSelected, pressed && styles.pressed]}><Text style={[styles.sourceModeText, sourceMode === "file" && styles.sourceModeTextSelected]}>PDF·이미지</Text></Pressable>
@@ -115,22 +116,24 @@ export function TravelDocumentAddModal({
             })}
             </View>
             {sourceMode === "link" ? <>
-              <TextField label="예약 링크" value={externalUrl} onChangeText={setExternalUrl} maxLength={2048} autoCapitalize="none" keyboardType="url" placeholder="https://..." helperText="https 링크는 설치된 앱의 universal link를 지원하면 앱으로, 아니면 브라우저로 열려요." />
+              <TextField label="예약 링크" value={externalUrl} onChangeText={setExternalUrl} maxLength={2048} autoCapitalize="none" keyboardType="url" placeholder="https://..." helperText="지원하는 앱이 설치되어 있으면 앱으로, 아니면 브라우저로 열려요." />
               <TextField label="표시 이름 (선택)" value={externalName} onChangeText={setExternalName} maxLength={80} placeholder="예: 부산행 KTX 예매 내역" />
-              <View style={styles.notice}><Text style={styles.noticeTitle}>링크가 열리지 않아도 일정은 입력할 수 있어요</Text><Text style={styles.noticeText}>링크 추가 직후 날짜·시간을 직접 확인하고 잠긴 일정으로 만들 수 있습니다. 링크 페이지 내용은 앱이 자동으로 신뢰하지 않아요.</Text></View>
-            </> : <View style={styles.notice}><Text style={styles.noticeTitle}>{Platform.OS === "web" ? "웹에서는 현재 탭에만 보관돼요" : "현재는 이 기기에만 저장돼요"}</Text><Text style={styles.noticeText}>{Platform.OS === "web" ? "새로고침하거나 탭을 닫으면 파일이 사라집니다. 동행자 공유·복원에는 파일 서버가 필요해요." : "동행자 공유·기기 변경 복원은 파일 서버 연동 후 지원할 수 있어요."}</Text></View>}
+              <View style={styles.notice}><Text style={styles.noticeTitle}>링크가 열리지 않아도 일정은 입력할 수 있어요</Text><Text style={styles.noticeText}>링크 추가 직후 날짜·시간을 직접 확인하고 잠긴 일정으로 만들 수 있습니다. 링크의 내용만 보고 일정을 자동으로 확정하지 않아요.</Text></View>
+            </> : <View style={styles.notice}><Text style={styles.noticeTitle}>{Platform.OS === "web" ? "이 탭에 임시 보관돼요" : "이 기기에 안전하게 보관돼요"}</Text><Text style={styles.noticeText}>{Platform.OS === "web" ? "새로고침하거나 탭을 닫기 전에 필요한 날짜와 시간을 확인해 주세요. 원본 파일은 기기에 따로 보관하는 것이 안전해요." : "다른 기기에서 확인하려면 원본 파일을 다시 추가해 주세요. 확인한 예약 정보와 일정은 그대로 남아요."}</Text></View>}
             {message ? <Text accessibilityRole="alert" style={styles.error}>{message}</Text> : null}
             <PrimaryButton label={sourceMode === "file" ? "PDF 또는 이미지 선택" : "링크 추가하고 일정 정보 입력"} loading={busy} onPress={sourceMode === "file" ? selectFile : addLink} />
             <SecondaryButton label="취소" disabled={busy} onPress={close} />
-          </ScrollView>
-        </View>
-      </SafeAreaView>
+            </ScrollView>
+          </View>
+        </SafeAreaView>
+      </KeyboardAvoidingView>
     </View>
   </Modal>;
 }
 
 const styles = StyleSheet.create({
   overlay: { flex: 1, backgroundColor: "rgba(17, 32, 67, 0.32)" },
+  keyboardArea: { flex: 1 },
   safeArea: { flex: 1, width: "100%", justifyContent: "flex-end" },
   sheet: { width: "100%", maxWidth: 640, maxHeight: "92%", alignSelf: "center", overflow: "hidden", gap: spacing.md, borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl, backgroundColor: colors.surface, padding: spacing.lg },
   handle: { width: 44, height: 5, alignSelf: "center", borderRadius: radius.pill, backgroundColor: colors.borderStrong },

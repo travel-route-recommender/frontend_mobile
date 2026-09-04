@@ -25,6 +25,7 @@
     "src/features/duri/logic/**/*.ts",
     "src/features/duri/services/duriEvidenceService.ts",
     "src/features/duri/selectors/**/*.ts",
+    "src/features/duri/store/**/*.ts",
     "src/features/duri/validation/**/*.ts",
     "src/features/workspace/types.ts",
     "src/features/workspace/logic/**/*.ts",

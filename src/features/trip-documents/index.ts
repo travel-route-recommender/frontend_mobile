@@ -14,9 +14,11 @@ export {
   API_TRIP_DOCUMENT_MAX_BYTES,
   deleteApiTripDocument,
   ensureFreshApiTripDocumentDownload,
+  fetchApiTripDocumentCollection,
   fetchApiTripDocuments,
   openApiTripDocumentDownload,
   parseApiTripDocument,
+  parseApiTripDocumentCollection,
   parseApiTripDocumentList,
   pickAndUploadApiTripDocument,
   renewApiTripDocumentDownload,
@@ -24,8 +26,10 @@ export {
 } from "./services/tripDocumentApi";
 export type {
   ApiTripDocument,
+  ApiTripDocumentCollection,
   ApiTripDocumentDownload,
   ApiTripDocumentMimeType,
+  ApiTripDocumentMutationVersion,
   ApiTripDocumentUploadResult,
 } from "./services/tripDocumentApi";
 export { useTripDocumentHydrationState, useTripDocumentStore } from "./store/useTripDocumentStore";
