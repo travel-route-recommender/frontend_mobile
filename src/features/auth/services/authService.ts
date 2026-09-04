@@ -16,10 +16,13 @@ import {
 } from "./authTokenState";
 import {
   backendAuthCapabilities,
+  createAccountDeletionRequestBody,
   createInviteJoinRequestBody,
   createLoginRequestBody,
   createRefreshRequestBody,
   createSignupRequestBody,
+  iosReleaseAuthenticationPolicy,
+  socialProviderUnavailableMessage,
   supportsBackendSocialProvider,
 } from "./backendAuthContract";
 import { toKoreanAuthErrorMessage } from "./authErrorMessage";
@@ -72,10 +75,17 @@ export interface AuthService {
 let sessionInvalidatedHandler: (() => void) | undefined;
 
 const usingNativePlatform = process.env.EXPO_OS === "android" || process.env.EXPO_OS === "ios";
+const socialLoginAllowedForRelease = process.env.EXPO_OS !== "ios"
+  || iosReleaseAuthenticationPolicy.thirdPartySocialLogin;
 
 export const authCapabilities = {
-  googleLogin: supportsBackendSocialProvider("google") && usingNativePlatform,
-  kakaoLogin: supportsBackendSocialProvider("kakao") && usingNativePlatform,
+  googleLogin: supportsBackendSocialProvider("google")
+    && usingNativePlatform
+    && socialLoginAllowedForRelease,
+  // iOS 1.0은 이메일·게스트만 노출한다. Android의 기존 카카오 로그인은 유지한다.
+  kakaoLogin: supportsBackendSocialProvider("kakao")
+    && usingNativePlatform
+    && socialLoginAllowedForRelease,
   socialIdentityLinking: backendAuthCapabilities.socialIdentityLinking,
   guestUpgrade: backendAuthCapabilities.guestUpgrade,
   accountDeletion: backendAuthCapabilities.accountDeletion,
@@ -273,7 +283,7 @@ class ApiAuthService implements AuthService {
 
   async loginWithSocial(provider: SocialProvider): Promise<AuthResult> {
     if (!supportsBackendSocialProvider(provider)) {
-      return { status: "error", code: "provider-unavailable", message: "현재 백엔드는 Google 로그인을 지원하지 않아요." };
+      return { status: "error", code: "provider-unavailable", message: socialProviderUnavailableMessage(provider) };
     }
     try {
       this.cancelInFlightRefresh();
@@ -313,8 +323,14 @@ class ApiAuthService implements AuthService {
   }
 
   async deleteAccount(password?: string) {
-    void password;
-    throw new Error("현재 백엔드는 계정 삭제를 지원하지 않아요.");
+    this.cancelInFlightRefresh();
+    const body = createAccountDeletionRequestBody(password);
+    await apiClient.request({
+      path: "/users/me",
+      method: "DELETE",
+      ...(body ? { body } : {}),
+    });
+    await nativeTokenStorage.clearTokens();
   }
 
   async logout() {

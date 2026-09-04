@@ -91,4 +91,4 @@ scheme은 `tripmatch`다. `tripmatch://invite/:code`는 `app/invite/[code].tsx`�
 
 ## 출시 전 TODO
 
-iOS bundle identifier, Android package, EAS projectId, Apple Team ID와 production URL은 결정하지 않았다. `app.json`에 임의의 값을 넣지 않는다.
+iOS Bundle ID는 `com.tripmatch.app.dev`로 확정했다. Android package는 기존 값을 유지하며 EAS projectId와 Apple Team ID는 계정 연결 후 설정한다.

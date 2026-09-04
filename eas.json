@@ -1,0 +1,43 @@
+{
+  "cli": {
+    "version": ">= 16.0.1",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "environment": "development"
+    },
+    "preview": {
+      "distribution": "internal",
+      "environment": "preview"
+    },
+    "production": {
+      "distribution": "store",
+      "environment": "production",
+      "env": {
+        "EXPO_PUBLIC_DATA_SOURCE": "api",
+        "EXPO_PUBLIC_PLACES_DATA_SOURCE": "api",
+        "EXPO_PUBLIC_API_BASE_URL": "https://backend-1-e3sv.onrender.com/api/v1",
+        "EXPO_PUBLIC_IOS_API_BASE_URL": "https://backend-1-e3sv.onrender.com/api/v1",
+        "EXPO_PUBLIC_DURI_ENGINE": "local",
+        "EXPO_PUBLIC_KAKAO_MAP_BASE_URL": "https://backend-1-e3sv.onrender.com"
+      },
+      "ios": {
+        "image": "sdk-57",
+        "autoIncrement": "buildNumber"
+      }
+    }
+  },
+  "submit": {
+    "production": {
+      "ios": {
+        "appName": "두리",
+        "language": "ko",
+        "sku": "tripmatch-duri-ios",
+        "metadataPath": "./store.config.json"
+      }
+    }
+  }
+}

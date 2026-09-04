@@ -264,7 +264,7 @@ export async function fetchApiUserDirectory(signal?: AbortSignal) {
     path: "/users",
     query: { page: 1, limit: 100, includeGuests: true },
     signal,
-    auth: false,
+    auth: true,
   });
   return parseApiUserDirectory(payload);
 }

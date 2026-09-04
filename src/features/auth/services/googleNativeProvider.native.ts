@@ -1,20 +1,7 @@
-import { GoogleOneTapSignIn } from "react-native-nitro-google-signin";
-import { Platform } from "react-native";
-import { environment } from "../../../config/environment";
-import { requestGoogleNativeIdToken } from "./googleNativeAuth";
-
-export function requestGoogleProviderIdToken(nonce: string) {
-  if (Platform.OS === "ios" && !environment.googleIosClientId?.trim()) {
-    throw new Error("EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID 설정이 필요해요.");
-  }
-  return requestGoogleNativeIdToken(
-    environment.googleWebClientId,
-    Platform.OS === "ios" ? environment.googleIosClientId : undefined,
-    nonce,
-    GoogleOneTapSignIn,
-  );
+export function requestGoogleProviderIdToken(_nonce: string): Promise<string> {
+  throw new Error("현재 배포 버전은 Google 로그인을 지원하지 않아요.");
 }
 
-export function clearGoogleProviderSession() {
-  return GoogleOneTapSignIn.signOut();
+export function clearGoogleProviderSession(): Promise<void> {
+  return Promise.resolve();
 }

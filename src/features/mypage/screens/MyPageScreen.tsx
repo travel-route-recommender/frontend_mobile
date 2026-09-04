@@ -8,7 +8,7 @@ import { useDuriStore } from "../../../store/useDuriStore";
 import { colors, radius, shadows, spacing, typography } from "../../../theme/tokens";
 import { AuthErrorBanner, AuthTextField, PasswordField } from "../../auth/components/AuthControls";
 import { clearAuthStores, useAuthFlow } from "../../auth/hooks/useAuthFlow";
-import { authCapabilities, authService } from "../../auth/services/authService";
+import { authService } from "../../auth/services/authService";
 import { useAuthSessionStore } from "../../auth/store/useAuthSessionStore";
 import { validateNickname } from "../../auth/validation";
 import { useTravelPreferenceSurveyResult } from "../../preferences/hooks/useTravelPreferenceSurveyResult";
@@ -34,7 +34,6 @@ type MenuRow = { icon: string; label: string; tone: MenuTone; onPress: () => voi
 export function MyPageScreen() {
   const sessionKind = useAuthSessionStore((session) => session.sessionKind);
   const provider = useAuthSessionStore((session) => session.provider);
-  const currentSessionUserId = useAuthSessionStore((session) => session.currentSessionUserId);
   const { logout } = useAuthFlow();
   const { width } = useWindowDimensions();
   const compact = width <= 370;
@@ -194,7 +193,7 @@ export function MyPageScreen() {
 
     <Modal visible={deleting} transparent animationType="fade" onRequestClose={() => setDeleting(false)}>
       <Dialog title={sessionKind === "guest" ? "게스트 계정 삭제" : "정말 탈퇴할까요?"} onClose={() => setDeleting(false)}>
-        <Text style={styles.dialogDescription}>계정 정보와 모든 로그인 세션이 폐기되며 이 작업은 되돌릴 수 없어요.</Text>
+        <Text style={styles.dialogDescription}>계정·개인 설문·성향·저장 정보와 직접 만든 항목·파일이 삭제되고 모든 로그인 세션이 폐기됩니다. 내가 만든 여행방은 공동 참여자가 있어도 전체 삭제되며, 다른 사람의 방에서는 내 참여 기록과 기여 항목이 제거됩니다. 이 작업은 되돌릴 수 없어요.</Text>
         {provider === "email" ? <PasswordField label="현재 비밀번호" value={password} onChangeText={(value) => { setPassword(value); setError(null); }} autoComplete="current-password" /> : null}
         <AuthErrorBanner message={error} />
         <Pressable accessibilityRole="button" accessibilityState={{ disabled: busy }} disabled={busy} onPress={deleteAccount} style={[styles.confirmDanger, busy && styles.disabled]}><Text style={styles.confirmDangerText}>{busy ? "처리 중..." : "계정 영구 삭제"}</Text></Pressable>

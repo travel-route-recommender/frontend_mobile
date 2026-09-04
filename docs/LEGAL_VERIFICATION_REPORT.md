@@ -1,0 +1,80 @@
+# iOS 출시 법률·개인정보 검증 보고서
+
+검증일: 2026-09-04
+대상: `frontend_mobile/ios_release`, `Backend/ios_release`
+판정: **조건부 미통과 — 코드 조치 완료, 운영자 확정값과 운영 증빙이 남음**
+
+이 문서는 코드와 공식 자료의 대조 결과이며 개별 사업자에 대한 법률 자문을 대체하지 않는다.
+
+## 검증 기준
+
+- Apple App Review Guidelines 1.2, 2.1, 4.8, 5.1.1
+- Apple 인앱 계정 삭제 지침과 App Store Connect App Privacy 지침
+- 개인정보 보호법 제21조·제22조의2·제26조·제28조의8·제30조
+- 개인정보보호위원회 「개인정보 처리방침 작성지침(2026.4. 개정)」
+
+## 코드에서 확인한 조치
+
+| 항목 | 결과 | 근거 |
+| --- | --- | --- |
+| 인앱 계정 삭제 | 충족 | 마이페이지 → `DELETE /users/me`; 이메일 계정 비밀번호 재확인 |
+| 삭제 범위 | 충족 | 계정·토큰·설문·성향·저장·직접 기여·업로드 파일 삭제; 생성자가 탈퇴하면 생성 여행방 전체 삭제 |
+| 삭제 후 토큰 차단 | 충족 | JWT 검증 시 사용자 존재 여부 재확인 |
+| 개인정보 최소 공개 | 개선 완료 | `/users` 인증 적용, 이메일 제거, 본인과 공유 여행방 구성원으로 범위 제한 |
+| 업로드 파일 접근 | 개선 완료 | `/uploads` 기본 공개를 끄고 구성원용 만료 서명 URL 사용 |
+| iOS 로그인 4.8 | 충족 | iOS 1.0은 자사 이메일 로그인과 게스트만 제공; 카카오·Google·Apple 로그인 코드를 iOS 바이너리에서 제외 |
+| 필수 동의 구분 | 개선 완료 | 이용약관, 개인정보 수집·이용, 만 14세 이상 확인을 각각 표시 |
+| 동의 증빙 | 개선 완료 | 가입·게스트 생성 시 약관/동의 버전과 서버 시각 저장 |
+| 앱 내 정책 접근 | 초안 완료 | 로그인·마이페이지에서 약관 및 개인정보 처리방침 접근 가능 |
+| 광고·추적·분석 SDK | 코드상 없음 | 의존성·권한·호출 검색 결과 |
+| 기기 GPS 위치 | 코드상 없음 | 위치 권한 및 위치 SDK 없음; 여행 장소 좌표는 사용자의 현재 위치가 아님 |
+| iOS Release 산출물 | 로컬 검증 완료 | Xcode 26.6·iOS 26.5 SDK arm64 Release 빌드 성공; Kakao·Google·Apple·Nitro framework/문자열, Face ID·Local Network·Bonjour 설정 없음; PrivacyInfo.xcprivacy 포함 |
+
+## App Store Connect App Privacy 입력 초안
+
+모든 항목의 목적은 `App Functionality`, 여행 성향·추천 관련 항목은 추가로 `Product Personalization`이다. 코드상 추적은 없다.
+
+| Apple 데이터 유형 | 연결 여부 | 근거 |
+| --- | --- | --- |
+| Contact Info → Email Address | 사용자 연결 | 이메일 회원 인증 |
+| Identifiers → User ID | 사용자 연결 | 내부 ID와 화면 닉네임 |
+| User Content → Photos or Videos | 사용자 연결 | 티켓·예약 이미지 업로드 |
+| User Content → Other User Content | 사용자 연결 | 일정·후보·의견·할 일·메모·문서 |
+| Usage Data → Product Interaction | 사용자 연결 | 저장 장소, 후보 의견, 일정 편집, 여행 성향 응답 |
+| Search History | 사용자 연결 | 검색어가 서버·외부 API 요청 및 단기 캐시 키로 처리되고 로그인 요청에는 인증 토큰이 함께 전송됨. 수집 전 비식별이 증명되지 않아 보수적으로 연결 신고 |
+
+현재 iOS 앱 코드만 기준으로 Device ID, Precise/Coarse Location, Purchases, Payment Info, Diagnostics, Advertising Data는 수집 항목으로 확인되지 않았다. 사용자가 자유 형식 문서에 임의로 포함한 정보와 앱이 특정 항목으로 요구하는 정보는 Apple 분류 기준상 구분한다.
+
+## 출시 차단 항목
+
+### 사용자가 확정·제공해야 하는 값
+
+1. 운영자 법적 명칭, 사업장 주소, 고객지원 이메일·전화
+2. 개인정보 보호책임자, 담당부서, 이메일·전화
+3. 약관·처리방침 공고일과 시행일
+4. 저작권 소유자, 고객지원 URL, 공개 개인정보 처리방침 URL
+5. 심사용 담당자 연락처와 심사 계정
+
+### 운영 계정에서 확인해야 하는 증빙
+
+1. Render 법인명·운영 리전·로그 보유 기간·업로드 파일 영속 저장 및 백업 정책
+2. MongoDB Atlas 클라우드 제공자·주/보조 리전·백업/로그 보유 기간
+3. Render·MongoDB 처리위탁/DPA와 국외 이전의 법적 근거·고지 항목
+4. 운영 환경 `UPLOADS_PUBLIC=false`, 강한 JWT·서명 비밀값, HTTPS, 데이터베이스 접근 통제
+5. 운영 백업에서 계정 삭제 정보가 최종 파기되는 기한과 복구 시 재삭제 절차
+
+### 제품·심사상 추가 차단 가능성
+
+1. 여행방에서 사용자 업로드·자유 입력 콘텐츠를 공유하지만 신고, 차단, 유해 콘텐츠 필터와 공개 연락처 기능이 없다. Apple Guideline 1.2 적용 대상으로 판단되면 심사 거절 위험이 있다.
+2. 카카오 로그인을 제공하는 Android 출시에는 신규 카카오 계정용 약관·개인정보 동의 화면과 서버 동의 이력 저장이 별도로 필요하다.
+3. 로컬 unsigned Release 산출물 검사는 통과했다. Apple 서명된 production archive에서도 PrivacyInfo.xcprivacy, 포함 SDK 목록, `NSLocalNetworkUsageDescription`·Bonjour 항목을 동일하게 최종 확인해야 한다.
+4. 운영 계정 삭제 E2E 시험에서 사용자 문서, 공유방 참조, 파일, 캐시·로그·백업의 삭제 결과를 증빙해야 한다.
+
+## 공식 근거
+
+- Apple App Review Guidelines: https://developer.apple.com/app-store/review/guidelines/
+- Apple account deletion: https://developer.apple.com/support/offering-account-deletion-in-your-app/
+- Apple App Privacy: https://developer.apple.com/help/app-store-connect/manage-app-information/manage-app-privacy/
+- Apple App Privacy data types: https://developer.apple.com/app-store/app-privacy-details/
+- 개인정보보호위원회 2026.4 처리방침 작성지침: https://pipc.go.kr/np/cop/bbs/selectBoardArticle.do?bbsId=BS217&mCode=D010030000&nttId=12018
+- 개인정보 보호법: https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EA%B0%9C%EC%9D%B8%EC%A0%95%EB%B3%B4%EB%B3%B4%ED%98%B8%EB%B2%95

@@ -1,17 +1,17 @@
 # 모바일 인증·온보딩
 
-이 문서는 `Frontend_mobile`의 프론트엔드 인증 범위와 서버 연결 경계를 설명한다. 인증은 `EXPO_PUBLIC_DATA_SOURCE`와 관계없이 Auth API를 사용한다. 현재 Kakao 네이티브 로그인은 development build와 외부 콘솔 설정이 필요하며, Google 로그인은 백엔드 계약 추가 전까지 노출하지 않는다.
+이 문서는 `Frontend_mobile`의 프론트엔드 인증 범위와 서버 연결 경계를 설명한다. 인증은 `EXPO_PUBLIC_DATA_SOURCE`와 관계없이 Auth API를 사용한다. iOS 1.0은 이메일 로그인과 익명·게스트 이용만 제공하고 소셜 로그인 SDK를 포함하지 않는다. Android는 Kakao 네이티브 로그인을 제공한다.
 
 ## 1. 인증 route
 
 | route | 화면 | 역할 |
 |---|---|---|
-| `/(auth)/login` | `LoginScreen` | 이메일·Kakao 로그인, 익명 둘러보기 |
-| `/(auth)/signup-choice` | `SignupChoiceScreen` | 이메일 또는 Kakao 시작 방식 선택 |
+| `/(auth)/login` | `LoginScreen` | 이메일 로그인, 익명 둘러보기; Android만 Kakao 로그인 |
+| `/(auth)/signup-choice` | `SignupChoiceScreen` | 이메일 가입; Android만 Kakao 시작 방식 제공 |
 | `/(auth)/signup-email` | `SignupEmailScreen` | 이메일·비밀번호와 필수 약관 동의 |
 | `/(auth)/invite` | `InviteJoinScreen` | 링크 preview, 활성 상태 검증, member 또는 guest 참여 |
-| `/(auth)/terms?type=service` | `TermsScreen` | 임시 서비스 안내 문구 |
-| `/(auth)/terms?type=privacy` | `TermsScreen` | 임시 개인정보 안내 문구 |
+| `/(auth)/terms?type=service` | `TermsScreen` | 서비스 이용약관 |
+| `/(auth)/terms?type=privacy` | `TermsScreen` | 개인정보 처리방침 |
 | `/invite/[code]` | redirect | 딥링크의 코드·tripId·revision을 초대 화면으로 전달 |
 
 route 파일은 `src/features/auth/screens`의 화면만 export한다. 긴 화면 로직은 `app` 아래에 두지 않는다.
@@ -31,7 +31,7 @@ route 파일은 `src/features/auth/screens`의 화면만 export한다. 긴 화�
 
 - `anonymous`: 로그인 없이 홈·탐색·장소 상세를 둘러보는 세션. 가짜 User를 만들지 않는다.
 - `guest`: 백엔드 초대 코드로 특정 여행방에 참여한 임시 사용자. guest → member 병합은 백엔드 계약 추가 전까지 지원하지 않는다.
-- `member`: 이메일 또는 Kakao로 시작한 회원 세션. Google은 백엔드 계약 추가 후 활성화한다.
+- `member`: 이메일로 시작한 회원 세션. Android에서는 Kakao 회원 세션도 지원한다.
 - `null`: 아직 시작 방법을 선택하지 않았거나 로그아웃한 상태.
 
 ## 4. 권한
@@ -52,7 +52,7 @@ route 파일은 `src/features/auth/screens`의 화면만 export한다. 긴 화�
 
 | mode | 인증 동작 |
 |---|---|
-| `mock` | 고정 데모 로그인, 안정적인 ID의 이메일 가입, Google/Kakao 버튼의 데모 member 세션, 여행방별 로컬 링크/code 참여가 동작한다. 운영 token은 만들지 않는다. |
+| `mock` | 고정 데모 로그인, 안정적인 ID의 이메일 가입, Android Kakao 버튼의 데모 member 세션, 여행방별 로컬 링크/code 참여가 동작한다. 운영 token은 만들지 않는다. |
 | `api` | 이메일·초대·소셜 Auth endpoint를 호출한다. 소셜 로그인은 `/auth/social/challenge`의 nonce로 네이티브 SDK에서 ID Token을 받고 `/auth/social/{provider}`에 전달한다. |
 | `hybrid` | 공개·로컬 기능은 기존 설정을 따르되 Auth는 `api`와 동일하게 실제 Auth endpoint를 호출한다. 실패를 mock 성공으로 fallback하지 않는다. |
 
@@ -78,11 +78,11 @@ route 파일은 `src/features/auth/screens`의 화면만 export한다. 긴 화�
 ## 8. Auth API와 네이티브 소셜 로그인
 
 - login/signup/join-by-invite request·response DTO는 access/refresh token과 `user` payload를 반환하는 계약을 기대한다.
-- 현재 카카오 로그인은 네이티브 SDK의 access token을 `/auth/oauth/kakao`로 교환한다.
-- Google 로그인은 백엔드 검증·교환 API가 추가될 때까지 노출하지 않는다. 프런트 설정은 `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`와 iOS용 `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID`를 사용한다.
-- Android Google OAuth client에는 package `com.tripmatch.app.dev`와 빌드 인증서 SHA-1이 등록되어야 한다.
-- Kakao는 `EXPO_PUBLIC_KAKAO_NATIVE_APP_KEY`로 네이티브 SDK를 초기화한다.
-- guest 계정 수명, member 병합, 초대 코드 오류 코드, 이메일·비밀번호·닉네임 서버 검증 규칙, 약관 버전과 동의 이력은 운영 정책 확정이 필요하다.
+- Android 카카오 로그인은 네이티브 SDK의 access token을 `/auth/oauth/kakao`로 교환한다.
+- iOS autolinking에서는 Kakao SDK를 제외하며 Google·Apple 로그인도 노출하거나 포함하지 않는다.
+- Android Kakao는 `EXPO_PUBLIC_KAKAO_NATIVE_APP_KEY`로 네이티브 SDK를 초기화한다.
+- 가입·게스트 생성 시 이용약관, 개인정보 수집·이용 동의 버전과 만 14세 이상 확인을 서버 시각으로 기록한다.
+- guest 계정 수명, member 병합과 초대 코드 오류 정책은 운영 확정이 필요하다.
 
 OS/Kakao 공유 경계와 추후 API 계약은 `MOBILE_INVITE_LINK_FLOW.md`를 따른다.
 
@@ -145,6 +145,6 @@ OS/Kakao 공유 경계와 추후 API 계약은 `MOBILE_INVITE_LINK_FLOW.md`를 �
 5. 서버 저장 성공 기준으로 `preferenceTestCompleted`를 갱신할지 결정
 6. 그룹 성향 진단과 여행방 참여 상태 재계산
 
-## 법률 문서 TODO
+## 법률 문서 상태
 
-현재 약관 화면은 프로토타입용 임시 안내다. 출시 전 법률 검토를 거친 서비스 이용약관·개인정보 처리방침, 수집 항목, 보유 기간, 파기 절차, 동의 버전 기록으로 반드시 교체해야 한다.
+앱에는 운영 초안 전문과 동의 버전 기록을 반영했다. 사업자·개인정보 보호책임자 정보, 처리위탁·국외 이전, 로그·백업 보유 기간과 시행일은 `docs/LEGAL_VERIFICATION_REPORT.md`의 출시 차단 항목을 확인해 공개 전에 확정해야 한다.

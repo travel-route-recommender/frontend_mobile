@@ -4,12 +4,20 @@
     "slug": "tripmatch-duri",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/app-icon.png",
     "scheme": "tripmatch",
     "userInterfaceStyle": "light",
     "ios": {
-      "icon": "./assets/expo.icon",
-      "bundleIdentifier": "com.tripmatch.app.dev"
+      "icon": "./assets/images/app-icon.png",
+      "bundleIdentifier": "com.tripmatch.app.dev",
+      "buildNumber": "1",
+      "supportsTablet": false,
+      "config": {
+        "usesNonExemptEncryption": false
+      },
+      "infoPlist": {
+        "CFBundleAllowMixedLocalizations": true
+      }
     },
     "android": {
       "package": "com.tripmatch.app.dev",
@@ -35,7 +43,12 @@
           "imageWidth": 76
         }
       ],
-      "expo-secure-store",
+      [
+        "expo-secure-store",
+        {
+          "faceIDPermission": false
+        }
+      ],
       "@react-native-community/datetimepicker",
       "expo-image",
       "expo-status-bar",
@@ -55,6 +68,11 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "release": {
+        "iosBundleIdentifierFinalized": true
+      }
     }
   }
 }

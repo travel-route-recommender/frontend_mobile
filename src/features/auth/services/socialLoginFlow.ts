@@ -1,6 +1,6 @@
 import type { ApiClient } from "../../../services/apiClient";
 import type { SocialProvider } from "../types";
-import { supportsBackendSocialProvider } from "./backendAuthContract";
+import { socialProviderUnavailableMessage, supportsBackendSocialProvider } from "./backendAuthContract";
 
 type SocialLoginFlowDependencies = {
   apiClient: ApiClient;
@@ -12,7 +12,7 @@ export async function requestSocialLoginSession<Session>(
   dependencies: SocialLoginFlowDependencies,
 ): Promise<Session> {
   if (!supportsBackendSocialProvider(provider)) {
-    throw new Error("현재 백엔드는 Google 로그인을 지원하지 않아요.");
+    throw new Error(socialProviderUnavailableMessage(provider));
   }
 
   const accessToken = await dependencies.requestKakaoAccessToken();

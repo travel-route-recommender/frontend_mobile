@@ -1,0 +1,50 @@
+{
+  "configVersion": 0,
+  "apple": {
+    "version": "1.0.0",
+    "info": {
+      "ko": {
+        "title": "두리",
+        "subtitle": "함께 만드는 여행 계획",
+        "description": "두리는 친구들과 여행 일정과 장소를 함께 정리하는 여행 계획 앱입니다. 초대 코드로 여행방에 참여하고, 후보 장소를 모아 일정을 구성할 수 있습니다. 여행 성향을 확인하고 친구와의 여행 궁합도 살펴볼 수 있습니다.",
+        "keywords": [
+          "여행",
+          "여행 일정",
+          "여행 계획",
+          "친구 여행",
+          "장소 탐색",
+          "여행 성향"
+        ],
+        "releaseNotes": "두리의 첫 번째 App Store 버전입니다."
+      }
+    },
+    "categories": [
+      "TRAVEL",
+      "PRODUCTIVITY"
+    ],
+    "advisory": {
+      "alcoholTobaccoOrDrugUseOrReferences": "NONE",
+      "contests": "NONE",
+      "gamblingSimulated": "NONE",
+      "gunsOrOtherWeapons": "NONE",
+      "horrorOrFearThemes": "NONE",
+      "matureOrSuggestiveThemes": "NONE",
+      "medicalOrTreatmentInformation": "NONE",
+      "profanityOrCrudeHumor": "NONE",
+      "sexualContentGraphicAndNudity": "NONE",
+      "sexualContentOrNudity": "NONE",
+      "violenceCartoonOrFantasy": "NONE",
+      "violenceRealistic": "NONE",
+      "violenceRealisticProlongedGraphicOrSadistic": "NONE",
+      "gambling": false,
+      "unrestrictedWebAccess": false,
+      "kidsAgeBand": null,
+      "ageRatingOverride": "NONE",
+      "koreaAgeRatingOverride": "NONE"
+    },
+    "release": {
+      "automaticRelease": false,
+      "phasedRelease": false
+    }
+  }
+}

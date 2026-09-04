@@ -12,6 +12,7 @@ import { authCapabilities, authService } from "../services/authService";
 import { buildInviteReturnPath, inviteErrorMessage, resolveAuthReturnTo } from "../services/inviteFlowPolicy";
 import { useAuthSessionStore } from "../store/useAuthSessionStore";
 import type { InvitePreview, SocialProvider } from "../types";
+import { legalDocuments, type LegalDocumentType } from "../legal/legalDocuments";
 import { normalizeEmail, normalizeInviteCode, validateEmail, validateInviteCode, validateNickname, validatePassword, validatePasswordConfirmation, validateRequiredAgreement } from "../validation";
 
 function TextLink({ label, onPress }: { label: string; onPress: () => void }) {
@@ -89,12 +90,13 @@ export function SignupEmailScreen() {
   const [confirmation, setConfirmation] = useState("");
   const [serviceAgreed, setServiceAgreed] = useState(false);
   const [privacyAgreed, setPrivacyAgreed] = useState(false);
+  const [overFourteenConfirmed, setOverFourteenConfirmed] = useState(false);
   const [errors, setErrors] = useState<{ nickname?: string; email?: string; password?: string; confirmation?: string; agreements?: string }>({});
   const [serviceError, setServiceError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const nicknameRef = useRef<TextInput>(null); const emailRef = useRef<TextInput>(null); const passwordRef = useRef<TextInput>(null); const confirmationRef = useRef<TextInput>(null);
   const { applyAuthSuccess } = useAuthFlow();
-  const allAgreed = serviceAgreed && privacyAgreed;
+  const allAgreed = serviceAgreed && privacyAgreed && overFourteenConfirmed;
 
   const validateEmailField = () => {
     const emailError = validateEmail(email);
@@ -127,7 +129,7 @@ export function SignupEmailScreen() {
     } finally { setLoading(false); }
   };
 
-  const toggleAll = () => { const checked = !allAgreed; setServiceAgreed(checked); setPrivacyAgreed(checked); setErrors((value) => ({ ...value, agreements: undefined })); };
+  const toggleAll = () => { const checked = !allAgreed; setServiceAgreed(checked); setPrivacyAgreed(checked); setOverFourteenConfirmed(checked); setErrors((value) => ({ ...value, agreements: undefined })); };
   return <AuthLayout title="이메일로 가입하기" subtitle="안전한 계정을 만들고 여행을 시작하세요." onBack={() => router.back()} footer={<PrimaryButton label="가입하고 계속하기" loading={loading} onPress={submit} />}>
     <AuthTextField ref={nicknameRef} label="닉네임" value={nickname} onChangeText={(value) => { setNickname(value); setErrors((old) => ({ ...old, nickname: undefined })); }} error={errors.nickname} maxLength={12} autoCapitalize="none" returnKeyType="next" onSubmitEditing={() => emailRef.current?.focus()} />
     <AuthTextField
@@ -153,7 +155,8 @@ export function SignupEmailScreen() {
       <TermsCheckbox checked={allAgreed} label="필수 약관 전체 동의" onToggle={toggleAll} />
       <View style={styles.rule} />
       <TermsCheckbox checked={serviceAgreed} label="[필수] 서비스 이용약관" onToggle={() => { setServiceAgreed((v) => !v); setErrors((old) => ({ ...old, agreements: undefined })); }} onView={() => router.push({ pathname: "/(auth)/terms", params: { type: "service" } })} />
-      <TermsCheckbox checked={privacyAgreed} label="[필수] 개인정보 처리방침" onToggle={() => { setPrivacyAgreed((v) => !v); setErrors((old) => ({ ...old, agreements: undefined })); }} onView={() => router.push({ pathname: "/(auth)/terms", params: { type: "privacy" } })} />
+      <TermsCheckbox checked={privacyAgreed} label="[필수] 개인정보 수집·이용 동의" onToggle={() => { setPrivacyAgreed((v) => !v); setErrors((old) => ({ ...old, agreements: undefined })); }} onView={() => router.push({ pathname: "/(auth)/terms", params: { type: "privacy-consent" } })} />
+      <TermsCheckbox checked={overFourteenConfirmed} label="[필수] 만 14세 이상입니다" onToggle={() => { setOverFourteenConfirmed((v) => !v); setErrors((old) => ({ ...old, agreements: undefined })); }} />
       {errors.agreements ? <Text accessibilityLiveRegion="polite" style={styles.error}>{errors.agreements}</Text> : null}
     </View>
     <AuthErrorBanner message={serviceError} />
@@ -177,6 +180,10 @@ export function InviteJoinScreen() {
   const [preview, setPreview] = useState<InvitePreview | null>(null);
   const [error, setError] = useState<string>();
   const [nicknameError, setNicknameError] = useState<string>();
+  const [serviceAgreed, setServiceAgreed] = useState(false);
+  const [privacyAgreed, setPrivacyAgreed] = useState(false);
+  const [overFourteenConfirmed, setOverFourteenConfirmed] = useState(false);
+  const [agreementError, setAgreementError] = useState<string>();
   const [serviceError, setServiceError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const inputRef = useRef<TextInput>(null);
@@ -205,6 +212,9 @@ export function InviteJoinScreen() {
     }
     const nextError = validateNickname(nickname); setNicknameError(nextError);
     if (nextError) { nicknameRef.current?.focus(); return; }
+    const nextAgreementError = validateRequiredAgreement(serviceAgreed && privacyAgreed && overFourteenConfirmed, "필수 항목");
+    setAgreementError(nextAgreementError);
+    if (nextAgreementError) return;
     setLoading(true); setServiceError(null);
     try {
       const result = await authService.joinByInvite({ code: normalizeInviteCode(code), nickname: nickname.trim() });
@@ -229,7 +239,15 @@ export function InviteJoinScreen() {
       <AuthTextField ref={inputRef} label="초대 코드" value={code} onChangeText={(value) => { setCode(normalizeInviteCode(value)); setError(undefined); setServiceError(null); }} error={error} autoCapitalize="characters" autoCorrect={false} maxLength={8} returnKeyType="done" onSubmitEditing={checkCode} />
     </> : <>
       <View style={styles.previewBox}><Text style={styles.previewTitle}>{preview.title}</Text><Text style={styles.previewMeta}>{[preview.destination, preview.startDate && preview.endDate ? formatTripDateRange(preview.startDate, preview.endDate) : undefined, `${preview.memberCount}명 참여 중`].filter(Boolean).join(" · ")}</Text></View>
-      {!existingParticipant ? <AuthTextField ref={nicknameRef} label="게스트 닉네임" value={nickname} onChangeText={(value) => { setNickname(value); setNicknameError(undefined); }} error={nicknameError} helperText="이 여행방에서 다른 구성원에게 표시되는 이름이에요." maxLength={12} autoCapitalize="none" returnKeyType="done" onSubmitEditing={join} /> : null}
+      {!existingParticipant ? <>
+        <AuthTextField ref={nicknameRef} label="게스트 닉네임" value={nickname} onChangeText={(value) => { setNickname(value); setNicknameError(undefined); }} error={nicknameError} helperText="이 여행방에서 다른 구성원에게 표시되는 이름이에요." maxLength={12} autoCapitalize="none" returnKeyType="done" onSubmitEditing={join} />
+        <View style={styles.termsBox}>
+          <TermsCheckbox checked={serviceAgreed} label="[필수] 서비스 이용약관" onToggle={() => { setServiceAgreed((value) => !value); setAgreementError(undefined); }} onView={() => router.push({ pathname: "/(auth)/terms", params: { type: "service" } })} />
+          <TermsCheckbox checked={privacyAgreed} label="[필수] 개인정보 수집·이용 동의" onToggle={() => { setPrivacyAgreed((value) => !value); setAgreementError(undefined); }} onView={() => router.push({ pathname: "/(auth)/terms", params: { type: "privacy-consent" } })} />
+          <TermsCheckbox checked={overFourteenConfirmed} label="[필수] 만 14세 이상입니다" onToggle={() => { setOverFourteenConfirmed((value) => !value); setAgreementError(undefined); }} />
+          {agreementError ? <Text accessibilityLiveRegion="polite" style={styles.error}>{agreementError}</Text> : null}
+        </View>
+      </> : null}
     </>}
     <AuthErrorBanner message={serviceError} />
     <View style={styles.inlineLinks}><Text style={styles.muted}>이미 두리 회원인가요?</Text><TextLink label="로그인" onPress={() => router.replace({ pathname: "/(auth)/login", params: { returnTo: buildInviteReturnPath({ code, tripId: routeTripId, revision: routeRevision }) } })} /></View>
@@ -238,10 +256,11 @@ export function InviteJoinScreen() {
 
 export function TermsScreen() {
   const params = useLocalSearchParams<{ type?: string }>();
-  const type = (Array.isArray(params.type) ? params.type[0] : params.type) === "privacy" ? "privacy" : "service";
-  const title = type === "privacy" ? "개인정보 처리방침" : "서비스 이용약관";
-  return <AuthLayout title={title} subtitle="운영 정책 확정 전 개발용 요약 문서입니다." onBack={() => router.back()} footer={<PrimaryButton label="확인" onPress={() => router.back()} />}>
-    <View style={styles.legalBox}><Text style={styles.legalHeading}>1. 목적</Text><Text style={styles.legalBody}>두리는 함께 여행을 계획하는 사용자의 일정, 장소, 취향 정보를 관리합니다.</Text><Text style={styles.legalHeading}>2. 인증 정보</Text><Text style={styles.legalBody}>비밀번호는 HTTPS로 서버에 전송되고 서버에서 단방향 해시로 보관합니다. 모바일 Refresh Token은 운영체제 보안 저장소에 저장합니다.</Text><Text style={styles.legalHeading}>3. 정식 출시 전</Text><Text style={styles.legalBody}>수집 항목·보유 기간·파기 절차와 약관 버전 동의 이력은 법무 및 개인정보 담당자 검토 후 최종 문서로 교체해야 합니다.</Text></View>
+  const requestedType = Array.isArray(params.type) ? params.type[0] : params.type;
+  const type: LegalDocumentType = requestedType === "privacy" || requestedType === "privacy-consent" ? requestedType : "service";
+  const document = legalDocuments[type];
+  return <AuthLayout title={document.title} subtitle={document.subtitle} onBack={() => router.back()} footer={<PrimaryButton label="확인" onPress={() => router.back()} />}>
+    <View style={styles.legalBox}>{document.sections.map((section) => <View key={section.heading} style={styles.legalSection}><Text style={styles.legalHeading}>{section.heading}</Text><Text style={styles.legalBody}>{section.body}</Text></View>)}</View>
   </AuthLayout>;
 }
 
@@ -252,5 +271,5 @@ const styles = StyleSheet.create({
   termsBox: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, padding: spacing.md }, rule: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border }, error: { ...typography.caption, color: colors.danger },
   inviteHero: { alignItems: "center", gap: spacing.sm, borderRadius: radius.lg, backgroundColor: colors.background, padding: spacing.xl }, inviteEmoji: { fontSize: 44 }, inviteCopy: { ...typography.body, color: colors.textSecondary, textAlign: "center" },
   previewBox: { gap: spacing.xs, borderWidth: 1, borderColor: colors.primary, borderRadius: radius.lg, padding: spacing.lg, backgroundColor: colors.primarySoft }, previewTitle: { ...typography.subtitle, color: colors.text }, previewMeta: { ...typography.caption, color: colors.textSecondary },
-  legalBox: { gap: spacing.sm, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, padding: spacing.lg, backgroundColor: colors.surfaceMuted }, legalHeading: { ...typography.subtitle, color: colors.text, marginTop: spacing.sm }, legalBody: { ...typography.body, color: colors.textSecondary },
+  legalBox: { gap: spacing.lg, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, padding: spacing.lg, backgroundColor: colors.surfaceMuted }, legalSection: { gap: spacing.xs }, legalHeading: { ...typography.subtitle, color: colors.text }, legalBody: { ...typography.body, color: colors.textSecondary },
 });

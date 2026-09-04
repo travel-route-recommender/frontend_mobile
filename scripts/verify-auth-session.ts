@@ -24,9 +24,11 @@ import { buildInviteReturnPath, inviteErrorMessage, resolveAuthReturnTo } from "
 import { requestSocialLoginSession } from "../src/features/auth/services/socialLoginFlow";
 import {
   createInviteJoinRequestBody,
+  createAccountDeletionRequestBody,
   createLoginRequestBody,
   createRefreshRequestBody,
   createSignupRequestBody,
+  iosReleaseAuthenticationPolicy,
   supportsBackendSocialProvider,
 } from "../src/features/auth/services/backendAuthContract";
 import {
@@ -384,6 +386,7 @@ async function verifySocialLoginContracts() {
   );
   assert(googleCalls.length === 0 && googleKakaoTokenCalls === 0, "unsupported Google login must make no SDK or backend request");
   assert(supportsBackendSocialProvider("kakao") && !supportsBackendSocialProvider("google"), "the capability list must match the backend OAuth endpoints");
+  assert(iosReleaseAuthenticationPolicy.primaryLogin === "email" && iosReleaseAuthenticationPolicy.guestAccess && !iosReleaseAuthenticationPolicy.thirdPartySocialLogin, "iOS 1.0 must expose only first-party email login and guest access");
 }
 
 function verifyBackendAuthRequestBodies() {
@@ -391,13 +394,19 @@ function verifyBackendAuthRequestBodies() {
   assert(login.email === "user@example.com" && login.password === "secret" && Object.keys(login).length === 2, "login must send only email and password");
 
   const signup = createSignupRequestBody({ nickname: " 여행자 ", email: " USER@Example.COM ", password: "secret" });
-  assert(signup.nickname === "여행자" && signup.email === "user@example.com" && signup.password === "secret" && Object.keys(signup).length === 3, "signup must send only nickname, email, and password");
+  assert(signup.nickname === "여행자" && signup.email === "user@example.com" && signup.password === "secret", "signup must normalize member fields");
+  assert(signup.termsVersion === "1.0" && signup.privacyConsentVersion === "1.0" && signup.overFourteenConfirmed === true && Object.keys(signup).length === 6, "signup must send the accepted legal versions and age confirmation");
 
   const invite = createInviteJoinRequestBody({ code: " abcd1234 ", nickname: " 게스트 ", tripId: "client-only-trip" });
-  assert(invite.inviteCode === "ABCD1234" && invite.nickname === "게스트" && Object.keys(invite).length === 2, "invite join must omit client-only fields and metadata");
+  assert(invite.inviteCode === "ABCD1234" && invite.nickname === "게스트", "invite join must normalize guest fields");
+  assert(invite.termsVersion === "1.0" && invite.privacyConsentVersion === "1.0" && invite.overFourteenConfirmed === true && Object.keys(invite).length === 5, "invite join must include legal versions and omit client-only fields");
 
   const refresh = createRefreshRequestBody("refresh-token");
   assert(refresh.refreshToken === "refresh-token" && Object.keys(refresh).length === 1, "refresh must send only refreshToken");
+
+  const deletion = createAccountDeletionRequestBody(" current-password ");
+  assert(deletion?.password === "current-password" && Object.keys(deletion).length === 1, "account deletion must send only a trimmed password when required");
+  assert(createAccountDeletionRequestBody("  ") === undefined, "social account deletion must omit an empty password body");
 }
 
 async function verifyGoogleNativeOidc() {

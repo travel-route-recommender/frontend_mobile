@@ -34,7 +34,6 @@ import type { TripPreparationStepId } from "../types";
 export function ApiTripDetailContent({ tripId, created }: { tripId: string; created: boolean }) {
   const router = useRouter();
   const currentUserId = useAuthSessionStore((state) => state.currentSessionUserId);
-  const sessionKind = useAuthSessionStore((state) => state.sessionKind);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [sharedDocuments, setSharedDocuments] = useState<readonly ApiTripDocument[]>([]);
   const handleDocumentsChange = useCallback((documents: readonly ApiTripDocument[]) => {

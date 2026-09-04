@@ -36,15 +36,15 @@
 | `/tests/personal` | `PersonalPreferenceTestPage` | `app/tests/personal/index.tsx` | `PersonalTestScreen` | 전체 질문·저장 완료 |
 | - | 웹은 마지막 문항에서 바로 제출 | `app/tests/personal/review.tsx` | `PersonalReviewScreen` | 모바일 답변 검토·수정 완료 |
 | `/tests/personal/result` | `PersonalPreferenceResultPage` | `app/tests/personal/result.tsx` | `PersonalResultScreen` | 완료 |
-| `/login` | `LoginPage` | `app/(auth)/login.tsx` | `LoginScreen` | mock 완료·API 계약 대기 표시 |
+| `/login` | `LoginPage` | `app/(auth)/login.tsx` | `LoginScreen` | 이메일 API 연결; Android Kakao, iOS 이메일 전용 |
 | `/signup` | 가입 방식 선택 | `app/(auth)/signup-choice.tsx` | `SignupChoiceScreen` | 완료 |
-| `/signup/email` | 이메일 가입 | `app/(auth)/signup-email.tsx` | `SignupEmailScreen` | mock 완료·API 계약 대기 표시 |
-| `/invite` | `InviteJoinPage` | `app/(auth)/invite.tsx` | `InviteJoinScreen` | mock guest 완료·API 계약 대기 표시 |
+| `/signup/email` | 이메일 가입 | `app/(auth)/signup-email.tsx` | `SignupEmailScreen` | API 연결·필수 동의 이력 저장 완료 |
+| `/invite` | `InviteJoinPage` | `app/(auth)/invite.tsx` | `InviteJoinScreen` | API guest 참여·필수 동의 이력 저장 완료 |
 | `/onboarding/profile` | 프로필 설정 | `app/(onboarding)/profile.tsx` | `ProfileSetupScreen` | 완료 |
 | `/onboarding/intro` | 서비스 소개 | `app/(onboarding)/intro.tsx` | `OnboardingIntroScreen` | 완료 |
 | `/duri` | `DuriPage` | `/trips/[tripId]/analysis` 및 suggestion 상세 | `DuriAnalysisScreen`, `DuriSuggestionPreviewScreen` | 리포트·preview·local atomic apply 완료 |
 | `/tests` | `PreferenceTestHomePage` | 없음 | 개인 테스트 직접 진입 | 미구현 |
-| `/terms` | `TermsPage` | `app/(auth)/terms.tsx` | `TermsScreen` | 임시 안내 완료·정식 법률 문서 대기 |
+| `/terms` | `TermsPage` | `app/(auth)/terms.tsx` | `TermsScreen` | 운영 초안 전문 반영·운영자 확정값 대기 |
 
 ## 재사용 등급
 
