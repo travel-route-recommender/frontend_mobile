@@ -33,7 +33,8 @@
   "submit": {
     "production": {
       "ios": {
-        "appName": "두리",
+        "appName": "두리: 투어메이트",
+        "ascAppId": "6808886198",
         "language": "ko",
         "sku": "tripmatch-duri-ios",
         "metadataPath": "./store.config.json"

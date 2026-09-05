@@ -37,7 +37,7 @@ for (const key of ["EXPO_PUBLIC_API_BASE_URL", "EXPO_PUBLIC_IOS_API_BASE_URL", "
   const value = eas.build?.production?.env?.[key];
   check(typeof value === "string" && value.startsWith("https://") && !value.includes("localhost"), `${key}가 운영 HTTPS 주소가 아닙니다.`);
 }
-check(store.apple?.info?.ko?.title === app.name, "스토어 앱 이름과 앱 설정 이름이 다릅니다.");
+check(store.apple?.info?.ko?.title?.startsWith(app.name), "스토어 앱 이름에 앱 설정 이름이 포함되지 않았습니다.");
 check(store.apple?.version === app.version, "스토어 메타데이터 버전과 앱 버전이 다릅니다.");
 check(Boolean(store.apple?.info?.ko?.description), "한국어 스토어 설명이 없습니다.");
 check((store.apple?.categories?.length ?? 0) > 0, "스토어 카테고리가 없습니다.");
