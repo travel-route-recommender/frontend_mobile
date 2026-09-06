@@ -62,3 +62,4 @@ example
 
 __pycache__/
 *.py[cod]
+*.aab

@@ -1,12 +1,11 @@
+import { router, useFocusEffect } from "expo-router";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { BackHandler, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
-import { router, useFocusEffect } from "expo-router";
 import { PrimaryButton, SecondaryButton } from "../../../components/common";
 import { ErrorState } from "../../../components/feedback";
-import { environment } from "../../../config/environment";
+import { toUserFacingApiErrorMessage } from "../../../services/userFacingApiError";
 import { useDuriStore } from "../../../store/useDuriStore";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
-import { toUserFacingApiErrorMessage } from "../../../services/userFacingApiError";
 import { AuthErrorBanner, AuthTextField, AvatarOption, OnboardingProgress } from "../../auth/components/AuthControls";
 import { AuthLayout } from "../../auth/components/AuthLayout";
 import { DuriLogo } from "../../auth/components/DuriLogo";
@@ -106,7 +105,8 @@ export function OnboardingIntroScreen() {
   const skip = () => finish("/(tabs)/home");
   // 서버 모드에서는 상세 성향검사만 서버의 현재 quiz 계약으로 완전하게
   // 저장할 수 있다. 간단 검사 결과를 완료로 오인하지 않도록 바로 연결한다.
-  const startTest = () => finish(environment.dataSource === "mock" ? "/(onboarding)/quick-test" : "/tests/personal");
+  //const startTest = () => finish(environment.dataSource === "mock" ? "/(onboarding)/quick-test" : "/tests/personal");
+  const startTest=() => finish("/tests/personal");
   return <AuthLayout title={`${name}님, 두리와 여행을 시작해요`} subtitle="두리가 함께 여행하는 방법을 간단히 알려드릴게요." onBack={leave} footer={<View style={styles.footerGap}><PrimaryButton label="여행 성향 테스트 시작" onPress={startTest} /><SecondaryButton label="다음에 하기" onPress={skip} /></View>}>
     <DuriLogo compact />
     <OnboardingProgress current={2} total={2} />
