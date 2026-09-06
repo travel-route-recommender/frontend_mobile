@@ -12,7 +12,7 @@
       "bundleIdentifier": "com.tripmatch.app.dev"
     },
     "android": {
-      "package": "com.tripmatch.app.dev",
+      "package": "com.duri_tourmate.app",
       "adaptiveIcon": {
         "backgroundColor": "#EFF5FF",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -55,6 +55,13 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "b6ca8f5e-2bf0-4742-9f38-af5c22f21d31"
+      }
+    },
+    "owner": "song-mand"
   }
 }

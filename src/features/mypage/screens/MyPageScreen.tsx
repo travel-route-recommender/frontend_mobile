@@ -1,6 +1,6 @@
+import { router } from "expo-router";
 import { useMemo, useState } from "react";
 import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
-import { router } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Avatar, PrimaryButton } from "../../../components/common";
 import { environment } from "../../../config/environment";
@@ -8,11 +8,11 @@ import { useDuriStore } from "../../../store/useDuriStore";
 import { colors, radius, shadows, spacing, typography } from "../../../theme/tokens";
 import { AuthErrorBanner, AuthTextField, PasswordField } from "../../auth/components/AuthControls";
 import { clearAuthStores, useAuthFlow } from "../../auth/hooks/useAuthFlow";
-import { authCapabilities, authService } from "../../auth/services/authService";
+import { authService } from "../../auth/services/authService";
 import { useAuthSessionStore } from "../../auth/store/useAuthSessionStore";
 import { validateNickname } from "../../auth/validation";
-import { useTravelPreferenceSurveyResult } from "../../preferences/hooks/useTravelPreferenceSurveyResult";
 import { useApiPreferenceProfile } from "../../preferences/hooks/useApiPreferenceProfile";
+import { useTravelPreferenceSurveyResult } from "../../preferences/hooks/useTravelPreferenceSurveyResult";
 import { resolvePreferenceResultPair } from "../../preferences/logic/resolve-preference-result-pair";
 
 const DURI_GUIDE_IMAGE = require("../../../../assets/images/duri/home/hero-travel.png");
@@ -34,9 +34,9 @@ type MenuRow = { icon: string; label: string; tone: MenuTone; onPress: () => voi
 export function MyPageScreen() {
   const sessionKind = useAuthSessionStore((session) => session.sessionKind);
   const provider = useAuthSessionStore((session) => session.provider);
-  const currentSessionUserId = useAuthSessionStore((session) => session.currentSessionUserId);
+const currentSessionUserId = useAuthSessionStore((session) => session.currentSessionUserId);
   const { logout } = useAuthFlow();
-  const { width } = useWindowDimensions();
+const { width } = useWindowDimensions();
   const compact = width <= 370;
   const state = useDuriStore();
   const user = state.usersById[state.currentUserId];
@@ -70,9 +70,9 @@ export function MyPageScreen() {
   const trips = useMemo(
     () => Object.values(state.tripsById).filter((trip) => trip.members.some((member) => member.userId === state.currentUserId)),
     [state.currentUserId, state.tripsById],
-  );
+);
   const savedCount = sessionKind === "member" ? (state.savedPlaceIdsByUserId[state.currentUserId] ?? []).length : 0;
-  const userName = user?.name ?? "여행자";
+const userName = user?.name ?? "여행자";
   const avatarName = user?.initial ?? userName;
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -149,8 +149,8 @@ export function MyPageScreen() {
             imageUrl={user?.profileImageUrl}
             name={userName}
             onEdit={openProfileEditor}
-          />
-          <GuestUpgradeCard compact={compact} onPress={() => router.push("/(auth)/guest-upgrade" as never)} />
+/>
+    <GuestUpgradeCard compact={compact} onPress={() => router.push("/(auth)/guest-upgrade" as never)} />
         </> : <>
           <MemberProfileCard
             avatarName={avatarName}
@@ -473,13 +473,13 @@ const styles = StyleSheet.create({
   menuDivider: { height: StyleSheet.hairlineWidth, marginLeft: 57, backgroundColor: FOUNDATION.border },
   pressed: { opacity: 0.76 },
   overlay: { flex: 1, justifyContent: "center", padding: spacing.lg, backgroundColor: "rgba(20, 34, 67, 0.45)" },
-  dialog: { gap: spacing.md, borderRadius: radius.xl, padding: spacing.lg, backgroundColor: colors.surface },
-  dialogHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  dialogTitle: { ...typography.subtitle, color: colors.text },
+dialog: { gap: spacing.md, borderRadius: radius.xl, padding: spacing.lg, backgroundColor: colors.surface },
+dialogHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+dialogTitle: { ...typography.subtitle, color: colors.text },
   closeButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center", marginRight: -10, marginTop: -10 },
-  close: { fontSize: 28, lineHeight: 30, color: colors.textSecondary },
-  dialogDescription: { ...typography.body, color: colors.textSecondary },
+close: { fontSize: 28, lineHeight: 30, color: colors.textSecondary },
+dialogDescription: { ...typography.body, color: colors.textSecondary },
   confirmDanger: { minHeight: 52, borderRadius: radius.md, alignItems: "center", justifyContent: "center", backgroundColor: colors.danger },
-  confirmDangerText: { ...typography.button, color: colors.white },
-  disabled: { opacity: 0.5 },
+confirmDangerText: { ...typography.button, color: colors.white },
+disabled: { opacity: 0.5 },
 });

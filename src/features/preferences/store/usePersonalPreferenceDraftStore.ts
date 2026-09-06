@@ -1,15 +1,17 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
+
 import { createPersistHydrationStore } from "../../../store/createPersistHydrationStore";
+import type { PersonalPreferenceDraft, PreferenceDraftOwner } from "../types";
+
 import { PERSONAL_SURVEY_DRAFT_VERSION, preferenceSteps } from "../config/travel-preference-test-config";
 import { normalizeTravelPreferenceSurveyAnswers, validateTravelPreferenceSurvey } from "../logic/travel-preference-survey";
 import type {
   CompletedPreferenceSurvey,
-  PersonalPreferenceDraft,
-  PersonalPreferenceDraftAnswers,
-  PreferenceDraftOwner,
+  PersonalPreferenceDraftAnswers
 } from "../types";
+
 
 export const PREFERENCE_DRAFT_STORAGE_VERSION = 8;
 export const PREFERENCE_DRAFT_STORAGE_KEY = "duri-personal-preference-draft";
@@ -91,6 +93,7 @@ export const usePersonalPreferenceDraftStore = create<PersonalPreferenceDraftSta
           startedAt,
           updatedAt: startedAt,
         },
+//>>>>>>> test_added
       }),
       updateAnswers: (patch, updatedAt = nowIso()) => set((state) => state.draft ? {
         draft: {
@@ -146,6 +149,7 @@ export const usePersonalPreferenceDraftStore = create<PersonalPreferenceDraftSta
           draftNotice: normalized.notice,
         };
       },
+/*<<<<<<< HEAD*/
       onRehydrateStorage: () => {
         usePreferenceDraftHydrationState.getState().begin();
         return (_hydratedState, error) => {
@@ -154,6 +158,14 @@ export const usePersonalPreferenceDraftStore = create<PersonalPreferenceDraftSta
             return;
           }
           usePreferenceDraftHydrationState.getState().succeed();
+/*=======
+      onRehydrateStorage: (state) => {
+        state.setHydrated(false);
+        state.setError(null);
+        return (hydratedState, error) => {
+          if (error) hydratedState?.setError("진행 중인 여행 성향 테스트를 불러오지 못했어요.");
+          hydratedState?.setHydrated(true);
+>>>>>>> test_added*/
         };
       },
       partialize: (state) => ({

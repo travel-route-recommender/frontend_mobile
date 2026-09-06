@@ -7,21 +7,21 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { Screen } from "../src/components/common";
 import { ErrorState, LoadingState } from "../src/components/feedback";
-import { useAuthSessionHydration } from "../src/features/auth/hooks/useAuthSessionHydration";
+import { environment } from "../src/config/environment";
+import { resolveAppHydrationPolicy } from "../src/core/state-integrity/appHydrationPolicy";
+import { normalizePreferenceResult } from "../src/duri/group-preferences";
 import { useAuthSessionBootstrap } from "../src/features/auth/hooks/useAuthSessionBootstrap";
+import { useAuthSessionHydration } from "../src/features/auth/hooks/useAuthSessionHydration";
 import { useAuthSessionStore } from "../src/features/auth/store/useAuthSessionStore";
 import { useFriendCompatibilityHydration } from "../src/features/compatibility/hooks/use-friend-compatibility-hydration";
 import { useTripInviteHydration } from "../src/features/invitations/hooks/useTripInviteHydration";
-import { usePreferenceDraftHydration } from "../src/features/preferences/hooks/usePreferenceDraftHydration";
 import { useApiPreferenceProfile } from "../src/features/preferences/hooks/useApiPreferenceProfile";
+import { usePreferenceDraftHydration } from "../src/features/preferences/hooks/usePreferenceDraftHydration";
 import { useCreateTripDraftHydration } from "../src/features/trip-creation/hooks/useCreateTripDraftHydration";
 import { useTripDocumentHydration } from "../src/features/trip-documents";
-import { normalizePreferenceResult } from "../src/duri/group-preferences";
-import { environment } from "../src/config/environment";
-import { resolveAppHydrationPolicy } from "../src/core/state-integrity/appHydrationPolicy";
 import { queryClient } from "../src/query/queryClient";
-import { useStoreHydration } from "../src/store/useStoreHydration";
 import { useDuriStore } from "../src/store/useDuriStore";
+import { useStoreHydration } from "../src/store/useStoreHydration";
 import { colors } from "../src/theme/tokens";
 
 export default function RootLayout() {
@@ -35,7 +35,7 @@ function HydratedNavigator() {
   const preferenceDraftHydration = usePreferenceDraftHydration();
   const createTripDraftHydration = useCreateTripDraftHydration();
   const tripInviteHydration = useTripInviteHydration();
-  // 문서함은 보조 기능이다. hydration은 백그라운드에서 시작하되 실패가
+// 문서함은 보조 기능이다. hydration은 백그라운드에서 시작하되 실패가
   // 로그인·여행방·Workspace의 전역 진입을 막지 않게 문서 섹션에서만 처리한다.
   const tripDocumentHydration = useTripDocumentHydration();
   const requiredHydration = resolveAppHydrationPolicy({
@@ -43,8 +43,8 @@ function HydratedNavigator() {
       domainHydration,
       authHydration,
       friendCompatibilityHydration,
-      preferenceDraftHydration,
-      createTripDraftHydration,
+preferenceDraftHydration,
+createTripDraftHydration,
       tripInviteHydration,
     ],
     optional: [tripDocumentHydration],
@@ -56,11 +56,11 @@ function HydratedNavigator() {
     void Promise.all([
       domainHydration.retry(),
       authHydration.retry(),
-      friendCompatibilityHydration.retry(),
+friendCompatibilityHydration.retry(),
       preferenceDraftHydration.retry(),
       createTripDraftHydration.retry(),
       tripInviteHydration.retry(),
-    ]);
+          ]);
     sessionBootstrap.retry();
   }} /></Screen>;
   if (!localHydrated || !sessionBootstrap.isReady) return <View style={styles.loading}><LoadingState label="안전한 로그인 상태와 여행 정보를 확인하고 있어요" /></View>;
@@ -77,25 +77,25 @@ function SessionAwareNavigator() {
   const sessionUserExists = useDuriStore((state) => sessionUserId ? Boolean(state.usersById[sessionUserId]) : false);
   const hasSupportedPreferenceResult = useDuriStore((state) => sessionUserId ? Boolean(normalizePreferenceResult(state.preferenceResultsByUserId[sessionUserId], sessionUserId)) : false);
   const setCurrentUser = useDuriStore((state) => state.setCurrentUser);
-  const authenticated = sessionKind === "member" || sessionKind === "guest";
+const authenticated = sessionKind === "member" || sessionKind === "guest";
   const apiPreferenceProfile = useApiPreferenceProfile(sessionUserId, authenticated);
   const expectedUserId = sessionKind === "member" || sessionKind === "guest" ? sessionUserId ?? "" : "";
   const shouldReconcile = domainUserId !== expectedUserId && (!expectedUserId || sessionUserExists);
-  const canonicalPreferenceCompleted = environment.dataSource === "mock"
+const canonicalPreferenceCompleted = environment.dataSource === "mock"
     ? hasSupportedPreferenceResult
     : apiPreferenceProfile.data?.completed;
   const shouldReconcilePreference = !shouldReconcile
-    && Boolean(expectedUserId)
+&& Boolean(expectedUserId)
     && canonicalPreferenceCompleted !== undefined
-    && preferenceTestCompleted !== canonicalPreferenceCompleted;
+&& preferenceTestCompleted !== canonicalPreferenceCompleted;
   useEffect(() => { if (shouldReconcile) setCurrentUser(expectedUserId || null); }, [expectedUserId, setCurrentUser, shouldReconcile]);
   useEffect(() => {
-    if (shouldReconcilePreference && canonicalPreferenceCompleted !== undefined) {
-      setPreferenceTestCompleted(canonicalPreferenceCompleted);
+if (shouldReconcilePreference && canonicalPreferenceCompleted !== undefined) {
+setPreferenceTestCompleted(canonicalPreferenceCompleted);
     }
-  }, [canonicalPreferenceCompleted, setPreferenceTestCompleted, shouldReconcilePreference]);
+}, [canonicalPreferenceCompleted, setPreferenceTestCompleted, shouldReconcilePreference]);
   if (shouldReconcile || shouldReconcilePreference) return <View style={styles.loading}><LoadingState label="로그인과 성향 결과 상태를 맞추고 있어요" /></View>;
-  const member = sessionKind === "member";
+    const member = sessionKind === "member";
   const publicPath = pathname === "/" || pathname === "/login" || pathname === "/signup-choice" || pathname === "/signup-email" || pathname === "/terms" || pathname === "/invite" || pathname === "/guest-room-limit" || pathname.startsWith("/invite/") || pathname === "/+not-found";
   if (!authenticated && !publicPath) {
     return <Redirect href={{ pathname: "/(auth)/login", params: { returnTo: pathname } }} />;
