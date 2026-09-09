@@ -8,7 +8,7 @@
     "scheme": "tripmatch",
     "userInterfaceStyle": "light",
     "ios": {
-      "icon": "./assets/images/app-icon.png",
+      "icon": "./assets/images/ios-app-icon.png",
       "bundleIdentifier": "com.tripmatch.app.dev",
       "buildNumber": "1",
       "usesAppleSignIn": true,
