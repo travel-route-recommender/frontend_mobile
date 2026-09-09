@@ -65,7 +65,7 @@ block(!store.apple?.review, "심사용 연락처와 로그인 정보가 없습�
 block(!store.apple?.copyright, "저작권 소유자 정보가 없습니다.");
 const screenshotDirectory = path.join(root, "store-assets/ios");
 const screenshots = fs.existsSync(screenshotDirectory)
-  ? fs.readdirSync(screenshotDirectory).filter((file) => /\.png$/i.test(file))
+  ? fs.readdirSync(screenshotDirectory).filter((file) => /\.(?:png|jpe?g)$/i.test(file))
   : [];
 block(screenshots.length === 0, "App Store용 실제 앱 화면 스크린샷이 없습니다.");
 block(/accountDeletion:\s*false/.test(backendContract), "백엔드 계정 삭제 API가 준비되지 않았습니다.");
