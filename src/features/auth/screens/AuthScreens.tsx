@@ -4,7 +4,7 @@ import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { PrimaryButton, SecondaryButton } from "../../../components/common";
 import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import { formatTripDateRange } from "../../../utils/formatters";
-import { AuthDivider, AuthErrorBanner, AuthErrorToast, AuthTextField, GoogleButton, KakaoButton, PasswordField, TermsCheckbox } from "../components/AuthControls";
+import { AppleSignInButton, AuthDivider, AuthErrorBanner, AuthErrorToast, AuthTextField, GoogleButton, KakaoButton, PasswordField, TermsCheckbox } from "../components/AuthControls";
 import { AuthLayout } from "../components/AuthLayout";
 import { DuriLogo } from "../components/DuriLogo";
 import { useAuthFlow } from "../hooks/useAuthFlow";
@@ -33,12 +33,18 @@ export function LoginScreen() {
   const [password, setPassword] = useState("");
   const [emailError, setEmailError] = useState<string>();
   const [passwordError, setPasswordError] = useState<string>();
+  const [socialServiceAgreed, setSocialServiceAgreed] = useState(false);
+  const [socialPrivacyAgreed, setSocialPrivacyAgreed] = useState(false);
+  const [socialOverFourteenConfirmed, setSocialOverFourteenConfirmed] = useState(false);
+  const [socialAgreementError, setSocialAgreementError] = useState<string>();
   const [serviceError, setServiceError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const emailRef = useRef<TextInput>(null);
   const passwordRef = useRef<TextInput>(null);
   const { applyAuthSuccess } = useAuthFlow();
   const dismissServiceError = useCallback(() => setServiceError(null), []);
+  const socialLoginAvailable = authCapabilities.appleLogin || authCapabilities.kakaoLogin || authCapabilities.googleLogin;
+  const socialAgreed = socialServiceAgreed && socialPrivacyAgreed && socialOverFourteenConfirmed;
 
   const finishEmail = async () => {
     dismissServiceError();
@@ -57,6 +63,9 @@ export function LoginScreen() {
   };
 
   const finishSocial = async (provider: SocialProvider) => {
+    const nextAgreementError = validateRequiredAgreement(socialAgreed, "소셜 로그인 필수 항목");
+    setSocialAgreementError(nextAgreementError);
+    if (nextAgreementError) return;
     setLoading(true); setServiceError(null);
     try {
       const result = await authService.loginWithSocial(provider);
@@ -69,9 +78,17 @@ export function LoginScreen() {
   return <AuthLayout testID="login-screen" overlay={<AuthErrorToast message={serviceError} onDismiss={dismissServiceError} />}>
     <DuriLogo />
     <View><Text style={styles.heroTitle}>여행의 시작을 함께해요</Text><Text style={styles.heroSubtitle}>로그인하고 친구들과 여행을 계획해 보세요.</Text></View>
+    {socialLoginAvailable ? <View style={styles.socialTermsBox}>
+      <Text style={styles.socialTermsGuide}>소셜 로그인 및 최초 가입을 위한 필수 동의</Text>
+      <TermsCheckbox checked={socialServiceAgreed} label="[필수] 서비스 이용약관" onToggle={() => { setSocialServiceAgreed((value) => !value); setSocialAgreementError(undefined); }} onView={() => router.push({ pathname: "/(auth)/terms", params: { type: "service" } })} />
+      <TermsCheckbox checked={socialPrivacyAgreed} label="[필수] 개인정보 수집·이용 동의" onToggle={() => { setSocialPrivacyAgreed((value) => !value); setSocialAgreementError(undefined); }} onView={() => router.push({ pathname: "/(auth)/terms", params: { type: "privacy-consent" } })} />
+      <TermsCheckbox checked={socialOverFourteenConfirmed} label="[필수] 만 14세 이상입니다" onToggle={() => { setSocialOverFourteenConfirmed((value) => !value); setSocialAgreementError(undefined); }} />
+      {socialAgreementError ? <Text accessibilityLiveRegion="polite" style={styles.error}>{socialAgreementError}</Text> : null}
+    </View> : null}
+    {authCapabilities.appleLogin ? <AppleSignInButton testID="apple-login-button" disabled={loading} onPress={() => finishSocial("apple")} /> : null}
     {authCapabilities.googleLogin ? <GoogleButton disabled={loading} onPress={() => finishSocial("google")} /> : null}
     {authCapabilities.kakaoLogin ? <KakaoButton label="카카오로 계속하기" disabled={loading} onPress={() => finishSocial("kakao")} /> : null}
-    {authCapabilities.googleLogin || authCapabilities.kakaoLogin ? <AuthDivider /> : null}
+    {socialLoginAvailable ? <AuthDivider /> : null}
     <AuthTextField ref={emailRef} label="이메일" value={email} onChangeText={(value) => { setEmail(value); setEmailError(undefined); dismissServiceError(); }} error={emailError} keyboardType="email-address" autoCapitalize="none" autoComplete="email" returnKeyType="next" onSubmitEditing={() => passwordRef.current?.focus()} />
     <PasswordField ref={passwordRef} label="비밀번호" value={password} onChangeText={(value) => { setPassword(value); setPasswordError(undefined); dismissServiceError(); }} error={passwordError} autoComplete="current-password" returnKeyType="done" onSubmitEditing={finishEmail} />
     <PrimaryButton label="이메일로 로그인" loading={loading} onPress={finishEmail} />
@@ -269,6 +286,7 @@ const styles = StyleSheet.create({
   textLinkButton: { minHeight: 36, alignItems: "center", justifyContent: "center" }, textLink: { ...typography.bodyStrong, color: colors.primary },
   inlineLinks: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "center", gap: spacing.xs }, dot: { color: colors.textMuted }, muted: { ...typography.body, color: colors.textSecondary },
   termsBox: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, padding: spacing.md }, rule: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border }, error: { ...typography.caption, color: colors.danger },
+  socialTermsBox: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, padding: spacing.md }, socialTermsGuide: { ...typography.caption, color: colors.textSecondary, marginBottom: spacing.xs },
   inviteHero: { alignItems: "center", gap: spacing.sm, borderRadius: radius.lg, backgroundColor: colors.background, padding: spacing.xl }, inviteEmoji: { fontSize: 44 }, inviteCopy: { ...typography.body, color: colors.textSecondary, textAlign: "center" },
   previewBox: { gap: spacing.xs, borderWidth: 1, borderColor: colors.primary, borderRadius: radius.lg, padding: spacing.lg, backgroundColor: colors.primarySoft }, previewTitle: { ...typography.subtitle, color: colors.text }, previewMeta: { ...typography.caption, color: colors.textSecondary },
   legalBox: { gap: spacing.lg, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, padding: spacing.lg, backgroundColor: colors.surfaceMuted }, legalSection: { gap: spacing.xs }, legalHeading: { ...typography.subtitle, color: colors.text }, legalBody: { ...typography.body, color: colors.textSecondary },

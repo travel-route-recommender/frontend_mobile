@@ -6,6 +6,7 @@
 | Apple 데이터 유형 | 목적 | 사용자 연결 | 추적 |
 | --- | --- | --- | --- |
 | Contact Info → Email Address | App Functionality | 예 | 아니요 |
+| Contact Info → Name | App Functionality | 예 | 아니요 |
 | Identifiers → User ID | App Functionality | 예 | 아니요 |
 | User Content → Photos or Videos | App Functionality | 예 | 아니요 |
 | User Content → Other User Content | App Functionality | 예 | 아니요 |
@@ -14,8 +15,9 @@
 
 ## 데이터별 근거
 
-- Email Address: 이메일 회원 인증
-- User ID: 내부 계정 ID와 화면 닉네임
+- Email Address: 이메일 회원 및 카카오·Apple 계정 인증 시 제공된 이메일
+- Name: 가입 닉네임 및 카카오·Apple이 제공한 닉네임·이름
+- User ID: 내부 계정 ID와 카카오·Apple 계정 식별자
 - Photos or Videos: 티켓·예약 이미지 업로드
 - Other User Content: 여행 일정·장소 후보·의견·할 일·메모·업로드 문서
 - Product Interaction: 저장 장소, 후보 의견, 일정 편집, 여행 성향 응답

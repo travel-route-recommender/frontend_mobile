@@ -57,7 +57,7 @@ export function normalizePersistedAuthSession(value: unknown): PersistedSession 
   const sessionKind = value.sessionKind === "guest" || value.sessionKind === "member" ? value.sessionKind : null;
   const userId = typeof value.currentSessionUserId === "string" && value.currentSessionUserId ? value.currentSessionUserId : null;
   if (!sessionKind || !userId) return initialSession;
-  const provider = value.provider === "email" || value.provider === "google" || value.provider === "kakao" || value.provider === "guest"
+  const provider = value.provider === "email" || value.provider === "google" || value.provider === "kakao" || value.provider === "apple" || value.provider === "guest"
     ? value.provider
     : sessionKind === "guest" ? "guest" : "email";
   return {

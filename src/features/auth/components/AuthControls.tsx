@@ -5,6 +5,8 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 
 import { colors, radius, shadows, sizes, spacing, typography } from "../../../theme/tokens";
 import { toKoreanAuthErrorMessage } from "../services/authErrorMessage";
 
+export { AppleSignInButton } from "./AppleSignInButton";
+
 type AuthTextFieldProps = TextInputProps & { label: string; error?: string; helperText?: string; trailing?: ReactNode };
 
 export const AuthTextField = forwardRef<TextInput, AuthTextFieldProps>(function AuthTextField({ label, error, helperText, trailing, style, ...props }, ref) {

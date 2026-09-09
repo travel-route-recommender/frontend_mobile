@@ -9,6 +9,7 @@ const eas = readJson("eas.json");
 const store = readJson("store.config.json");
 const packageJson = readJson("package.json");
 const backendContract = fs.readFileSync(path.join(root, "src/features/auth/services/backendAuthContract.ts"), "utf8");
+const appConfigSource = fs.readFileSync(path.join(root, "app.config.js"), "utf8");
 const legalSources = [
   "src/features/auth/legal/legalDocuments.ts",
   "docs/TERMS_OF_SERVICE_DRAFT.md",
@@ -21,12 +22,14 @@ const block = (condition, message) => { if (condition) blockers.push(message); }
 
 check(app.version, "iOS 앱 버전이 없습니다.");
 check(/^\d+$/.test(app.ios?.buildNumber ?? ""), "iOS buildNumber가 정수가 아닙니다.");
-check(app.ios?.usesAppleSignIn !== true, "이메일 전용 iOS 정책에 불필요한 Sign in with Apple entitlement가 설정되어 있습니다.");
+check(app.ios?.usesAppleSignIn === true, "Sign in with Apple entitlement가 설정되지 않았습니다.");
 check(app.ios?.config?.usesNonExemptEncryption === false, "수출 규정 암호화 설정이 없습니다.");
-check(!app.plugins?.some((plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) === "expo-apple-authentication"), "이메일 전용 iOS 정책에 Apple Authentication 플러그인이 포함되어 있습니다.");
-check(/thirdPartySocialLogin:\s*false/.test(backendContract), "iOS 제3자 로그인 비활성 정책이 명시되지 않았습니다.");
+check(app.plugins?.some((plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) === "expo-apple-authentication"), "Apple Authentication 플러그인이 없습니다.");
+check(Boolean(packageJson.dependencies?.["expo-apple-authentication"]), "Apple Authentication 패키지가 없습니다.");
+check(/thirdPartySocialLogin:\s*true/.test(backendContract), "iOS 제3자 로그인 활성 정책이 명시되지 않았습니다.");
 const iosAutolinkingExcludes = packageJson.expo?.autolinking?.ios?.exclude ?? [];
-check(iosAutolinkingExcludes.includes("@react-native-kakao/core") && iosAutolinkingExcludes.includes("@react-native-kakao/user"), "카카오 네이티브 SDK가 iOS autolinking에서 제외되지 않았습니다.");
+check(!iosAutolinkingExcludes.includes("@react-native-kakao/core") && !iosAutolinkingExcludes.includes("@react-native-kakao/user"), "카카오 네이티브 SDK가 iOS autolinking에서 제외되어 있습니다.");
+check(/ios:\s*\{\s*handleKakaoOpenUrl:\s*true\s*\}/.test(appConfigSource), "카카오 iOS 로그인 URL 처리가 설정되지 않았습니다.");
 const secureStorePlugin = app.plugins?.find((plugin) => Array.isArray(plugin) && plugin[0] === "expo-secure-store");
 check(secureStorePlugin?.[1]?.faceIDPermission === false, "사용하지 않는 Face ID 권한 문구가 비활성화되지 않았습니다.");
 check(eas.build?.production?.distribution === "store", "production 배포 유형이 store가 아닙니다.");

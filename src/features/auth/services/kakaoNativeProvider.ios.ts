@@ -1,11 +1,22 @@
-export function requestKakaoProviderAccessToken(): Promise<string> {
-  throw new Error("현재 iOS 배포 버전은 카카오 로그인을 지원하지 않아요.");
+import { initializeKakaoSDK } from "@react-native-kakao/core";
+import { login as loginWithKakao, logout as logoutFromKakao } from "@react-native-kakao/user";
+import { environment } from "../../../config/environment";
+import { requestKakaoNativeAccessToken, requestKakaoNativeIdToken } from "./kakaoNativeAuth";
+
+const kakaoNativeClient = { initialize: initializeKakaoSDK, login: loginWithKakao };
+
+export function requestKakaoProviderAccessToken() {
+  return requestKakaoNativeAccessToken(environment.kakaoNativeAppKey, kakaoNativeClient);
 }
 
-export function requestKakaoProviderIdToken(_nonce: string): Promise<string> {
-  throw new Error("현재 iOS 배포 버전은 카카오 로그인을 지원하지 않아요.");
+export function requestKakaoProviderIdToken(nonce: string) {
+  return requestKakaoNativeIdToken(
+    environment.kakaoNativeAppKey,
+    nonce,
+    kakaoNativeClient,
+  );
 }
 
-export function clearKakaoProviderSession(): Promise<void> {
-  return Promise.resolve();
+export function clearKakaoProviderSession() {
+  return logoutFromKakao();
 }

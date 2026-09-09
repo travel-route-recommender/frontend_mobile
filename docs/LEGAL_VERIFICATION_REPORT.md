@@ -1,7 +1,7 @@
 # iOS 출시 법률·개인정보 검증 보고서
 
-검증일: 2026-09-04
-대상: `frontend_mobile/ios_release`, `Backend/ios_release`
+검증일: 2026-09-09
+대상: `frontend_mobile/ios_release`, `Backend/main`
 판정: **조건부 미통과 — 코드 조치 완료, 운영자 확정값과 운영 증빙이 남음**
 
 이 문서는 코드와 공식 자료의 대조 결과이며 개별 사업자에 대한 법률 자문을 대체하지 않는다.
@@ -18,17 +18,17 @@
 | 항목 | 결과 | 근거 |
 | --- | --- | --- |
 | 인앱 계정 삭제 | 충족 | 마이페이지 → `DELETE /users/me`; 이메일 계정 비밀번호 재확인 |
-| 삭제 범위 | 충족 | 계정·토큰·설문·성향·저장·직접 기여·업로드 파일 삭제; 생성자가 탈퇴하면 생성 여행방 전체 삭제 |
+| 삭제 범위 | 충족 | 계정 식별정보 삭제·익명화, 업로드 티켓·문서 삭제, 공동 일정 유지, 방장 탈퇴 시 방 닫힘 |
 | 삭제 후 토큰 차단 | 충족 | JWT 검증 시 사용자 존재 여부 재확인 |
 | 개인정보 최소 공개 | 개선 완료 | `/users` 인증 적용, 이메일 제거, 본인과 공유 여행방 구성원으로 범위 제한 |
 | 업로드 파일 접근 | 개선 완료 | `/uploads` 기본 공개를 끄고 구성원용 만료 서명 URL 사용 |
-| iOS 로그인 4.8 | 충족 | iOS 1.0은 자사 이메일 로그인과 게스트만 제공; 카카오·Google·Apple 로그인 코드를 iOS 바이너리에서 제외 |
+| iOS 로그인 4.8 | 코드 충족 | iOS 카카오 로그인과 동등한 Apple 로그인을 함께 제공 |
 | 필수 동의 구분 | 개선 완료 | 이용약관, 개인정보 수집·이용, 만 14세 이상 확인을 각각 표시 |
-| 동의 증빙 | 개선 완료 | 가입·게스트 생성 시 약관/동의 버전과 서버 시각 저장 |
+| 동의 증빙 | 개선 완료 | 이메일·게스트·최초 카카오·Apple 가입 시 약관/동의 버전과 서버 시각 저장 |
 | 앱 내 정책 접근 | 초안 완료 | 로그인·마이페이지에서 약관 및 개인정보 처리방침 접근 가능 |
 | 광고·추적·분석 SDK | 코드상 없음 | 의존성·권한·호출 검색 결과 |
 | 기기 GPS 위치 | 코드상 없음 | 위치 권한 및 위치 SDK 없음; 여행 장소 좌표는 사용자의 현재 위치가 아님 |
-| iOS Release 산출물 | 로컬 검증 완료 | Xcode 26.6·iOS 26.5 SDK arm64 Release 빌드 성공; Kakao·Google·Apple·Nitro framework/문자열, Face ID·Local Network·Bonjour 설정 없음; PrivacyInfo.xcprivacy 포함 |
+| iOS Release 산출물 | 새 빌드 검증 필요 | 카카오·Apple 네이티브 SDK가 추가되어 새 EAS production archive와 실기기 로그인을 확인해야 함 |
 
 ## App Store Connect App Privacy 입력 초안
 
@@ -36,8 +36,9 @@
 
 | Apple 데이터 유형 | 연결 여부 | 근거 |
 | --- | --- | --- |
-| Contact Info → Email Address | 사용자 연결 | 이메일 회원 인증 |
-| Identifiers → User ID | 사용자 연결 | 내부 ID와 화면 닉네임 |
+| Contact Info → Email Address | 사용자 연결 | 이메일 회원 및 카카오·Apple 제공 이메일 인증 |
+| Contact Info → Name | 사용자 연결 | 가입 닉네임 및 카카오·Apple 제공 이름 |
+| Identifiers → User ID | 사용자 연결 | 내부 ID와 카카오·Apple 계정 식별자 |
 | User Content → Photos or Videos | 사용자 연결 | 티켓·예약 이미지 업로드 |
 | User Content → Other User Content | 사용자 연결 | 일정·후보·의견·할 일·메모·문서 |
 | Usage Data → Product Interaction | 사용자 연결 | 저장 장소, 후보 의견, 일정 편집, 여행 성향 응답 |
@@ -66,9 +67,10 @@
 ### 제품·심사상 추가 차단 가능성
 
 1. 여행방에서 사용자 업로드·자유 입력 콘텐츠를 공유하지만 신고, 차단, 유해 콘텐츠 필터와 공개 연락처 기능이 없다. Apple Guideline 1.2 적용 대상으로 판단되면 심사 거절 위험이 있다.
-2. 카카오 로그인을 제공하는 Android 출시에는 신규 카카오 계정용 약관·개인정보 동의 화면과 서버 동의 이력 저장이 별도로 필요하다.
-3. 로컬 unsigned Release 산출물 검사는 통과했다. Apple 서명된 production archive에서도 PrivacyInfo.xcprivacy, 포함 SDK 목록, `NSLocalNetworkUsageDescription`·Bonjour 항목을 동일하게 최종 확인해야 한다.
-4. 운영 계정 삭제 E2E 시험에서 사용자 문서, 공유방 참조, 파일, 캐시·로그·백업의 삭제 결과를 증빙해야 한다.
+2. 운영 백엔드에 최신 `main`과 Apple 환경변수가 배포되지 않으면 카카오·Apple 로그인이 실패한다.
+3. Kakao Developers에 `com.tripmatch.app.dev` iOS 플랫폼이 등록되지 않으면 카카오 로그인 복귀가 실패한다.
+4. Apple 서명된 production archive에서 PrivacyInfo.xcprivacy, 포함 SDK 목록, `NSLocalNetworkUsageDescription`·Bonjour 항목을 최종 확인해야 한다.
+5. 운영 계정 삭제 E2E 시험에서 사용자 문서, 공유방 참조, 파일, 캐시·로그·백업의 삭제 결과를 증빙해야 한다.
 
 ## 공식 근거
 

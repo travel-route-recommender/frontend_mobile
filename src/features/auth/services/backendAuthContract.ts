@@ -8,17 +8,17 @@ import { normalizeEmail, normalizeInviteCode } from "../validation";
  * backend endpoints are added.
  */
 export const backendAuthCapabilities = {
-  socialProviders: ["kakao"] as const satisfies readonly SocialProvider[],
+  socialProviders: ["kakao", "apple"] as const satisfies readonly SocialProvider[],
   socialIdentityLinking: false,
   guestUpgrade: false,
   accountDeletion: true,
 } as const;
 
-/** iOS 1.0 ships with the first-party email flow and guest access only. */
+/** iOS exposes every social provider implemented by the current backend contract. */
 export const iosReleaseAuthenticationPolicy = {
   primaryLogin: "email",
   guestAccess: true,
-  thirdPartySocialLogin: false,
+  thirdPartySocialLogin: true,
 } as const;
 
 export function supportsBackendSocialProvider(provider: SocialProvider) {
@@ -26,8 +26,16 @@ export function supportsBackendSocialProvider(provider: SocialProvider) {
 }
 
 export function socialProviderUnavailableMessage(provider: SocialProvider) {
-  const label = provider === "google" ? "Google" : "카카오";
+  const label = provider === "google" ? "Google" : provider === "apple" ? "Apple" : "카카오";
   return `현재 백엔드는 ${label} 로그인을 지원하지 않아요.`;
+}
+
+export function createSocialConsentRequestFields() {
+  return {
+    termsVersion: CURRENT_TERMS_VERSION,
+    privacyConsentVersion: CURRENT_PRIVACY_CONSENT_VERSION,
+    overFourteenConfirmed: true,
+  } as const;
 }
 
 export function createLoginRequestBody(input: LoginInput) {

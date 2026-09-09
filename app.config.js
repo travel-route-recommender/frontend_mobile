@@ -13,6 +13,7 @@ module.exports = ({ config }) => {
       {
         nativeAppKey,
         android: { authCodeHandlerActivity: true },
+        ios: { handleKakaoOpenUrl: true },
       },
     ]);
   }

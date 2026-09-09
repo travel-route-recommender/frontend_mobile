@@ -2,7 +2,7 @@ import type { EntityId, User } from "../../../domain";
 
 export type SessionKind = "anonymous" | "guest" | "member";
 export type AuthStatus = "idle" | "loading" | "authenticated" | "unauthenticated" | "error";
-export type SocialProvider = "google" | "kakao";
+export type SocialProvider = "google" | "kakao" | "apple";
 export type AuthProvider = SocialProvider | "email" | "guest";
 
 export type LoginInput = { email: string; password: string };

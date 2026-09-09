@@ -11,6 +11,7 @@
       "icon": "./assets/images/app-icon.png",
       "bundleIdentifier": "com.tripmatch.app.dev",
       "buildNumber": "1",
+      "usesAppleSignIn": true,
       "supportsTablet": false,
       "config": {
         "usesNonExemptEncryption": false
@@ -35,6 +36,7 @@
     },
     "plugins": [
       "expo-router",
+      "expo-apple-authentication",
       [
         "expo-splash-screen",
         {

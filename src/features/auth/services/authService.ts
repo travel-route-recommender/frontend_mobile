@@ -26,6 +26,7 @@ import {
   supportsBackendSocialProvider,
 } from "./backendAuthContract";
 import { toKoreanAuthErrorMessage } from "./authErrorMessage";
+import { requestAppleProviderCredential } from "./appleNativeProvider";
 import { requestKakaoAccessToken } from "./socialAuth";
 import { requestSocialLoginSession } from "./socialLoginFlow";
 
@@ -82,9 +83,11 @@ export const authCapabilities = {
   googleLogin: supportsBackendSocialProvider("google")
     && usingNativePlatform
     && socialLoginAllowedForRelease,
-  // iOS 1.0은 이메일·게스트만 노출한다. Android의 기존 카카오 로그인은 유지한다.
   kakaoLogin: supportsBackendSocialProvider("kakao")
     && usingNativePlatform
+    && socialLoginAllowedForRelease,
+  appleLogin: supportsBackendSocialProvider("apple")
+    && process.env.EXPO_OS === "ios"
     && socialLoginAllowedForRelease,
   socialIdentityLinking: backendAuthCapabilities.socialIdentityLinking,
   guestUpgrade: backendAuthCapabilities.guestUpgrade,
@@ -290,6 +293,7 @@ class ApiAuthService implements AuthService {
       const session = await requestSocialLoginSession<BackendSession>(provider, {
         apiClient,
         requestKakaoAccessToken,
+        requestAppleCredential: requestAppleProviderCredential,
       });
       await persistSession(session);
       return mapSession(session, provider);

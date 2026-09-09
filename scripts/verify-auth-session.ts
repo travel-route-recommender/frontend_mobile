@@ -20,6 +20,7 @@ import { ApiError, NativeApiClient, configureApiAuth, type ApiClient, type ApiRe
 import { apiPermissionMessage, guestPagePolicy, restrictedFeatureMessage } from "../src/features/auth/services/guestAccessPolicy";
 import { requestGoogleNativeIdToken } from "../src/features/auth/services/googleNativeAuth";
 import { requestKakaoNativeAccessToken, requestKakaoNativeIdToken } from "../src/features/auth/services/kakaoNativeAuth";
+import { requestAppleNativeCredential } from "../src/features/auth/services/appleNativeAuth";
 import { buildInviteReturnPath, inviteErrorMessage, resolveAuthReturnTo } from "../src/features/auth/services/inviteFlowPolicy";
 import { requestSocialLoginSession } from "../src/features/auth/services/socialLoginFlow";
 import {
@@ -338,6 +339,30 @@ async function verifyKakaoNativeTokens() {
   );
 }
 
+async function verifyAppleNativeCredential() {
+  let requestedNonce: string | undefined;
+  const credential = await requestAppleNativeCredential(" apple-nonce ", {
+    signIn: async (options) => {
+      requestedNonce = options.nonce;
+      return {
+        identityToken: " identity-token ",
+        authorizationCode: " authorization-code ",
+        fullName: { givenName: " 두리 ", familyName: " 김 " },
+      };
+    },
+  });
+  assert(requestedNonce === "apple-nonce", "Apple native sign-in must receive the generated nonce");
+  assert(credential.identityToken === "identity-token" && credential.authorizationCode === "authorization-code", "Apple credentials must be normalized before backend exchange");
+  assert(credential.nonce === "apple-nonce" && credential.fullName?.givenName === "두리" && credential.fullName.familyName === "김", "Apple nonce and first-login name must be preserved");
+
+  await requestAppleNativeCredential("nonce", {
+    signIn: async () => ({ identityToken: null, authorizationCode: "code" }),
+  }).then(
+    () => { throw new Error("Apple login without an identity token unexpectedly succeeded"); },
+    (error: unknown) => assert(error instanceof Error && error.message.includes("Apple 로그인 정보"), "missing Apple credentials must fail closed"),
+  );
+}
+
 function createStubApi(handler: (request: ApiRequest) => unknown): ApiClient {
   return {
     async request<Response>(request: ApiRequest) {
@@ -356,6 +381,7 @@ async function verifySocialLoginContracts() {
       return { session: "kakao" };
     }),
     requestKakaoAccessToken: async () => "kakao-access-token",
+    requestAppleCredential: async () => { throw new Error("Apple credential must not be requested for Kakao login"); },
   });
   assert(kakaoSession.session === "kakao", "Kakao login must return the backend session");
   assert(kakaoCalls.length === 1, "Kakao login must make exactly one backend request");
@@ -365,8 +391,45 @@ async function verifySocialLoginContracts() {
   );
   const kakaoBody = kakaoCalls[0]?.body as Record<string, unknown>;
   assert(
-    kakaoBody.accessToken === "kakao-access-token" && Object.keys(kakaoBody).length === 1,
-    "Kakao OAuth exchange must send only the SDK accessToken accepted by the backend DTO",
+    kakaoBody.accessToken === "kakao-access-token"
+      && kakaoBody.termsVersion === "1.0"
+      && kakaoBody.privacyConsentVersion === "1.1"
+      && kakaoBody.overFourteenConfirmed === true
+      && Object.keys(kakaoBody).length === 4,
+    "Kakao OAuth exchange must include the SDK access token and required consent fields",
+  );
+
+  const appleCalls: ApiRequest[] = [];
+  const appleSession = await requestSocialLoginSession<TestSession>("apple", {
+    apiClient: createStubApi((request) => {
+      appleCalls.push(request);
+      return { session: "apple" };
+    }),
+    requestKakaoAccessToken: async () => { throw new Error("Kakao token must not be requested for Apple login"); },
+    requestAppleCredential: async () => ({
+      identityToken: "apple-identity-token",
+      authorizationCode: "apple-authorization-code",
+      nonce: "apple-nonce",
+      fullName: { givenName: "두리" },
+    }),
+  });
+  assert(appleSession.session === "apple" && appleCalls.length === 1, "Apple login must return the backend session from one request");
+  assert(
+    appleCalls[0]?.path === "/auth/oauth/apple" && appleCalls[0]?.method === "POST" && appleCalls[0]?.auth === false,
+    "Apple login must call the backend Apple exchange endpoint without app authentication",
+  );
+  const appleBody = appleCalls[0]?.body as Record<string, unknown>;
+  assert(
+    appleBody.identityToken === "apple-identity-token"
+      && appleBody.authorizationCode === "apple-authorization-code"
+      && appleBody.nonce === "apple-nonce",
+    "Apple OAuth exchange must include native credentials",
+  );
+  assert(
+    appleBody.termsVersion === "1.0"
+      && appleBody.privacyConsentVersion === "1.1"
+      && appleBody.overFourteenConfirmed === true,
+    "Apple OAuth exchange must include required consent fields",
   );
 
   const googleCalls: ApiRequest[] = [];
@@ -380,13 +443,14 @@ async function verifySocialLoginContracts() {
       googleKakaoTokenCalls += 1;
       return "must-not-be-used";
     },
+    requestAppleCredential: async () => { throw new Error("Apple credential must not be requested for unsupported Google login"); },
   }).then(
     () => { throw new Error("unsupported Google login unexpectedly reached the backend"); },
     (error: unknown) => assert(error instanceof Error && error.message.includes("지원하지 않아요"), "Google login must fail with a clear unsupported-provider error"),
   );
   assert(googleCalls.length === 0 && googleKakaoTokenCalls === 0, "unsupported Google login must make no SDK or backend request");
-  assert(supportsBackendSocialProvider("kakao") && !supportsBackendSocialProvider("google"), "the capability list must match the backend OAuth endpoints");
-  assert(iosReleaseAuthenticationPolicy.primaryLogin === "email" && iosReleaseAuthenticationPolicy.guestAccess && !iosReleaseAuthenticationPolicy.thirdPartySocialLogin, "iOS 1.0 must expose only first-party email login and guest access");
+  assert(supportsBackendSocialProvider("kakao") && supportsBackendSocialProvider("apple") && !supportsBackendSocialProvider("google"), "the capability list must match the backend OAuth endpoints");
+  assert(iosReleaseAuthenticationPolicy.primaryLogin === "email" && iosReleaseAuthenticationPolicy.guestAccess && iosReleaseAuthenticationPolicy.thirdPartySocialLogin, "iOS must expose the implemented Kakao and Apple providers");
 }
 
 function verifyBackendAuthRequestBodies() {
@@ -395,11 +459,11 @@ function verifyBackendAuthRequestBodies() {
 
   const signup = createSignupRequestBody({ nickname: " 여행자 ", email: " USER@Example.COM ", password: "secret" });
   assert(signup.nickname === "여행자" && signup.email === "user@example.com" && signup.password === "secret", "signup must normalize member fields");
-  assert(signup.termsVersion === "1.0" && signup.privacyConsentVersion === "1.0" && signup.overFourteenConfirmed === true && Object.keys(signup).length === 6, "signup must send the accepted legal versions and age confirmation");
+  assert(signup.termsVersion === "1.0" && signup.privacyConsentVersion === "1.1" && signup.overFourteenConfirmed === true && Object.keys(signup).length === 6, "signup must send the accepted legal versions and age confirmation");
 
   const invite = createInviteJoinRequestBody({ code: " abcd1234 ", nickname: " 게스트 ", tripId: "client-only-trip" });
   assert(invite.inviteCode === "ABCD1234" && invite.nickname === "게스트", "invite join must normalize guest fields");
-  assert(invite.termsVersion === "1.0" && invite.privacyConsentVersion === "1.0" && invite.overFourteenConfirmed === true && Object.keys(invite).length === 5, "invite join must include legal versions and omit client-only fields");
+  assert(invite.termsVersion === "1.0" && invite.privacyConsentVersion === "1.1" && invite.overFourteenConfirmed === true && Object.keys(invite).length === 5, "invite join must include legal versions and omit client-only fields");
 
   const refresh = createRefreshRequestBody("refresh-token");
   assert(refresh.refreshToken === "refresh-token" && Object.keys(refresh).length === 1, "refresh must send only refreshToken");
@@ -544,6 +608,7 @@ async function main() {
   await verifyMultipartRequestBody();
   await verifyGoogleNativeOidc();
   await verifyKakaoNativeTokens();
+  await verifyAppleNativeCredential();
   await verifySocialLoginContracts();
   verifyBackendAuthRequestBodies();
   verifyLocalPrivateDataAccountScope();
