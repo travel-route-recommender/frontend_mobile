@@ -19,6 +19,7 @@
 - 개인정보처리방침: https://duri-tourmate-support.codex00101.chatgpt.site/privacy
 - 이용약관: https://duri-tourmate-support.codex00101.chatgpt.site/terms
 - 사용자 요청으로 소유자 전용에서 공개로 변경했다. Sites version 2 배포 성공.
+- 지원·개인정보·약관 URL은 인증 정보 없는 요청으로 각각 HTTP 200과 실제 두리 본문을 확인했다.
 - Sites project: `appgprj_6aa16097a5048191ac06df42e82600c4`.
 - Version: `appgprj_6aa16097a5048191ac06df42e82600c4~appgver_94d036799bbc8191ab28c4e769765e83`.
 - Source: `0b2d114e421ae0e3ef1348a82f1c825aaa958720`.
@@ -34,8 +35,13 @@
 
 ## 진행 결과
 
-- App Privacy: 기존 7개 유형 초안의 게시 대기. 브라우저 Apple 로그인 세션이 만료되어 재로그인이 필요하다.
-- 최종 iOS 빌드: 준비 중.
+- App Store 메타데이터: `eas metadata:push --profile production --non-interactive` 성공. 개인정보 URL·지원 URL 등록 완료. 심사 계정 정보는 기존 값을 보존했으며 로컬에서 덮어쓰지 않았다.
+- App Privacy: 재로그인 후 기존 7개 유형과 개인정보 URL을 확인했다. Apple의 정확성·변경 시 갱신 동의 확인창에서 사용자 확인 대기 중.
+- 최종 iOS 빌드: 1.0.0 / 8 `FINISHED` 확인(2026-09-10 13:33 KST). 원본 커밋 `f86f2a4` (`ios_release`, push 완료).
+  - EAS build: `3ebad435-74a7-4aa8-be35-b3154c9dcdfd`.
+  - Apple 업로드: `02423ea5-8b2b-4210-8a7b-f818562cdd7c` / `FINISHED` 확인(2026-09-10 13:35 KST). App Store 심사 제출이 아니라 TestFlight/App Store Connect 바이너리 업로드이다.
+  - App Store Connect의 빌드 업로드 목록에서 1.0.0 (8), Apple 처리 중을 확인했다. 처리 완료 또는 실기기 설치 성공으로 기재하지 않는다.
+  - Apple build ID: `550961d6-bd3d-478a-a261-322ff3ce13cf`.
 - 실기기 테스트: 사용자 요청으로 미실시.
 - 심사 제출: 미실시.
 
