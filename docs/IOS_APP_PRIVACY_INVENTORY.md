@@ -27,8 +27,9 @@
 
 ## 제출 직전 확인
 
+- 2026-09-10 사용자 전달로 확인한 운영 정보: Render 싱가포르·운영 로그 7일, MongoDB Atlas 대한민국 AWS 서울(`ap-northeast-2`)·무료 클러스터·자동 백업 및 스냅샷 미사용. 대시보드 직접 검증은 수행하지 않았다.
 - production archive에 실제 포함된 모든 SDK의 PrivacyInfo.xcprivacy와 네트워크 동작
-- Render·MongoDB Atlas·Kakao 지도 WebView의 실제 로그/IP 처리 및 보유 기간
+- Render 로그의 실제 기록 항목과 MongoDB Atlas·Kakao 지도 WebView의 로그/IP 처리·보유 범위. Render 로그 7일을 다른 제공처나 문의 이메일의 기간으로 확대하지 않는다.
 - 이동 제약 입력 기능을 iOS에 활성화하면 Sensitive Info 해당 여부 재평가
 - 운영 로그에서 검색어·인증정보·IP의 기록 및 비식별 처리 여부 확인. 수집 전에 연결을 끊는 구조가 증명될 때만 “사용자 비연결”로 재분류
 - App Store Connect 답변을 실제 출시 바이너리의 동작과 최종 대조

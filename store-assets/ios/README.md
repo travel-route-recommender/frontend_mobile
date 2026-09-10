@@ -7,4 +7,3 @@ iPhone 17 Pro Max(iOS 26.5)에서 촬영한 실제 앱 화면을 사용한 6.9�
 3. `03-duri-check.jpg` — DURI 일정 점검
 4. `04-explore-busan.jpg` — 지역 장소 탐색
 5. `05-trip-room.jpg` — 여행방 진행 상황
-6. `06-easy-start.jpg` — Apple·카카오·이메일 로그인
