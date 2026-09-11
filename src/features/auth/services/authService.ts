@@ -386,7 +386,7 @@ class ApiAuthService implements AuthService {
           auth: false,
           retryUnauthorized: false,
           signal: attemptSignal.signal,
-          body: createRefreshRequestBody(pending.refreshToken, pending.operationId),
+          body: createRefreshRequestBody(pending.refreshToken),
         });
         if (signal.aborted || generation !== this.sessionGeneration) throw createAbortError();
         // R1과 pending 제거를 한 SecureStore 값으로 기록한 다음 A1을 메모리에 활성화한다.

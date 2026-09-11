@@ -13,7 +13,7 @@ import {
   resolveMapSheetPosition,
 } from "../src/features/explore/logic/mapSheetLayout";
 import { canAddPlaceCandidate, canSavePlace } from "../src/features/places/logic/placeCapabilities";
-import { buildPlaceLocationOptions, getPlaceLocationDisplayLabel, getPlaceLocationValue, getPlaceProvinceSortOrder } from "../src/features/places/logic/placeFilterOptions";
+import { buildPlaceLocationOptions, getPlaceLocationDisplayLabel, getPlaceLocationValue, getPlaceProvinceSortOrder, isSamePlaceProvince, normalizePlaceRegionId } from "../src/features/places/logic/placeFilterOptions";
 import { enrichPlaceClassificationTags } from "../src/features/places/logic/placeClassification";
 import { dedupePlacesForDisplay, filterPlaces, findSimilarPlaces, getPlaceDistanceProximityLabel, normalizeSearchKeyword, parsePlaceCoordinate, searchPlaces } from "../src/features/places/logic/placeSearch";
 import { buildPlaceCardViewModel, selectCandidateStateForPlace, selectPlaceTripRelation, selectResolvedSavedPlaces } from "../src/features/places/selectors/placeSelectors";
@@ -25,6 +25,10 @@ import {
   saveBackendPlace,
 } from "../src/features/places/services/placeApi";
 import { toggleUniqueId } from "../src/utils/entityRelations";
+import { configureApiAuth } from "../src/services/apiClient";
+import { QueryClient } from "@tanstack/react-query";
+import { queryKeys } from "../src/query/keys";
+import { toggleBackendSavedPlace } from "../src/features/places/services/savedPlaceMutation";
 
 function assert(condition: unknown, message: string): asserts condition { if (!condition) throw new Error(message); }
 
@@ -90,6 +94,10 @@ const locationOptions = buildPlaceLocationOptions({ ...regions, gyeongju: gyeong
 assert(!locationOptions.some((option) => option.level === "province" && option.regionId === "gyeongju"), "경주는 왼쪽 시도 목록에 province로 노출하지 않아야 한다");
 assert(locationOptions.some((option) => option.value === getPlaceLocationValue("gyeongbuk", "경주시") && option.description === "경북 경주시"), "경주는 경북 경주시 district 옵션으로 노출해야 한다");
 assert(filterPlaces([gyeongjuPlace], { keyword: "", regionId: "gyeongbuk", district: "경주시", category: "all" }, { ...regions, gyeongju: gyeongjuRegion })[0]?.id === "gyeongju-place", "경북 경주시 필터는 경주 regionId 장소도 포함해야 한다");
+assert(normalizePlaceRegionId("37") === "jeonbuk", "여행방의 숫자 지역 코드를 UI 지역 ID로 변환한다");
+assert(getPlaceLocationDisplayLabel({ regionId: "37", district: "all", label: "37::all" }) === "전북특별자치도", "숫자 코드 대신 지역명을 표시한다");
+assert(isSamePlaceProvince({ regionId: "37" }, { regionId: "jeonbuk", areaCode: "37" }), "숫자 전체 선택과 같은 도의 시군구를 중복 부모로 인식한다");
+assert(!isSamePlaceProvince({ regionId: "37" }, { regionId: "busan", areaCode: "6" }), "다른 도의 선택은 유지한다");
 
 assert(toggleUniqueId([], "cafe").join() === "cafe", "9. 저장 ID를 추가해야 한다");
 assert(toggleUniqueId(["cafe"], "cafe").length === 0, "10. 저장 ID를 해제해야 한다");
@@ -191,12 +199,13 @@ assert(buildTourSearchPath({ areaCode: "1", page: 1, limit: 50 }) === "/tour/pla
 assert(buildTourSearchPath({ keyword: "서울", areaCode: "1", page: 1, limit: 50 }) === "/tour/places/search?keyword=%EC%84%9C%EC%9A%B8&areaCode=1&page=1&size=50", "36. 검색어가 있으면 Tour places/search 계약을 호출해야 한다");
 
 async function verifySavedPlaceContract() {
-  const calls: { url: string; method: string; body?: string }[] = [];
+  const calls: { url: string; method: string; body?: string; authorization: string | null }[] = [];
+  configureApiAuth({ getAccessToken: () => "verification-token", onAccessTokenExpired: () => undefined, onSessionInvalidated: () => undefined });
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input, init) => {
     const url = String(input);
     const method = init?.method ?? "GET";
-    calls.push({ url, method, ...(typeof init?.body === "string" ? { body: init.body } : {}) });
+    calls.push({ url, method, authorization: new Headers(init?.headers).get("Authorization"), ...(typeof init?.body === "string" ? { body: init.body } : {}) });
     if (method === "GET") {
       return new Response(JSON.stringify([{
         id: "save-1",
@@ -226,12 +235,68 @@ async function verifySavedPlaceContract() {
     await removeBackendSavedPlace("665abc123def456789012345");
     assert(calls[1]?.url.endsWith("/users/me/saves") && calls[1]?.method === "POST" && calls[1]?.body === '{"placeId":"665abc123def456789012345"}', "장소 저장 요청은 Mongo placeId만 전송해야 한다");
     assert(calls[2]?.url.endsWith("/users/me/saves/665abc123def456789012345") && calls[2]?.method === "DELETE", "장소 저장 해제 경로가 API 계약과 일치해야 한다");
+    assert(calls.every((call) => call.authorization === "Bearer verification-token"), "저장 조회/추가/삭제 모두 인증 토큰을 보내야 한다");
+    globalThis.fetch = async () => new Response(JSON.stringify({ data: [] }), { status: 200 });
+    let rejected = false;
+    try { await fetchBackendSavedPlaces(); } catch { rejected = true; }
+    assert(rejected, "잘못된 저장 목록 응답을 실제 빈 목록으로 표시하면 안 된다");
   } finally {
     globalThis.fetch = originalFetch;
   }
 }
 
-void verifySavedPlaceContract().then(() => {
+async function verifySavedPlaceMutations() {
+  const originalFetch = globalThis.fetch;
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+  const key = queryKeys.users.saves("owner");
+  const place = { ...places[0], backendPlaceId: "665abc123def456789012345" };
+  let writes = 0;
+  let finish!: (response: Response) => void;
+  globalThis.fetch = async (_input, init) => {
+    if ((init?.method ?? "GET") === "GET") return new Response("[]", { status: 200, headers: { "content-type": "application/json" } });
+    writes += 1;
+    return new Promise<Response>((resolve) => { finish = resolve; });
+  };
+  const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+  const success = () => new Response('{"success":true}', { status: 200 });
+  try {
+    queryClient.setQueryData(key, []);
+    const first = toggleBackendSavedPlace(queryClient, "owner", place, () => true);
+    await flush();
+    assert((queryClient.getQueryData<unknown[]>(key) ?? []).length === 0, "서버 성공 전에는 하트를 먼저 채우지 않는다");
+    assert(await toggleBackendSavedPlace(queryClient, "owner", place, () => true) === "pending", "여러 화면에서 같은 장소를 연속 누르면 중복 저장을 막는다");
+    assert(writes === 1, "연타는 저장 요청 한 건만 전송해야 한다");
+    finish(success());
+    assert(await first === "saved", "저장 성공 결과를 호출 화면에 반환해야 한다");
+    assert(queryClient.getQueryData<{ place: Place }[]>(key)?.[0].place.backendPlaceId === place.backendPlaceId, "성공 뒤 공유 캐시와 Mongo ID를 보존한다");
+    const removal = toggleBackendSavedPlace(queryClient, "owner", place, () => true);
+    await flush();
+    finish(new Response('{"message":"failed"}', { status: 500 }));
+    let failed = false;
+    try { await removal; } catch { failed = true; }
+    assert(failed && queryClient.getQueryData<unknown[]>(key)?.length === 1, "삭제 실패 시 기존 하트와 목록을 유지한다");
+    const retry = toggleBackendSavedPlace(queryClient, "owner", place, () => true);
+    await flush();
+    finish(success());
+    assert(await retry === "removed" && queryClient.getQueryData<unknown[]>(key)?.length === 0, "실패 후 재시도 성공 시 목록에서 제거한다");
+    let currentSession = true;
+    const changedAccount = toggleBackendSavedPlace(queryClient, "owner", place, () => currentSession);
+    await flush();
+    currentSession = false;
+    queryClient.removeQueries({ queryKey: key });
+    finish(success());
+    assert(await changedAccount === "stale" && queryClient.getQueryData(key) === undefined, "계정 전환 뒤 이전 사용자 캐시를 되살리지 않는다");
+    const unloaded = toggleBackendSavedPlace(queryClient, "owner", place, () => true);
+    await flush();
+    finish(success());
+    assert(await unloaded === "saved", "목록 미로딩 상태에서는 서버 목록을 확인하고 저장한다");
+  } finally {
+    queryClient.clear();
+    globalThis.fetch = originalFetch;
+  }
+}
+
+void verifySavedPlaceContract().then(verifySavedPlaceMutations).then(() => {
   console.log("Place flow verification passed: search, region, classification, saving, sorting, scheduled, and alias assertions");
 }).catch((error: unknown) => {
   console.error(error);

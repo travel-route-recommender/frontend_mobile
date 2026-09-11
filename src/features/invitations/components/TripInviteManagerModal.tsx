@@ -96,7 +96,7 @@ function MockTripInviteManagerModal({
             <View style={styles.linkCard}>
               <View style={styles.statusRow}><Text style={styles.codeLabel}>초대 코드</Text><Text style={styles.activeBadge}>사용 중</Text></View>
               <Text selectable style={styles.code}>{record.code}</Text>
-              <Text selectable style={styles.link}>{payload.inviteUrl}</Text>
+              <Text style={styles.caption}>아래 버튼으로 초대 링크를 공유하거나 복사해 주세요.</Text>
               <Text style={styles.caption}>앱이 설치된 기기에서 열리는 두리 전용 링크예요.</Text>
             </View>
             <View style={styles.actions}>
@@ -235,7 +235,7 @@ function ApiTripInviteManagerModal({ visible, trip, onClose }: TripInviteManager
               <View style={styles.linkCard}>
                 <View style={styles.statusRow}><Text style={styles.codeLabel}>초대 코드</Text><Text style={styles.activeBadge}>사용 중</Text></View>
                 <Text selectable style={styles.code}>{activeRecord.inviteCode}</Text>
-                <Text selectable style={styles.link}>{activeRecord.inviteLink}</Text>
+                <Text style={styles.caption}>아래 버튼으로 초대 링크를 공유하거나 복사해 주세요.</Text>
               </View>
               <View style={styles.actions}>
                 <PrimaryButton label="초대 링크 공유" loading={busyAction === "share"} disabled={Boolean(busyAction)} onPress={() => runShareAction("share", inviteShareService.shareLink)} />
@@ -277,7 +277,6 @@ const styles = StyleSheet.create({
   codeLabel: { ...typography.caption, color: colors.textSecondary },
   activeBadge: { ...typography.caption, color: colors.success, backgroundColor: colors.successSoft, borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: spacing.xxs },
   code: { ...typography.title, color: colors.primary, letterSpacing: 2 },
-  link: { ...typography.caption, color: colors.primary },
   actions: { gap: spacing.sm },
   disabledCard: { gap: spacing.sm, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.surfaceMuted },
   feedback: { ...typography.caption, color: colors.primary, textAlign: "center" },

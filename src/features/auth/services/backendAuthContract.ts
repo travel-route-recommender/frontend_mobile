@@ -39,6 +39,7 @@ export function createInviteJoinRequestBody(input: InviteJoinInput) {
   };
 }
 
-export function createRefreshRequestBody(refreshToken: string, operationId: string) {
-  return { refreshToken, operationId };
+export function createRefreshRequestBody(refreshToken: string) {
+  // operationId stays in local pending state; the refresh DTO only accepts the token.
+  return { refreshToken };
 }

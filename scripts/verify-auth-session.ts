@@ -136,7 +136,7 @@ async function verifyTokenState() {
   const resumed = recoverOrBeginPendingRefresh(afterAppKill, "K-after-restart", 59_999);
   assert(resumed.status === "ready" && resumed.pending.operationId === "K1", "app restart must recover K1 rather than create a new key");
 
-  // 서버가 회전했지만 응답이 유실된 경우에도 같은 R0/K1로 idempotent response를 복구한다.
+  // 응답 유실 후에도 로컬 R0/K1을 유지한다. 서버의 중복 처리 방지를 보장하는 검사는 아니다.
   const afterLostResponse = recoverOrBeginPendingRefresh(first.state, "K-after-loss", 30_000);
   assert(afterLostResponse.status === "ready" && afterLostResponse.pending.refreshToken === "R0" && afterLostResponse.pending.operationId === "K1", "a lost response must retry the original R0/K1 pair");
 
@@ -446,9 +446,11 @@ function verifyBackendAuthRequestBodies() {
   const invite = createInviteJoinRequestBody({ code: " abcd1234 ", nickname: " 게스트 ", tripId: "client-only-trip" });
   assert(invite.inviteCode === "ABCD1234" && invite.nickname === "게스트" && Object.keys(invite).length === 2, "invite join must omit client-only fields and metadata");
 
-  const operationId = "8fb9d9a8-71c3-42fc-9690-c18e274f3122";
-  const refresh = createRefreshRequestBody("refresh-token", operationId);
-  assert(refresh.refreshToken === "refresh-token" && refresh.operationId === operationId && Object.keys(refresh).length === 2, "refresh must send refreshToken and the stable operationId");
+  const local = beginPendingRefresh({ refreshToken: "refresh-token" }, "local-operation", 1_000);
+  const refresh = createRefreshRequestBody(local.pending.refreshToken);
+  assert(JSON.stringify(refresh) === '{"refreshToken":"refresh-token"}', "refresh must send only refreshToken, with no local operationId or other metadata");
+  const committed = completePendingRefresh(local.state, local.pending.operationId, "next-refresh-token");
+  assert(committed.refreshToken === "next-refresh-token" && !committed.pendingRefresh, "local operation tracking must still commit the matching refresh without sending its ID");
 }
 
 async function verifyGoogleNativeOidc() {

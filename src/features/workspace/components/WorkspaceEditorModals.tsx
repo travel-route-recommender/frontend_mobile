@@ -176,7 +176,7 @@ function ModalFrame({ visible, title, subtitle, resizable = false, footer, onClo
           testID="workspace-modal-resize-handle"
         ><View style={styles.handle} /></View> : <View style={styles.passiveHandleZone}><View style={styles.handle} /></View>}
         <View style={styles.modalHeader}><View style={styles.modalCopy}><Text style={styles.modalTitle}>{title}</Text>{subtitle ? <Text style={styles.modalSubtitle}>{subtitle}</Text> : null}</View><Pressable accessibilityRole="button" accessibilityLabel={`${title} 닫기`} onPress={onClose} style={styles.close}><Text style={styles.closeText}>닫기</Text></Pressable></View>
-        <View style={[styles.modalBody, footer ? styles.modalBodyWithFooter : undefined]}>{children}</View>
+        <View style={[styles.modalBody, resizable && styles.resizableModalBody, footer ? styles.modalBodyWithFooter : undefined]}>{children}</View>
         {footer ? <View style={[styles.modalFooter, { paddingBottom: Math.max(insets.bottom, spacing.sm) }]}>{footer}</View> : null}
       </View>
     </KeyboardAvoidingView>
@@ -443,7 +443,7 @@ function SelectCandidateModalContent({
   }, [candidates, keyword]);
   return <ModalFrame visible resizable title="후보에서 일정 추가" subtitle="상단 손잡이로 창 높이를 자유롭게 조절하세요" onClose={onClose}>
     <View style={styles.selectContent}>
-      <TextField label="후보 검색" value={keyword} onChangeText={setKeyword} placeholder="장소명 또는 카테고리" returnKeyType="search" />
+      <View style={styles.selectFixedControl}><TextField label="후보 검색" value={keyword} onChangeText={setKeyword} placeholder="장소명 또는 카테고리" returnKeyType="search" /></View>
       <ScrollView style={styles.candidateList} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.candidateRows}>
         {filtered.map((candidate) => {
           const disabled = candidate.placeMissing;
@@ -451,7 +451,7 @@ function SelectCandidateModalContent({
         })}
         {!filtered.length ? <View style={styles.selectEmpty}><Text style={styles.candidateName}>선택할 후보가 없어요</Text><Text style={styles.modalSubtitle}>검색어를 바꾸거나 새 장소를 후보에 담아보세요.</Text></View> : null}
       </ScrollView>
-      <SecondaryButton label="장소 찾아보기" onPress={onExplore} />
+      <View style={styles.selectFixedControl}><SecondaryButton label="장소 찾아보기" onPress={onExplore} /></View>
     </View>
   </ModalFrame>;
 }
@@ -879,6 +879,7 @@ const styles = StyleSheet.create({
   handle: { width: 48, height: 5, alignSelf: "center", borderRadius: radius.pill, backgroundColor: colors.borderStrong },
   modalHeader: { flexDirection: "row", alignItems: "flex-start", gap: spacing.sm, paddingHorizontal: spacing.lg, paddingBottom: spacing.md },
   modalBody: { minHeight: 0 },
+  resizableModalBody: { flex: 1, overflow: "hidden" },
   modalBodyWithFooter: { flexShrink: 1 },
   modalFooter: { flexShrink: 0, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.surface, paddingHorizontal: spacing.lg, paddingTop: spacing.sm },
   modalCopy: { flex: 1, gap: 2 },
@@ -950,6 +951,7 @@ const styles = StyleSheet.create({
   cancelAction: { minWidth: 92, minHeight: 52, alignItems: "center", justifyContent: "center", borderRadius: radius.md, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.surface },
   cancelActionText: { ...typography.bodyStrong, color: colors.textSecondary },
   selectContent: { flex: 1, minHeight: 0, gap: spacing.md, paddingHorizontal: spacing.lg },
+  selectFixedControl: { flexShrink: 0 },
   candidateList: { flex: 1, minHeight: 0 },
   candidateRows: { gap: spacing.xs, paddingBottom: spacing.md },
   candidateRow: { minHeight: 64, flexDirection: "row", alignItems: "center", gap: spacing.sm, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceMuted, paddingHorizontal: spacing.md, paddingVertical: spacing.sm },

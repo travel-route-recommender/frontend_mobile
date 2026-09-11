@@ -67,7 +67,7 @@ export function TripCreationSuccess({ response, onEnterRoom, setupRetrying = fal
     <Card style={styles.inviteCard}>
       <Text style={styles.sectionTitle}>초대 링크</Text>
       <Text selectable style={styles.code}>{inviteCode ?? (inviteLoading ? "생성 중" : "여행방에서 발급 가능")}</Text>
-      <Text selectable style={styles.link}>{inviteUrl ?? (inviteLoading ? "초대 링크를 만들고 있어요." : "여행방에 들어가 초대 링크를 다시 발급해 주세요.")}</Text>
+      <Text style={styles.caption}>{payload ? "아래 버튼으로 초대 링크를 공유하거나 복사해 주세요." : (inviteLoading ? "초대 링크를 만들고 있어요." : "여행방에 들어가 초대 링크를 다시 발급해 주세요.")}</Text>
       <Text style={styles.caption}>{response.source === "api" ? "링크를 받은 사람은 로그인하거나 게스트로 참여해 같은 여행방에 들어올 수 있어요." : "현재 기기에 설치된 앱에서 열 수 있는 초대 링크예요."}</Text>
     </Card>
     {response.warnings?.length ? <Card style={styles.warningCard}>{response.warnings.map((warning) => <Text key={warning} accessibilityRole="alert" style={styles.warningText}>• {warning}</Text>)}</Card> : null}
@@ -95,7 +95,6 @@ const styles = StyleSheet.create({
   inviteCard: { gap: spacing.sm },
   sectionTitle: { ...typography.subtitle, color: colors.text },
   code: { ...typography.title, color: colors.primary, letterSpacing: 2 },
-  link: { ...typography.caption, color: colors.primary },
   caption: { ...typography.caption, color: colors.textSecondary },
   warningCard: { gap: spacing.xs, backgroundColor: colors.warningSoft },
   warningText: { ...typography.caption, color: colors.warning },

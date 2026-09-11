@@ -10,6 +10,7 @@ export const queryKeys = {
   },
   trips: {
     all: ["trips"] as const,
+    apiList: (userId?: EntityId | null) => ["trips", "api", userId] as const,
     /** 상세 응답에는 현재 사용자의 로컬 사실·overlay가 포함되므로 viewer별로 격리한다. */
     detail: (tripId: EntityId, viewerId: EntityId) => ["trips", "detail", tripId, viewerId] as const,
     /** 인증 계정 전환 시 이전 참여자의 공유 TODO cache를 노출하지 않는다. */

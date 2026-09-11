@@ -14,11 +14,8 @@ import { canAddPlaceCandidate, canSavePlace } from "../logic/placeCapabilities";
 import { selectCandidateStateForPlace, selectEligibleTripsForPlaceCandidate } from "../selectors/placeSelectors";
 import {
   fetchBackendSavedPlaces,
-  getBackendPlace,
-  removeBackendSavedPlace,
-  saveBackendPlace,
-  type BackendSavedPlace,
 } from "../services/placeApi";
+import { toggleBackendSavedPlace } from "../services/savedPlaceMutation";
 import type { PlaceActionFeedback } from "../types";
 
 export function usePlaceActions() {
@@ -72,55 +69,40 @@ export function usePlaceActions() {
   const eligibleTrips = useMemo(() => selectEligibleTripsForPlaceCandidate(source), [source]);
   const selectedPlace = selectedPlaceId ? source.placesById[selectedPlaceId] : undefined;
 
-  const toggleSaved = (placeId: EntityId, options?: { silent?: boolean }) => {
+  const toggleSaved = async (placeId: EntityId, options?: { silent?: boolean }): Promise<boolean> => {
     const place = source.placesById[placeId];
     const decision = canSavePlace(sessionKind, source.usersById[source.currentUserId], place);
     if (!decision.allowed) {
       requireMember(() => undefined, "장소 저장");
-      return;
+      return false;
     }
     const wasSaved = (source.savedPlaceIdsByUserId[source.currentUserId] ?? []).includes(placeId);
     if (remoteSavesEnabled) {
-      const queryKey = queryKeys.users.saves(sessionUserId);
-      const current = queryClient.getQueryData<BackendSavedPlace[]>(queryKey) ?? [];
-      const existing = current.find((entry) => entry.place.id === placeId);
-      const optimisticEntry: BackendSavedPlace = existing ?? {
-        id: `${placeId}:pending`,
-        savedAt: new Date().toISOString(),
-        place,
-      };
-      queryClient.setQueryData<BackendSavedPlace[]>(queryKey, wasSaved
-        ? current.filter((entry) => entry.place.id !== placeId)
-        : [optimisticEntry, ...current.filter((entry) => entry.place.id !== placeId)]);
-      if (!options?.silent) setFeedback({ message: wasSaved ? "저장을 해제했어요." : "저장한 장소에 추가했어요." });
-
-      void (async () => {
-        try {
-          let backendPlaceId = existing?.place.backendPlaceId ?? place.backendPlaceId;
-          if (!wasSaved && !backendPlaceId) {
-            const resolved = await getBackendPlace(place.id);
-            backendPlaceId = resolved?.backendPlaceId;
-          }
-          if (!backendPlaceId) throw new Error("장소 저장에 필요한 정보를 확인하지 못했어요.");
-          if (wasSaved) await removeBackendSavedPlace(backendPlaceId);
-          else await saveBackendPlace(backendPlaceId);
-          await queryClient.invalidateQueries({ queryKey });
-        } catch (reason) {
-          queryClient.setQueryData<BackendSavedPlace[]>(queryKey, (latest = []) => {
-            if (wasSaved) {
-              return latest.some((entry) => entry.place.id === placeId) ? latest : [optimisticEntry, ...latest];
-            }
-            return latest.filter((entry) => entry.place.id !== placeId);
-          });
-          setFeedback({ message: reason instanceof ApiError && reason.status === 401
-            ? "로그인 상태를 다시 확인해 주세요."
-            : "저장 상태를 반영하지 못했어요. 잠시 뒤 다시 시도해 주세요." });
-        }
-      })();
-      return;
+      let sessionChanged = false;
+      const unsubscribe = useAuthSessionStore.subscribe((state) => {
+        if (state.currentSessionUserId !== sessionUserId || state.sessionKind !== "member") sessionChanged = true;
+      });
+      const isCurrentSession = () => !sessionChanged
+        && useAuthSessionStore.getState().currentSessionUserId === sessionUserId
+        && useAuthSessionStore.getState().sessionKind === "member";
+      if (!options?.silent) setFeedback({ message: "저장 상태를 반영하고 있어요." });
+      try {
+        const result = await toggleBackendSavedPlace(queryClient, sessionUserId, place, isCurrentSession);
+        if (result === "pending" || result === "stale") return false;
+        if (!options?.silent && isCurrentSession()) setFeedback({ message: result === "removed" ? "저장을 해제했어요." : "저장한 장소에 추가했어요." });
+        return isCurrentSession();
+      } catch (reason) {
+        if (isCurrentSession()) setFeedback({ message: reason instanceof ApiError && reason.status === 401
+          ? "로그인 상태를 다시 확인해 주세요."
+          : "저장 상태를 반영하지 못했어요. 잠시 뒤 다시 시도해 주세요." });
+        return false;
+      } finally {
+        unsubscribe();
+      }
     }
     toggleSavedPlace(placeId);
     if (!options?.silent) setFeedback({ message: wasSaved ? "저장을 해제했어요." : "저장한 장소에 추가했어요." });
+    return true;
   };
 
   const addPlaceToTrip = (placeId: EntityId, tripId: EntityId) => {

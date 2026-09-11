@@ -17,7 +17,7 @@ import {
   type PlaceClassificationSelection,
   type PlaceClassificationTreeItem,
 } from "../logic/placeClassification";
-import { getPlaceDistrictShortLabel, getPlaceLocationDisplayLabel, getPlaceProvinceShortLabel, getPlaceProvinceSortOrder, type PlaceLocationFilterOption } from "../logic/placeFilterOptions";
+import { getPlaceDistrictShortLabel, getPlaceLocationDisplayLabel, getPlaceProvinceShortLabel, getPlaceProvinceSortOrder, isSamePlaceProvince, type PlaceLocationFilterOption } from "../logic/placeFilterOptions";
 import type { PlaceActionFeedback, PlaceCandidateState, PlaceLocationSelection, PlaceSortOption } from "../types";
 
 export function PlaceSearchInput({
@@ -102,13 +102,11 @@ function optionToLocationSelection(option: PlaceLocationFilterOption): PlaceLoca
 
 function sameProvince(left: PlaceLocationFilterOption, right?: PlaceLocationFilterOption) {
   if (!right) return false;
-  if (left.areaCode && right.areaCode) return left.areaCode === right.areaCode;
-  return left.regionId === right.regionId;
+  return isSamePlaceProvince(left, right);
 }
 
 function sameLocationProvince(left: PlaceLocationSelection, right: Pick<PlaceLocationSelection, "regionId" | "areaCode">) {
-  if (left.areaCode && right.areaCode) return left.areaCode === right.areaCode;
-  return left.regionId === right.regionId;
+  return isSamePlaceProvince(left, right);
 }
 
 function getRegionOptionTitle(option: PlaceLocationFilterOption) {

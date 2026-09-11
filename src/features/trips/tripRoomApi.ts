@@ -37,6 +37,7 @@ import {
   type VersionFencedRead,
 } from "./logic/consistentTripSnapshot";
 import { resolveShareableTripInviteUrl } from "../invitations/logic/tripInviteLinks";
+import { normalizePlaceRegionId } from "../places/logic/placeFilterOptions";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -409,7 +410,7 @@ function buildPreferenceSummary(
 }
 
 function regionForRoom(room: ApiTripRoom): Region {
-  const regionId = room.destinationRegionCode?.trim().toLocaleLowerCase("en-US") || `api-room-${room.id}`;
+  const regionId = normalizePlaceRegionId(room.destinationRegionCode || `api-room-${room.id}`);
   return {
     id: regionId,
     name: room.destinationName,

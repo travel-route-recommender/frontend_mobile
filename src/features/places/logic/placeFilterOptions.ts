@@ -41,6 +41,16 @@ const regionIdByAreaCode: Readonly<Record<string, EntityId>> = {
   "39": "jeju",
 };
 
+/** Room APIs may return TourAPI numeric codes instead of UI region IDs. */
+export function normalizePlaceRegionId(regionId: EntityId): EntityId {
+  const normalized = regionId.trim().toLowerCase();
+  return regionIdByAreaCode[normalized] ?? normalized;
+}
+
+export function isSamePlaceProvince(left: { regionId: EntityId; areaCode?: string }, right: { regionId: EntityId; areaCode?: string }) {
+  return normalizePlaceRegionId(left.areaCode || left.regionId) === normalizePlaceRegionId(right.areaCode || right.regionId);
+}
+
 const shortRegionNameByAreaCode: Readonly<Record<string, string>> = {
   "1": "서울",
   "2": "인천",
@@ -197,6 +207,7 @@ function firstRegionToken(source: RegionLabelSource) {
 }
 
 export function getPlaceProvinceShortLabel(source: RegionLabelSource) {
+  source = { ...source, regionId: normalizePlaceRegionId(source.regionId) };
   if (source.areaCode && shortRegionNameByAreaCode[source.areaCode]) return shortRegionNameByAreaCode[source.areaCode];
   if (shortRegionNameByRegionId[source.regionId]) return shortRegionNameByRegionId[source.regionId];
   const token = firstRegionToken(source);
@@ -204,6 +215,7 @@ export function getPlaceProvinceShortLabel(source: RegionLabelSource) {
 }
 
 export function getPlaceProvinceFullLabel(source: RegionLabelSource) {
+  source = { ...source, regionId: normalizePlaceRegionId(source.regionId) };
   if (source.areaCode && fullRegionNameByAreaCode[source.areaCode]) return fullRegionNameByAreaCode[source.areaCode];
   if (fullRegionNameByRegionId[source.regionId]) return fullRegionNameByRegionId[source.regionId];
   const token = firstRegionToken(source);

@@ -47,9 +47,10 @@ export function SavedScreen() {
     setPendingUndo(undefined);
   };
 
-  const removeSavedPlace = (placeId: string, placeName: string) => {
+  const removeSavedPlace = async (placeId: string, placeName: string) => {
+    const removed = await actions.toggleSaved(placeId, { silent: true });
+    if (!removed) return;
     if (undoTimer.current) clearTimeout(undoTimer.current);
-    actions.toggleSaved(placeId, { silent: true });
     setPendingUndo({ placeId, placeName });
     AccessibilityInfo.announceForAccessibility(`${withObjectParticle(placeName)} 저장에서 삭제했어요. 실행 취소할 수 있어요.`);
     undoTimer.current = setTimeout(() => {
@@ -58,9 +59,10 @@ export function SavedScreen() {
     }, 5200);
   };
 
-  const undoRemove = () => {
+  const undoRemove = async () => {
     if (!pendingUndo) return;
-    actions.toggleSaved(pendingUndo.placeId, { silent: true });
+    const restored = await actions.toggleSaved(pendingUndo.placeId, { silent: true });
+    if (!restored) return;
     AccessibilityInfo.announceForAccessibility(`${withObjectParticle(pendingUndo.placeName)} 저장에 다시 추가했어요.`);
     dismissUndo();
   };
@@ -68,7 +70,7 @@ export function SavedScreen() {
   if (!placeRepository.available) return <Screen includeBottomSafeArea={false}><ErrorState message={placeRepository.message ?? "저장 장소 데이터를 사용할 수 없어요."} /></Screen>;
   if (actions.sessionKind !== "member") return <Screen includeBottomSafeArea={false}><View style={styles.gateHeader}><Text style={styles.gateTitle}>저장</Text><Text style={styles.supporting}>{actions.sessionKind === "guest" ? "초대 게스트의 개인 저장은 정식 계정 전환 후 사용할 수 있어요. 참여 여행방 후보 추가는 탐색에서 계속 가능해요." : "탐색은 자유롭게 할 수 있고, 로그인하면 장소를 개인 목록에 저장할 수 있어요."}</Text></View><EmptyState title="회원 전용 저장 공간이에요" description="로그인하거나 가입하면 가고 싶은 장소를 안전하게 모을 수 있어요." ctaLabel="로그인 또는 가입" onPress={() => actions.requestMember("저장한 장소 보기")} />{actions.memberGatePrompt}</Screen>;
   if (actions.remoteSavesEnabled && actions.savedPlacesQuery.isPending) return <Screen includeBottomSafeArea={false}><LoadingState label="저장한 장소를 불러오고 있어요" /></Screen>;
-  if (actions.remoteSavesEnabled && actions.savedPlacesQuery.isError && !actions.savedPlacesQuery.data) return <Screen includeBottomSafeArea={false}><ErrorState message={savedPlacesLoadErrorMessage(actions.savedPlacesQuery.error)} onRetry={() => { void actions.savedPlacesQuery.refetch(); }} /></Screen>;
+  if (actions.remoteSavesEnabled && actions.savedPlacesQuery.isError && !actions.savedPlacesQuery.data?.length) return <Screen includeBottomSafeArea={false}><ErrorState message={savedPlacesLoadErrorMessage(actions.savedPlacesQuery.error)} onRetry={() => { void actions.savedPlacesQuery.refetch(); }} /></Screen>;
 
   const header = <View style={styles.header}>
     <Text style={styles.pageTitle}>저장</Text>

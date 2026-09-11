@@ -631,9 +631,10 @@ export async function getBackendPlace(placeId: EntityId, signal?: AbortSignal) {
 export async function fetchBackendSavedPlaces(signal?: AbortSignal): Promise<BackendSavedPlace[]> {
   const response = await apiClient.request<BackendSavedPlaceResponse[]>({
     path: "/users/me/saves",
+    auth: true,
     signal,
   });
-  if (!Array.isArray(response)) return [];
+  if (!Array.isArray(response)) throw new Error("저장 목록 응답 형식이 올바르지 않아요.");
   return response.flatMap((entry) => {
     if (!entry?.place) return [];
     const mapped = mapTourPlaceToPlace(entry.place);
@@ -656,6 +657,7 @@ export async function saveBackendPlace(backendPlaceId: EntityId, signal?: AbortS
     path: "/users/me/saves",
     method: "POST",
     body: { placeId: backendPlaceId },
+    auth: true,
     signal,
   });
 }
@@ -664,6 +666,7 @@ export async function removeBackendSavedPlace(backendPlaceId: EntityId, signal?:
   return apiClient.request<{ success?: boolean }>({
     path: `/users/me/saves/${encodeURIComponent(backendPlaceId)}`,
     method: "DELETE",
+    auth: true,
     signal,
   });
 }

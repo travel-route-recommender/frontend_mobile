@@ -1,3 +1,5 @@
+import { configureApiAuth } from "../src/services/apiClient";
+import { deleteApiTripDocument, fetchApiTripDocuments, parseApiTripDocumentCollection, parseApiTripDocumentList, parseApiTripDocumentUpload } from "../src/features/trip-documents/services/tripDocumentApi";
 import {
   discardExpiredWebSessionDocuments,
   normalizeTravelDocument,
@@ -347,4 +349,48 @@ async function runAsyncChecks() {
   assert(pdfResult.status === "unsupported" && pdfResult.failureCode === "pdf-rendering-required", "PDF를 이미지 OCR에 직접 넘기지 않는다");
 }
 
-runAsyncChecks().then(() => console.log("Trip document verification passed: 53 scenarios"));
+runAsyncChecks().then(runApiContractChecks).then(() => console.log("Trip document verification passed: 53 scenarios + backend document contract checks")).catch((error: unknown) => {
+  console.error(error);
+  process.exitCode = 1;
+});
+
+async function runApiContractChecks() {
+  const roomId = "665abc123def456789012345";
+  const payload = {
+    id: "665abc123def456789012346", roomId,
+    fileUrl: `/uploads/documents/${roomId}/ticket.pdf`,
+    originalName: "ticket.pdf", mimeType: "application/pdf", size: 100,
+    note: null, uploadedBy: "665abc123def456789012347", createdAt: "2026-09-10T00:00:00.000Z", download: null,
+  };
+  assert(parseApiTripDocumentList({ data: [] }).length === 0, "실제 백엔드의 버전 없는 빈 문서 목록을 받는다");
+  assert(parseApiTripDocumentList({ data: [payload] })[0].sizeBytes === 100, "실제 문서 DTO를 화면 데이터로 변환한다");
+  const uploaded = parseApiTripDocumentUpload(payload, roomId);
+  assert(uploaded.ok && uploaded.document.id === payload.id && uploaded.scheduleVersion === undefined, "업로드 성공을 버전 누락 때문에 실패로 바꾸거나 버전을 조작하지 않는다");
+  const versioned = parseApiTripDocumentUpload({ ...payload, scheduleVersion: 2, factsVersion: 3 }, roomId);
+  assert(versioned.scheduleVersion === 2 && versioned.factsVersion === 3, "서버가 버전을 반환하면 그대로 보존한다");
+  for (const invalid of [
+    () => parseApiTripDocumentCollection({ data: [payload] }),
+    () => parseApiTripDocumentUpload({ ...payload, scheduleVersion: 2 }, roomId),
+    () => parseApiTripDocumentUpload(payload, "665abc123def456789012348"),
+    () => parseApiTripDocumentList({ data: [payload, payload] }),
+  ]) {
+    let rejected = false;
+    try { invalid(); } catch { rejected = true; }
+    assert(rejected, "분석용 버전 검증, 불완전한 버전, 방 경계 및 중복 문서 검증을 유지한다");
+  }
+  const originalFetch = globalThis.fetch;
+  const calls: { method: string; auth: string | null }[] = [];
+  configureApiAuth({ getAccessToken: () => "document-test-token", onAccessTokenExpired: () => undefined, onSessionInvalidated: () => undefined });
+  globalThis.fetch = async (_input, init) => {
+    const method = init?.method ?? "GET";
+    calls.push({ method, auth: new Headers(init?.headers).get("Authorization") });
+    return new Response(JSON.stringify(method === "DELETE" ? { success: true } : { data: [payload] }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    assert((await fetchApiTripDocuments(roomId))[0].id === payload.id, "일반 문서 조회는 버전 없는 계약으로 작동한다");
+    assert((await deleteApiTripDocument(roomId, payload.id)).scheduleVersion === undefined, "실제 success:true 삭제 응답을 받는다");
+    assert(calls.length === 2 && calls.every((call) => call.auth === "Bearer document-test-token"), "문서 조회와 삭제는 로그인 인증을 보낸다");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}

@@ -27,7 +27,7 @@ import {
 } from "../src/features/trip-creation/services/apiTripFactsStorage";
 import { normalizeCreateTripDraft } from "../src/features/trip-creation/store/useCreateTripDraftStore";
 import { createRegionService, mapRegionToOption } from "../src/features/trip-creation/services/regionService";
-import { normalizeInvitedUserIds, validateCreateTripDraft } from "../src/features/trip-creation/validation/validateCreateTripDraft";
+import { getCreateTripCorrectionStep, normalizeInvitedUserIds, validateCreateTripDraft, validateCreateTripStep } from "../src/features/trip-creation/validation/validateCreateTripDraft";
 import type { CreateTripDraft } from "../src/features/trip-creation/types";
 import {
   MOCK_FRIEND_FIXTURE_OWNER_ID,
@@ -145,6 +145,19 @@ async function main() {
   assert(validateCreateTripDraft(createDraft({ endCondition: { ...endCondition, deadline: "18:60" } }), validationContext)?.includes("HH:mm"), "달력 시각으로 표현할 수 없는 종료 시각은 거부해야 한다");
   assert(validateCreateTripDraft(createDraft({ endCondition: { ...endCondition, travelMinutes: "" } }), validationContext)?.includes("이동시간"), "예상 이동시간은 빈 값일 수 없다");
   assert(validateCreateTripDraft(createDraft({ dateUndecided: true, startDate: null, endDate: null, endCondition }), validationContext)?.includes("종료 조건"), "날짜 미정 여행에는 종료 조건을 함께 저장하면 안 된다");
+
+  assert(getCreateTripCorrectionStep(createDraft({ startDate: null }), 2, validationContext) === 1, "여행 정보 수정 중 누락된 날짜는 날짜 화면으로 안내해야 한다");
+  assert(getCreateTripCorrectionStep(createDraft({ regionId: "", startDate: null }), 4, validationContext) === 0, "여러 누락이 있으면 먼저 필요한 여행지 화면으로 안내해야 한다");
+  assert(getCreateTripCorrectionStep(createDraft({ endCondition: { ...endCondition, deadline: "18:60" } }), 4, validationContext) === 2, "확인 화면의 잘못된 종료 시각은 여행 정보로 안내해야 한다");
+  assert(getCreateTripCorrectionStep(createDraft({ companionType: null }), 4, validationContext) === 3, "동행 유형 누락은 동행자 화면으로 안내해야 한다");
+  assert(getCreateTripCorrectionStep(createDraft({ endCondition: { ...endCondition, deadline: "18:60" } }), 2, validationContext) === undefined, "현재 화면의 오류에는 다른 화면 이동을 제안하면 안 된다");
+  assert(getCreateTripCorrectionStep(createDraft({ roomName: "" }), 4, validationContext) === undefined, "확인 화면에서 고칠 수 있는 방 이름은 다른 화면으로 보내면 안 된다");
+  assert(getCreateTripCorrectionStep(createDraft({ ownerUserId: "different-user" }), 4, validationContext) === undefined, "회원 정보 오류를 여행 입력 오류로 안내하면 안 된다");
+  const needsDateCorrection = createDraft({ startDate: null, currentStep: 4 });
+  const correctedDate = { ...needsDateCorrection, ...getTripEditCommitPatch(1, { ...needsDateCorrection, startDate: "2026-08-01" }) };
+  assert(validateCreateTripStep(needsDateCorrection, 2, validationContext) !== undefined, "이전 필수 입력이 빠진 수정 완료는 계속 차단해야 한다");
+  assert(validateCreateTripDraft(correctedDate, validationContext) === undefined && getCreateTripCorrectionStep(correctedDate, 4, validationContext) === undefined, "날짜 교정 후 기존 검증으로 완료할 수 있어야 한다");
+  assert(needsDateCorrection.startDate === null, "교정 경로 계산은 원본 초안을 바꾸면 안 된다");
   assert(normalizeInvitedUserIds(["friend", "friend", "owner", "missing"], "owner", users).join(",") === "friend", "동행자는 중복·방장·없는 사용자를 제거해야 한다");
 
   const companionDirectory: Record<string, User> = {

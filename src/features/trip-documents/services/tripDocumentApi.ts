@@ -69,10 +69,10 @@ export type ApiTripDocumentCollection = {
   factsVersion: number;
 };
 
-export type ApiTripDocumentMutationVersion = Pick<
+export type ApiTripDocumentMutationVersion = Partial<Pick<
   ApiTripDocumentCollection,
   "scheduleVersion" | "factsVersion"
->;
+>>;
 
 export type ApiTripDocumentUploadResult =
   | ({ status: "uploaded"; document: ApiTripDocument } & ApiTripDocumentMutationVersion)
@@ -215,10 +215,6 @@ export function parseApiTripDocument(value: unknown, path = "document"): ApiTrip
 }
 
 export function parseApiTripDocumentList(value: unknown) {
-  return parseApiTripDocumentCollection(value).documents;
-}
-
-export function parseApiTripDocumentCollection(value: unknown): ApiTripDocumentCollection {
   const record = asRecord(value, "documents");
   if (!Array.isArray(record.data)) return fail("documents.data", "배열 응답이어야 합니다.");
   const documents = record.data.map((entry, index) => parseApiTripDocument(entry, `documents.data[${index}]`));
@@ -227,6 +223,14 @@ export function parseApiTripDocumentCollection(value: unknown): ApiTripDocumentC
     if (ids.has(document.id)) return fail("documents.data", `중복 문서 ID가 있습니다: ${document.id}`);
     ids.add(document.id);
   }
+  return documents;
+}
+
+// Analysis still requires a version-fenced snapshot. Plain document browsing
+// uses the server's { data: [...] } contract without inventing versions.
+export function parseApiTripDocumentCollection(value: unknown): ApiTripDocumentCollection {
+  const record = asRecord(value, "documents");
+  const documents = parseApiTripDocumentList(value);
   return {
     documents,
     scheduleVersion: nonNegativeInteger(record.scheduleVersion, "documents.scheduleVersion"),
@@ -239,7 +243,21 @@ function endpoint(roomId: string, suffix = "documents") {
 }
 
 export async function fetchApiTripDocuments(roomId: string, signal?: AbortSignal) {
-  return (await fetchApiTripDocumentCollection(roomId, signal)).documents;
+  const normalizedRoomId = assertRoomId(roomId);
+  const payload = await apiClient.request<unknown>({ path: endpoint(normalizedRoomId), auth: true, signal });
+  const documents = parseApiTripDocumentList(payload);
+  if (documents.some((document) => document.roomId !== normalizedRoomId)) {
+    return fail("documents.data", "요청한 여행방과 다른 문서가 포함되어 있습니다.");
+  }
+  return documents;
+}
+
+function optionalMutationVersion(record: UnknownRecord, path: string): ApiTripDocumentMutationVersion {
+  if (record.scheduleVersion === undefined && record.factsVersion === undefined) return {};
+  return {
+    scheduleVersion: nonNegativeInteger(record.scheduleVersion, `${path}.scheduleVersion`),
+    factsVersion: nonNegativeInteger(record.factsVersion, `${path}.factsVersion`),
+  };
 }
 
 export async function fetchApiTripDocumentCollection(roomId: string, signal?: AbortSignal) {
@@ -318,14 +336,17 @@ export async function uploadApiTripDocument(input: {
     body: form,
     auth: true,
   });
+  return parseApiTripDocumentUpload(payload, roomId);
+}
+
+export function parseApiTripDocumentUpload(payload: unknown, roomId: string) {
   const record = asRecord(payload, "documentUpload");
   const document = parseApiTripDocument(record, "documentUpload");
   if (document.roomId !== roomId) return fail("document.roomId", "업로드한 여행방과 일치해야 합니다.");
   return {
     ok: true as const,
     document,
-    scheduleVersion: nonNegativeInteger(record.scheduleVersion, "documentUpload.scheduleVersion"),
-    factsVersion: nonNegativeInteger(record.factsVersion, "documentUpload.factsVersion"),
+    ...optionalMutationVersion(record, "documentUpload"),
   };
 }
 
@@ -362,10 +383,7 @@ export async function pickAndUploadApiTripDocument(input: {
 function parseDeleteResult(value: unknown) {
   const record = asRecord(value, "documentDelete");
   if (record.success !== true) return fail("documentDelete.success", "true여야 합니다.");
-  return {
-    scheduleVersion: nonNegativeInteger(record.scheduleVersion, "documentDelete.scheduleVersion"),
-    factsVersion: nonNegativeInteger(record.factsVersion, "documentDelete.factsVersion"),
-  };
+  return optionalMutationVersion(record, "documentDelete");
 }
 
 export async function deleteApiTripDocument(roomId: string, documentId: string) {

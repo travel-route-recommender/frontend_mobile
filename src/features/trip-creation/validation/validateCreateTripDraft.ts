@@ -63,6 +63,17 @@ export function validateCreateTripDraft(draft: CreateTripDraft, context: CreateT
   return validateCreateTripStep(draft, 4, context);
 }
 
+/** Locate an earlier input screen without changing the cumulative validation rules. */
+export function getCreateTripCorrectionStep(draft: CreateTripDraft, activeStep: CreateTripStep, context: CreateTripValidationContext) {
+  // Identity problems cannot be repaired by changing a travel input.
+  if (!context.currentUserId || !context.usersById[context.currentUserId] || draft.ownerUserId !== context.currentUserId) return undefined;
+  for (const step of [0, 1, 2, 3] as const) {
+    if (step >= activeStep) break;
+    if (validateCreateTripStep(draft, step, context)) return step;
+  }
+  return undefined;
+}
+
 export function normalizeInvitedUserIds(userIds: readonly EntityId[], ownerUserId: EntityId, usersById: Readonly<Record<EntityId, User>>) {
   return [...new Set(userIds)].filter((userId) => userId !== ownerUserId && Boolean(usersById[userId]));
 }

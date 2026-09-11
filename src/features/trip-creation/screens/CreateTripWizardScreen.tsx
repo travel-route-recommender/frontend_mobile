@@ -12,6 +12,7 @@ import { colors, radius, spacing, typography } from "../../../theme/tokens";
 import { formatTripDateRange } from "../../../utils/formatters";
 import { useMemberGate } from "../../auth/hooks/useMemberGate";
 import { useAuthSessionStore } from "../../auth/store/useAuthSessionStore";
+import { WorkspaceTimeField } from "../../workspace/components/WorkspaceTimeField";
 import { selectSavedFriendIds, useFriendCompatibilityStore } from "../../compatibility/store/use-friend-compatibility-store";
 import { fetchApiUserDirectory } from "../../trips/tripRoomApi";
 import { formatTripDurationLabel } from "../../trips/utils/tripDateUtils";
@@ -34,7 +35,7 @@ import { createRegionService, mapRegionToOption } from "../services/regionServic
 import type { RegionOption } from "../services/regionService";
 import { useCreateTripDraftStore } from "../store/useCreateTripDraftStore";
 import type { CreateTripDraft, CreateTripEndConditionDraft, TripCompanionType } from "../types";
-import { normalizeInvitedUserIds, validateCreateTripDraft, validateCreateTripStep } from "../validation/validateCreateTripDraft";
+import { getCreateTripCorrectionStep, normalizeInvitedUserIds, validateCreateTripDraft, validateCreateTripStep } from "../validation/validateCreateTripDraft";
 
 type EditSession = { step: EditableTripStep; draft: CreateTripDraft };
 type EndConditionSelection = TripEndConditionType | "none";
@@ -53,6 +54,13 @@ const editTitles: Record<EditableTripStep, string> = {
   1: "여행 날짜 수정",
   2: "여행 정보 수정",
   3: "함께할 멤버 수정",
+};
+
+const correctionLabels: Record<EditableTripStep, string> = {
+  0: "여행지",
+  1: "여행 날짜",
+  2: "여행 정보",
+  3: "동행자",
 };
 
 export function CreateTripWizardScreen() {
@@ -89,6 +97,7 @@ export function CreateTripWizardScreen() {
   const toggleMember = useCreateTripDraftStore((state) => state.toggleMember);
   const goNext = useCreateTripDraftStore((state) => state.goNext);
   const goPrevious = useCreateTripDraftStore((state) => state.goPrevious);
+  const goToStep = useCreateTripDraftStore((state) => state.goToStep);
   const resetDraft = useCreateTripDraftStore((state) => state.resetDraft);
   const acknowledgeDraftNotice = useCreateTripDraftStore((state) => state.acknowledgeDraftNotice);
   const [resumeResolved, setResumeResolved] = useState(() => !Boolean(draft && draft.ownerUserId === currentUserId));
@@ -215,6 +224,7 @@ export function CreateTripWizardScreen() {
   );
   const currentStep = createTripSteps[activeStep];
   const stepError = validateCreateTripStep(activeDraft, activeStep, context);
+  const correctionStep = getCreateTripCorrectionStep(activeDraft, activeStep, context);
   const mutationError = creation.state.status === "error" ? creation.state.message : "";
 
   const updateEditDraft = (patch: Partial<CreateTripDraft>) => setEditSession((current) => current ? { ...current, draft: { ...current.draft, ...patch } } : current);
@@ -320,6 +330,20 @@ export function CreateTripWizardScreen() {
       {activeStep === 3 ? <CompanionStep owner={owner} users={availableMembers} companionType={activeDraft.companionType} selectedIds={activeSelectedMemberIds} onTypeChange={changeCompanionType} onToggle={toggleActiveMember} /> : null}
       {activeStep === 4 ? <ReviewStep draft={{ ...draft, selectedMemberUserIds: reviewSelectedMemberIds }} region={region} usersById={usersById} onRoomNameChange={(roomName) => { setSubmitError(""); setRoomName(roomName); }} onEdit={startEdit} /> : null}
       {submitError || mutationError ? <Text accessibilityRole="alert" style={styles.error}>{submitError || mutationError}</Text> : stepError ? <Text accessibilityRole="alert" style={styles.validationHint}>{stepError}</Text> : null}
+      {correctionStep !== undefined ? <View>
+        {editSession ? <Text style={styles.validationHint}>현재 수정 중인 내용은 취소하고, 먼저 필요한 입력을 확인해 주세요.</Text> : null}
+        <SecondaryButton
+          label={`${editSession ? "수정 취소 후 " : ""}${correctionLabels[correctionStep]} 확인하기`}
+          onPress={() => {
+            setSubmitError("");
+            if (editSession) {
+              setEditSession(undefined);
+              goToStep(correctionStep);
+            } else if (activeStep === 4) startEdit(correctionStep);
+            else goToStep(correctionStep);
+          }}
+        />
+      </View> : null}
     </CreateTripWizardShell>
     <ConfirmModal visible={!resumeResolved && Boolean(draft && draft.ownerUserId === currentUserId)} title="작성 중인 여행방이 있어요" description={`${draft.currentStep + 1}단계부터 이어서 만들 수 있어요.`} primaryLabel="이어서 작성" onPrimary={() => setResumeResolved(true)} secondaryLabel="새로 시작" onSecondary={() => { startDraft(currentUserId); setResumeResolved(true); }} />
     <ConfirmModal visible={exitOpen} title="여행방 만들기를 나갈까요?" description="지금까지 입력한 내용은 이 기기에 초안으로 저장돼요." primaryLabel="저장하고 나가기" onPrimary={() => { setExitOpen(false); leaveToTrips(); }} secondaryLabel="초안 삭제하고 나가기" onSecondary={() => { resetDraft(); setExitOpen(false); leaveToTrips(); }} onRequestClose={() => setExitOpen(false)} />
@@ -370,7 +394,7 @@ function ConditionsStep({ draft, region, onChange }: { draft: CreateTripDraft; r
               areaCode={region?.areaCode}
               onChange={(location, locationDetails) => updateEndCondition({ location, locationDetails })}
             />
-            <TextField label="도착 또는 반납 마감 시각" value={draft.endCondition.deadline} onChangeText={(deadline) => updateEndCondition({ deadline })} placeholder="예: 17:30" maxLength={5} helperText="마지막 여행 날짜 기준, 1분 단위 HH:mm" />
+            <WorkspaceTimeField label="도착 또는 반납 마감 시각" value={draft.endCondition.deadline} onChange={(deadline) => updateEndCondition({ deadline })} minuteInterval={1} />
             <TextField label="종료 지점까지 예상 이동시간 (분)" value={draft.endCondition.travelMinutes} onChangeText={(travelMinutes) => updateEndCondition({ travelMinutes: travelMinutes.replace(/\D/g, "") })} placeholder="예: 45" keyboardType="number-pad" maxLength={4} helperText="실제 경로를 확인한 예상값을 입력해 주세요." />
             <TextField label="승차 준비 또는 반납 시간 (분)" value={draft.endCondition.serviceBufferMinutes} onChangeText={(serviceBufferMinutes) => updateEndCondition({ serviceBufferMinutes: serviceBufferMinutes.replace(/\D/g, "") })} placeholder="예: 30" keyboardType="number-pad" maxLength={3} />
             <TextField label="메모 (선택)" value={draft.endCondition.note} onChangeText={(note) => updateEndCondition({ note })} placeholder="예: 렌터카 연료 충전 후 반납" maxLength={300} multiline />

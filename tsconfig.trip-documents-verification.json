@@ -12,6 +12,7 @@
     "sourceMap": false
   },
   "include": [
+    "expo-env.d.ts",
     "scripts/verify-trip-documents.ts",
     "src/features/trip-documents/types.ts",
     "src/features/trip-documents/logic/**/*.ts"
