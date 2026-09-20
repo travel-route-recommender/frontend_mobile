@@ -1,7 +1,7 @@
 {
   "name": "frontend_mobile",
   "main": "expo-router/entry",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "dependencies": {
     "@expo/ui": "~57.0.17",
     "@react-native-async-storage/async-storage": "2.2.0",
@@ -62,6 +62,7 @@
     "verify:ios-release": "node scripts/verify-ios-release.mjs",
     "verify:group-preferences": "tsc -p tsconfig.group-verification.json && node .group-verification/scripts/verify-group-preferences.js",
     "verify:preference-compatibility": "tsc -p tsconfig.preference-verification.json && node .preference-verification/scripts/verify-preference-compatibility.js",
+    "verify:preference-submission": "tsc -p tsconfig.preference-verification.json && node .preference-verification/scripts/verify-preference-submission.js",
     "verify:trip-flow": "tsc -p tsconfig.trip-flow-verification.json && node .trip-flow-verification/scripts/verify-trip-flow.js",
     "verify:api-trip-contract": "node scripts/run-api-trip-contract-verification.mjs",
     "verify:place-flow": "tsc -p tsconfig.place-flow-verification.json && node .place-flow-verification/scripts/verify-place-flow.js",

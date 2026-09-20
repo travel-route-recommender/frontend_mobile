@@ -174,7 +174,7 @@ function ModalFrame({ visible, title, subtitle, resizable = false, footer, onClo
           testID="workspace-modal-resize-handle"
         ><View style={styles.handle} /></View> : <View style={styles.passiveHandleZone}><View style={styles.handle} /></View>}
         <View style={styles.modalHeader}><View style={styles.modalCopy}><Text style={styles.modalTitle}>{title}</Text>{subtitle ? <Text style={styles.modalSubtitle}>{subtitle}</Text> : null}</View><Pressable accessibilityRole="button" accessibilityLabel={`${title} 닫기`} onPress={onClose} style={styles.close}><Text style={styles.closeText}>닫기</Text></Pressable></View>
-        <View style={[styles.modalBody, footer ? styles.modalBodyWithFooter : undefined]}>{children}</View>
+        <View style={[styles.modalBody, resizable && styles.resizableModalBody, footer ? styles.modalBodyWithFooter : undefined]}>{children}</View>
         {footer ? <View style={[styles.modalFooter, { paddingBottom: Math.max(insets.bottom, spacing.sm) }]}>{footer}</View> : null}
       </View>
     </KeyboardAvoidingView>
@@ -747,6 +747,7 @@ const styles = StyleSheet.create({
   handle: { width: 48, height: 5, alignSelf: "center", borderRadius: radius.pill, backgroundColor: colors.borderStrong },
   modalHeader: { flexDirection: "row", alignItems: "flex-start", gap: spacing.sm, paddingHorizontal: spacing.lg, paddingBottom: spacing.md },
   modalBody: { minHeight: 0 },
+  resizableModalBody: { flex: 1 },
   modalBodyWithFooter: { flexShrink: 1 },
   modalFooter: { flexShrink: 0, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.surface, paddingHorizontal: spacing.lg, paddingTop: spacing.sm },
   modalCopy: { flex: 1, gap: 2 },

@@ -1,6 +1,7 @@
 import type { DataSourceMode } from "../../../config/environment";
 import { environment } from "../../../config/environment";
 import { ApiError, ApiNetworkError, apiClient } from "../../../services/apiClient";
+import type { ApiClient } from "../../../services/apiClient";
 import { calculateTravelPreferenceSurveyResult } from "../logic/calculate-travel-preference-result";
 import { validateTravelPreferenceSurvey } from "../logic/travel-preference-survey";
 import type { PersonalPreferenceDraftAnswers, TravelPreferenceSurveyResult } from "../types";
@@ -25,11 +26,9 @@ type QuizResponses = {
     challengeStyleAnswers: NonNullable<PersonalPreferenceDraftAnswers["challengeStyleAnswers"]>;
     itineraryMessageAnswers: NonNullable<PersonalPreferenceDraftAnswers["itineraryMessageAnswers"]>;
     type: TravelPreferenceSurveyResult["challengeStylePreference"]["type"];
-    scores: Pick<TravelPreferenceSurveyResult["challengeStylePreference"]["scores"], "exploration" | "cautiousness">;
-    scheduleStyle: {
-      type: TravelPreferenceSurveyResult["scheduleStylePreference"]["type"];
-      components: Pick<TravelPreferenceSurveyResult["scheduleStylePreference"]["components"], "density" | "activeRestPreference">;
-    };
+    scores: TravelPreferenceSurveyResult["challengeStylePreference"]["scores"];
+    scheduleStyle: Pick<TravelPreferenceSurveyResult["scheduleStylePreference"], "type" | "score" | "components">;
+    itineraryPreference: TravelPreferenceSurveyResult["itineraryMessagePreference"];
   };
   accommodation: {
     answers: NonNullable<PersonalPreferenceDraftAnswers["accommodation"]>;
@@ -37,6 +36,7 @@ type QuizResponses = {
   };
   stamina: {
     answer: NonNullable<PersonalPreferenceDraftAnswers["stamina"]>;
+    level: TravelPreferenceSurveyResult["staminaPreference"]["level"];
     score: number;
   };
   budget: {
@@ -74,15 +74,23 @@ function toQuizResponses(result: TravelPreferenceSurveyResult): QuizResponses {
       itineraryMessageAnswers: { ...answers.itineraryMessageAnswers! },
       type: result.challengeStylePreference.type,
       scores: {
+        opennessToVariety: result.challengeStylePreference.scores.opennessToVariety,
+        excitementSeeking: result.challengeStylePreference.scores.excitementSeeking,
         exploration: result.challengeStylePreference.scores.exploration,
         cautiousness: result.challengeStylePreference.scores.cautiousness,
       },
       scheduleStyle: {
         type: result.scheduleStylePreference.type,
+        score: result.scheduleStylePreference.score,
         components: {
           density: result.scheduleStylePreference.components.density,
           activeRestPreference: result.scheduleStylePreference.components.activeRestPreference,
+          stamina: result.scheduleStylePreference.components.stamina,
         },
+      },
+      itineraryPreference: {
+        categoryScores: { ...result.itineraryMessagePreference.categoryScores },
+        densityScore: result.itineraryMessagePreference.densityScore,
       },
     },
     accommodation: {
@@ -91,6 +99,7 @@ function toQuizResponses(result: TravelPreferenceSurveyResult): QuizResponses {
     },
     stamina: {
       answer: answers.stamina!,
+      level: result.staminaPreference.level,
       score: result.staminaPreference.score,
     },
     budget: {
@@ -117,14 +126,16 @@ function submissionFailure(error: unknown): PreferenceCalculationOutcome {
 }
 
 class ApiPreferenceResultService implements PreferenceResultService {
+  constructor(private readonly client: ApiClient) {}
+
   async calculate(input: PreferenceCalculationInput): Promise<PreferenceCalculationOutcome> {
     const validation = validateTravelPreferenceSurvey(input.answers);
     if (!validation.valid) return { status: "error", code: "invalid-answers", message: validation.message };
     const result = calculateTravelPreferenceSurveyResult(input.userId, validation.answers, input.completedAt);
     try {
-      const session = await apiClient.request<QuizSessionResponse>({ path: "/quiz/sessions", method: "POST", auth: true });
+      const session = await this.client.request<QuizSessionResponse>({ path: "/quiz/sessions", method: "POST", auth: true });
       if (!session?.id) throw new Error("Quiz session id is missing");
-      const completed = await apiClient.request<QuizCompleteResponse>({
+      const completed = await this.client.request<QuizCompleteResponse>({
         path: `/quiz/sessions/${session.id}/complete`,
         method: "POST",
         auth: true,
@@ -140,8 +151,8 @@ class ApiPreferenceResultService implements PreferenceResultService {
   }
 }
 
-export function createPreferenceResultService(mode: DataSourceMode): PreferenceResultService {
-  return mode === "mock" ? new LocalPreferenceResultService() : new ApiPreferenceResultService();
+export function createPreferenceResultService(mode: DataSourceMode, client: ApiClient = apiClient): PreferenceResultService {
+  return mode === "mock" ? new LocalPreferenceResultService() : new ApiPreferenceResultService(client);
 }
 
 export const preferenceResultService = createPreferenceResultService(environment.dataSource);

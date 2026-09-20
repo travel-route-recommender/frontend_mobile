@@ -13,11 +13,13 @@
   },
   "include": [
     "scripts/verify-preference-compatibility.ts",
+    "scripts/verify-preference-submission.ts",
     "src/domain/**/*.ts",
     "src/duri/preferences/**/*.ts",
     "src/features/preferences/types.ts",
     "src/features/preferences/config/**/*.ts",
     "src/features/preferences/logic/**/*.ts",
+    "src/features/preferences/services/preferenceSubmissionService.ts",
     "src/features/compatibility/types.ts",
     "src/features/compatibility/logic/**/*.ts"
   ]

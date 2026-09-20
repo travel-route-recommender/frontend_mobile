@@ -1,7 +1,7 @@
 {
   "configVersion": 0,
   "apple": {
-    "version": "1.0.0",
+    "version": "1.0.1",
     "copyright": "2026 HYUNHO SHIN",
     "categories": [
       "TRAVEL",
@@ -24,7 +24,7 @@
           "장소탐색",
           "여행성향"
         ],
-        "releaseNotes": "두리의 첫 번째 App Store 버전입니다.",
+        "releaseNotes": "여행 성향 결과가 정상적으로 저장되도록 수정했습니다.\n일정 추가 화면에서 후보 장소 목록이 보이지 않던 문제를 수정했습니다.",
         "privacyPolicyUrl": "https://duri-tourmate-support.codex00101.chatgpt.site/privacy",
         "supportUrl": "https://duri-tourmate-support.codex00101.chatgpt.site/"
       }
